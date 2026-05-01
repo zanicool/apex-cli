@@ -1740,6 +1740,51 @@ class ApexCLI:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
 
+    def phase_vhost_fuzzing(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_vhost_fuzzing(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_subdomain_permutation(self):
+        if self.dry_run: return
+        findings, found = scan_subdomain_permutation(self.target, self.subdomains)
+        self.subdomains = list(dict.fromkeys(self.subdomains + found))
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+        self._log_phase("Subdomain Permutation", "ok", f"{len(found)} new subdomains")
+
+    def phase_h2c_smuggling(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_h2c_smuggling(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_expression_language_injection(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_expression_language_injection(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_php_object_injection(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_php_object_injection(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_cache_key_injection(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_cache_key_injection(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_link_injection(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_link_injection(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+
 SKULL_ASCII = r"""[bold red]
                      ______
                   .-"      "-.
@@ -1956,6 +2001,13 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("Method Override", apex.phase_method_override),
         ("Cookie Injection", apex.phase_cookie_injection),
         ("Host Override Chain", apex.phase_host_override_chain),
+        ("VHost Fuzzing", apex.phase_vhost_fuzzing),
+        ("Subdomain Permutation", apex.phase_subdomain_permutation),
+        ("H2C Smuggling", apex.phase_h2c_smuggling),
+        ("EL Injection", apex.phase_expression_language_injection),
+        ("PHP Object Injection", apex.phase_php_object_injection),
+        ("Cache Key Injection", apex.phase_cache_key_injection),
+        ("Link Injection", apex.phase_link_injection),
     ]
 
     # Measure target response time and adapt concurrency
@@ -1978,7 +2030,7 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         except Exception:
             pass
 
-    SEQUENTIAL = {"Recon", "Passive Recon", "Subdomain Brute-Force", "Probe", "Fingerprint", "Fuzz", "Crawl"}
+    SEQUENTIAL = {"Recon", "Passive Recon", "Subdomain Brute-Force", "Subdomain Permutation", "Probe", "Fingerprint", "Fuzz", "Crawl"}
     seq_phases = [(l, f) for l, f in phases if l in SEQUENTIAL]
     par_phases = [(l, f) for l, f in phases if l not in SEQUENTIAL]
 
