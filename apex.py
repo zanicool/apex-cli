@@ -529,6 +529,16 @@ class ApexCLI:
 
         json_out = os.path.join(self.output_dir, "nuclei.json")
 
+        # Auto-update templates (background, non-blocking)
+        import threading as _nt
+        def _update_templates():
+            try:
+                subprocess.run([path, "-update-templates", "-silent"],
+                               capture_output=True, timeout=60)
+            except Exception:
+                pass
+        _nt.Thread(target=_update_templates, daemon=True).start()
+
         # Find nuclei templates directory
         import shutil as _shutil
         templates_dir = os.path.expanduser("~/nuclei-templates")
