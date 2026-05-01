@@ -228,11 +228,13 @@ def validate_target(target: str) -> str:
 # ---------------------------------------------------------------------------
 
 class ApexCLI:
-    def __init__(self, target, output_dir, dry_run=False, deep=False):
+    def __init__(self, target, output_dir, dry_run=False, deep=False, auth=None):
         self.target = target
         self.output_dir = output_dir
         self.dry_run = dry_run
         self.deep = deep
+        self.auth = auth
+        self.oob = None
         self.subdomains: list[str] = []
         self.web_targets: list[str] = []
         self.vulnerabilities: list[dict] = []
@@ -240,6 +242,7 @@ class ApexCLI:
         self.crawl_data: dict = {}
         self.technologies: list[str] = []
         self.waf_detected: list[str] = []
+        self._vuln_lock = __import__("threading").Lock()
         os.makedirs(self.output_dir, exist_ok=True)
 
     # -- helpers -----------------------------------------------------------
@@ -1227,7 +1230,176 @@ class ApexCLI:
     def phase_workflow_bypass(self):
         if self.dry_run or not self.crawl_data: return
         findings = scan_workflow_bypass(self.crawl_data)
-        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # -- elite phase methods -----------------------------------------------
+
+    def phase_jwt_alg_confusion(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_jwt_alg_confusion(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_blind_xss(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_blind_xss(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_http_parameter_pollution(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_http_parameter_pollution(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_web_cache_deception(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_web_cache_deception(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_jsonp_injection(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_jsonp_injection(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_dependency_confusion(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_dependency_confusion(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_graphql_depth_attack(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_graphql_depth_attack(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_path_normalization_bypass(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_path_normalization_bypass(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_nginx_off_by_slash(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_nginx_off_by_slash(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_second_order_injection(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_second_order_injection(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_cors_preflight_bypass(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_cors_preflight_bypass(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_prototype_pollution_json(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_prototype_pollution_json(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_account_takeover_response_manipulation(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_account_takeover_response_manipulation(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_api_mass_exposure(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_api_mass_exposure(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_oauth_token_leakage(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_oauth_token_leakage(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_blind_sqli_oob(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_blind_sqli_oob(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_idor_uuid_prediction(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_idor_uuid_prediction(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_http2_rapid_reset(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_http2_rapid_reset(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_saml_injection(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_saml_injection(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_dns_rebinding_ssrf(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_dns_rebinding_ssrf(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # -- OOB phases --------------------------------------------------------
+
+    def phase_oob_ssrf(self):
+        if self.dry_run or not self.crawl_data or not self.oob: return
+        findings = scan_blind_ssrf_oob(self.crawl_data, self.oob)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_oob_cmdi(self):
+        if self.dry_run or not self.crawl_data or not self.oob: return
+        findings = scan_blind_cmdi_oob(self.crawl_data, self.oob)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_oob_sqli(self):
+        if self.dry_run or not self.crawl_data or not self.oob: return
+        findings = scan_blind_sqli_oob_confirmed(self.crawl_data, self.oob)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # -- context-aware phases ----------------------------------------------
+
+    def phase_context_xss(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_context_aware_xss(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_context_sqli(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_context_aware_sqli(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # -- authenticated scan phase ------------------------------------------
+
+    def phase_authenticated(self):
+        if self.dry_run or not self.auth or not self.web_targets: return
+        username, password = self.auth
+        console.print(f"[bold blue][+][/bold blue] Authenticated scan as {username}...")
+        for target in self.web_targets[:3]:
+            findings = authenticated_scan(target, username, password, self.crawl_data)
+            with self._vuln_lock:
+                self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+        self._log_phase("Authenticated Scan", "ok", f"as {username}")
 
     # -- elite phase methods -----------------------------------------------
 
@@ -1375,12 +1547,21 @@ def show_tools():
     console.print(table)
 
 
-def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None):
+def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, auth=None):
     report_formats = report_formats or ["terminal"]
     skip = [s.lower() for s in (skip or [])]
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = f"scan_{target}_{ts}"
-    apex = ApexCLI(target, output_dir, dry_run=dry_run, deep=deep)
+    apex = ApexCLI(target, output_dir, dry_run=dry_run, deep=deep, auth=auth)
+
+    # Start OOB server
+    if not dry_run:
+        console.print("[dim]Starting OOB server (interactsh)...[/dim]")
+        apex.oob = oob_start()
+        if apex.oob:
+            console.print(f"[green][✓][/green] OOB active: {apex.oob.domain}")
+        else:
+            console.print("[yellow][!] OOB unavailable — blind vulns won't be confirmed[/yellow]")
 
     phases = [
         ("Recon", apex.phase_recon),
@@ -1636,6 +1817,8 @@ def main():
     parser.add_argument("--tools", action="store_true", help="Show available tools and exit")
     parser.add_argument("--skip", nargs="+", default=[],
                         help="Skip phases (e.g. --skip nuclei sqli)")
+    parser.add_argument("--auth", nargs=2, metavar=("USER", "PASS"),
+                        help="Credentials for authenticated scanning")
 
     args = parser.parse_args()
 
@@ -1662,7 +1845,8 @@ def main():
     console.print()
 
     run_scan(target, dry_run=args.dry_run, deep=args.deep,
-            report_formats=args.report, skip=args.skip)
+            report_formats=args.report, skip=args.skip,
+            auth=tuple(args.auth) if args.auth else None)
 
 
 if __name__ == "__main__":
