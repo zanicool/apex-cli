@@ -5474,3 +5474,138 @@ def scan_ns_takeover(target, subdomains):
                     break
         except: continue
     return findings
+
+
+# ---------------------------------------------------------------------------
+# Intelligence Engine: dedup, CVSS scoring, attack chain detection,
+# false positive reduction, finding verification
+# ---------------------------------------------------------------------------
+
+import hashlib as _hashlib
+
+# CVSS-like severity weights
+_SEVERITY_SCORE = {"critical": 9.0, "high": 7.0, "medium": 5.0, "low": 2.0, "info": 0.5}
+
+# Attack chain rules: if these finding types co-exist, escalate severity
+_CHAIN_RULES = [
+    ({"Reflected XSS", "Missing CSRF Token"}, "XSS + No CSRF = Stored Account Takeover", "critical"),
+    ({"SSRF", "AWS"}, "SSRF + Cloud Metadata = Credential Theft", "critical"),
+    ({"Open Redirect", "OAuth"}, "Open Redirect + OAuth = Account Takeover", "critical"),
+    ({"SQL Injection", "Exposed Endpoint"}, "SQLi + Admin Access = Full DB Compromise", "critical"),
+    ({"Path Traversal", "Sensitive File"}, "LFI + Sensitive Files = Source Code Disclosure", "critical"),
+    ({"CORS Misconfiguration", "JWT"}, "CORS + JWT = Cross-Origin Token Theft", "high"),
+    ({"Subdomain Takeover", "Cookie"}, "Subdomain Takeover + Cookie = Session Hijack", "critical"),
+    ({"GraphQL Introspection", "Missing Rate Limit"}, "GraphQL + No Rate Limit = Data Enumeration", "high"),
+    ({"Prototype Pollution", "XSS"}, "Prototype Pollution + XSS = Universal XSS", "critical"),
+    ({"IDOR", "User Enumeration"}, "IDOR + User Enum = Mass Account Compromise", "critical"),
+]
+
+
+def deduplicate_findings(findings):
+    """Remove duplicate findings — same type+URL = one finding."""
+    seen = set()
+    unique = []
+    for f in findings:
+        # Key: type + base URL (strip query params for dedup)
+        base_url = f.get("url","").split("?")[0]
+        key = _hashlib.md5(f"{f.get('type','')}|{base_url}".encode()).hexdigest()
+        if key not in seen:
+            seen.add(key)
+            unique.append(f)
+    return unique
+
+
+def score_findings(findings):
+    """Add CVSS-like score and exploitability rating to each finding."""
+    for f in findings:
+        sev = f.get("severity","info").lower()
+        base_score = _SEVERITY_SCORE.get(sev, 0.5)
+        # Boost score for confirmed OOB findings
+        if "OOB Confirmed" in f.get("type","") or "Confirmed" in f.get("detail",""):
+            base_score = min(10.0, base_score + 1.5)
+        # Boost for critical paths
+        url = f.get("url","").lower()
+        if any(x in url for x in ["/admin","/api/v1","/graphql","/auth","/login"]):
+            base_score = min(10.0, base_score + 0.5)
+        f["cvss_score"] = round(base_score, 1)
+        f["exploitability"] = (
+            "Trivial" if base_score >= 9 else
+            "Easy" if base_score >= 7 else
+            "Moderate" if base_score >= 5 else
+            "Hard"
+        )
+    return sorted(findings, key=lambda x: x.get("cvss_score", 0), reverse=True)
+
+
+def detect_attack_chains(findings):
+    """Find combinations of findings that chain into higher-impact attacks."""
+    chains = []
+    finding_types = " ".join(f.get("type","") for f in findings)
+    for required_types, chain_name, escalated_sev in _CHAIN_RULES:
+        if all(any(rt.lower() in f.get("type","").lower() for f in findings)
+               for rt in required_types):
+            chains.append({
+                "type": f"Attack Chain: {chain_name}",
+                "severity": escalated_sev,
+                "url": "multiple",
+                "detail": f"Combined: {' + '.join(required_types)}",
+                "template": "apex-chain",
+                "cvss_score": _SEVERITY_SCORE.get(escalated_sev, 9.0),
+                "exploitability": "Trivial",
+                "status": "CHAIN",
+            })
+    return chains
+
+
+def verify_finding(finding):
+    """Re-verify a finding to reduce false positives."""
+    url = finding.get("url","")
+    template = finding.get("template","")
+    if not url or url == "multiple": return True
+
+    try:
+        # Sensitive file findings: verify content is real
+        if template == "apex-sensitive":
+            r = _S.get(url, timeout=5, allow_redirects=False)
+            if r.status_code >= 400: return False
+            # Must have real content, not a generic error page
+            body = r.text[:500].lower()
+            if any(x in body for x in ["not found","404","error","forbidden"]): return False
+            # Check it's not the same as a 404 page
+            fake = _S.get(url.rsplit("/",1)[0] + "/nonexistent_apex_test_xyz", timeout=3, allow_redirects=False)
+            if abs(len(r.content) - len(fake.content)) < 50: return False
+            return True
+
+        # XSS: re-verify payload still reflects
+        if "xss" in template.lower() and "?" in url:
+            r = _S.get(url, timeout=5)
+            payload_hint = re.search(r'["\']([^"\']{5,50})["\']', finding.get("detail",""))
+            if payload_hint and payload_hint.group(1) not in r.text: return False
+            return True
+
+        # Headers: just re-check
+        if template == "apex-headers":
+            return True  # Low FP rate
+
+        # Default: re-request and check status
+        r = _S.get(url, timeout=5)
+        return r.status_code < 400
+
+    except: return True  # Don't drop on network error
+
+
+def prioritize_targets(web_targets, technologies):
+    """Reorder targets to scan highest-value endpoints first."""
+    tech = " ".join(technologies).lower()
+    high_value = []
+    normal = []
+    for t in web_targets:
+        tl = t.lower()
+        if any(x in tl for x in ["/admin","/api","/graphql","/auth","/login",
+                                   "/dashboard","/internal","/manage","/console"]):
+            high_value.append(t)
+        elif any(x in tech for x in ["wordpress","django","laravel","spring","rails"]):
+            high_value.append(t)
+        else:
+            normal.append(t)
+    return high_value + normal

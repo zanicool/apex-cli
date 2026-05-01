@@ -367,6 +367,7 @@ class ApexCLI:
             self._probe_curl()
 
         self.web_targets = list(dict.fromkeys(self.web_targets))  # dedup, preserve order
+        self.web_targets = prioritize_targets(self.web_targets, self.technologies)
         console.print(f"[green][✓][/green] {len(self.web_targets)} live web targets.")
 
     def _probe_httpx(self, path):
@@ -789,14 +790,18 @@ class ApexCLI:
             console.print("[bold yellow][!] No vulnerabilities found.[/bold yellow]")
         else:
             vt = Table(title=f"Vulnerabilities ({len(self.vulnerabilities)})")
+            vt.add_column("Score", style="red")
             vt.add_column("Severity", style="red")
             vt.add_column("Type", style="cyan")
+            vt.add_column("Exploitability")
             vt.add_column("URL", style="magenta")
             for v in self.vulnerabilities:
                 sev = v.get("severity", "unknown").upper()
                 sev_style = {"CRITICAL": "bold red", "HIGH": "red", "MEDIUM": "yellow",
                              "LOW": "blue"}.get(sev, "white")
-                vt.add_row(f"[{sev_style}]{sev}[/{sev_style}]", v["type"], v["url"])
+                score = str(v.get("cvss_score", ""))
+                expl = v.get("exploitability", "")
+                vt.add_row(score, f"[{sev_style}]{sev}[/{sev_style}]", v["type"], expl, v["url"][:60])
             console.print(vt)
 
         console.print(f"\n[bold blue]Logs:[/bold blue] {self.output_dir}/")
@@ -1826,6 +1831,24 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
 
     if apex.oob:
         apex.oob.stop()
+
+    # Intelligence engine: dedup → verify → score → chain detection
+    console.print("[dim]Running intelligence engine...[/dim]")
+    apex.vulnerabilities = deduplicate_findings(apex.vulnerabilities)
+    if not dry_run:
+        verified = []
+        for f in apex.vulnerabilities:
+            if verify_finding(f):
+                verified.append(f)
+        dropped = len(apex.vulnerabilities) - len(verified)
+        if dropped:
+            console.print(f"[yellow][!] Dropped {dropped} false positives[/yellow]")
+        apex.vulnerabilities = verified
+    apex.vulnerabilities = score_findings(apex.vulnerabilities)
+    chains = detect_attack_chains(apex.vulnerabilities)
+    if chains:
+        console.print(f"[bold red]🔗 {len(chains)} attack chain(s) detected![/bold red]")
+        apex.vulnerabilities = chains + apex.vulnerabilities
 
     # Reports
     apex.report_terminal()
