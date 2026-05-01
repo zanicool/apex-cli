@@ -190,6 +190,12 @@ from scanners import (
     scan_forced_browsing,
     scan_parameter_tampering,
     scan_multi_step_race,
+    # Intelligence engine
+    deduplicate_findings,
+    score_findings,
+    detect_attack_chains,
+    verify_finding,
+    prioritize_targets,
 )
 
 console = Console()
