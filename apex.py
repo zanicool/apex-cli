@@ -123,6 +123,27 @@ from scanners import (
     scan_xslt_injection,
     scan_xss,
     scan_xxe,
+    # Elite scanners
+    scan_jwt_alg_confusion,
+    scan_blind_xss,
+    scan_http_parameter_pollution,
+    scan_web_cache_deception,
+    scan_jsonp_injection,
+    scan_dependency_confusion,
+    scan_graphql_depth_attack,
+    scan_path_normalization_bypass,
+    scan_nginx_off_by_slash,
+    scan_second_order_injection,
+    scan_cors_preflight_bypass,
+    scan_prototype_pollution_json,
+    scan_account_takeover_response_manipulation,
+    scan_api_mass_exposure,
+    scan_oauth_token_leakage,
+    scan_blind_sqli_oob,
+    scan_idor_uuid_prediction,
+    scan_http2_rapid_reset,
+    scan_saml_injection,
+    scan_dns_rebinding_ssrf,
 )
 
 console = Console()
@@ -1208,6 +1229,108 @@ class ApexCLI:
         findings = scan_workflow_bypass(self.crawl_data)
         self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
+    # -- elite phase methods -----------------------------------------------
+
+    def phase_jwt_alg_confusion(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_jwt_alg_confusion(self.crawl_data)
+        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_blind_xss(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_blind_xss(self.crawl_data)
+        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_http_parameter_pollution(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_http_parameter_pollution(self.crawl_data)
+        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_web_cache_deception(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_web_cache_deception(self.crawl_data)
+        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_jsonp_injection(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_jsonp_injection(self.crawl_data)
+        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_dependency_confusion(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_dependency_confusion(self.crawl_data)
+        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_graphql_depth_attack(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_graphql_depth_attack(self.crawl_data)
+        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_path_normalization_bypass(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_path_normalization_bypass(self.crawl_data)
+        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_nginx_off_by_slash(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_nginx_off_by_slash(self.crawl_data)
+        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_second_order_injection(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_second_order_injection(self.crawl_data)
+        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_cors_preflight_bypass(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_cors_preflight_bypass(self.crawl_data)
+        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_prototype_pollution_json(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_prototype_pollution_json(self.crawl_data)
+        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_account_takeover_response_manipulation(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_account_takeover_response_manipulation(self.crawl_data)
+        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_api_mass_exposure(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_api_mass_exposure(self.web_targets)
+        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_oauth_token_leakage(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_oauth_token_leakage(self.crawl_data)
+        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_blind_sqli_oob(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_blind_sqli_oob(self.crawl_data)
+        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_idor_uuid_prediction(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_idor_uuid_prediction(self.crawl_data)
+        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_http2_rapid_reset(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_http2_rapid_reset(self.web_targets)
+        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_saml_injection(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_saml_injection(self.crawl_data)
+        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_dns_rebinding_ssrf(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_dns_rebinding_ssrf(self.crawl_data)
+        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
 
 SKULL_ASCII = r"""[bold red]
                      ______
@@ -1361,6 +1484,27 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None):
         ("Session Weakness", apex.phase_session_weakness),
         ("Permissions Policy", apex.phase_permissions_policy),
         ("Workflow Bypass", apex.phase_workflow_bypass),
+        # Elite phases
+        ("JWT Alg Confusion", apex.phase_jwt_alg_confusion),
+        ("Blind XSS", apex.phase_blind_xss),
+        ("HTTP Param Pollution", apex.phase_http_parameter_pollution),
+        ("Web Cache Deception", apex.phase_web_cache_deception),
+        ("JSONP Injection", apex.phase_jsonp_injection),
+        ("Dependency Confusion", apex.phase_dependency_confusion),
+        ("GraphQL Depth Attack", apex.phase_graphql_depth_attack),
+        ("Path Normalization Bypass", apex.phase_path_normalization_bypass),
+        ("Nginx Off-by-Slash", apex.phase_nginx_off_by_slash),
+        ("Second-Order Injection", apex.phase_second_order_injection),
+        ("CORS Preflight Bypass", apex.phase_cors_preflight_bypass),
+        ("Prototype Pollution JSON", apex.phase_prototype_pollution_json),
+        ("ATO Response Manipulation", apex.phase_account_takeover_response_manipulation),
+        ("API Mass Exposure", apex.phase_api_mass_exposure),
+        ("OAuth Token Leakage", apex.phase_oauth_token_leakage),
+        ("Blind SQLi OOB", apex.phase_blind_sqli_oob),
+        ("IDOR UUID Prediction", apex.phase_idor_uuid_prediction),
+        ("HTTP/2 Rapid Reset", apex.phase_http2_rapid_reset),
+        ("SAML Injection", apex.phase_saml_injection),
+        ("DNS Rebinding SSRF", apex.phase_dns_rebinding_ssrf),
     ]
 
     with Progress(

