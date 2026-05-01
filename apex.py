@@ -647,6 +647,23 @@ class ApexCLI:
             "pages": all_pages, "forms": all_forms,
             "params": all_params, "links": list(all_links),
         }
+        # Parse OpenAPI/Swagger spec — merges all discovered endpoints
+        for target in (self.web_targets or [f"https://{self.target}"])[:3]:
+            spec_base = "/".join(target.split("/", 3)[:3])
+            spec_data = parse_openapi_spec(spec_base)
+            if spec_data:
+                console.print(f"[bold green][✓][/bold green] OpenAPI spec found: {spec_data['total_endpoints']} endpoints → {spec_data.get('spec_url','')}")
+                all_pages.extend(spec_data["pages"])
+                all_forms.extend(spec_data["forms"])
+                for u, ps in spec_data["params"].items():
+                    all_params[u] = list(set(all_params.get(u, [])) | set(ps))
+                all_links.update(spec_data["links"])
+                break  # one spec is enough
+
+        self.crawl_data = {
+            "pages": all_pages, "forms": all_forms,
+            "params": all_params, "links": list(all_links),
+        }
         with open(os.path.join(self.output_dir, "crawl.json"), "w") as f:
             json.dump(self.crawl_data, f, indent=2)
         console.print(f"[green][✓][/green] Crawled {len(all_pages)} pages, "

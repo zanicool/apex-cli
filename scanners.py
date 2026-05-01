@@ -53,6 +53,17 @@ class _SessionProxy:
         return _get_session().request(*a, **kw)
     def options(self, *a, **kw):
         return _get_session().options(*a, **kw)
+    def head(self, *a, **kw):
+        return _get_session().head(*a, **kw)
+    def put(self, *a, **kw):
+        if _RATE_DELAY > 0: time.sleep(_RATE_DELAY)
+        return _get_session().put(*a, **kw)
+    def delete(self, *a, **kw):
+        if _RATE_DELAY > 0: time.sleep(_RATE_DELAY)
+        return _get_session().delete(*a, **kw)
+    def patch(self, *a, **kw):
+        if _RATE_DELAY > 0: time.sleep(_RATE_DELAY)
+        return _get_session().patch(*a, **kw)
 
 _S = _SessionProxy()
 
@@ -85,7 +96,35 @@ def crawl(base_url, max_pages=50):
         except Exception:
             continue
 
-        pages.append({"url": url, "status": r.status_code, "length": len(r.text)})
+        pages.append({"url": url, "status": r.status_code, "length": len(r.content)})
+
+        # Handle JSON API responses — extract keys as params
+        ctype = r.headers.get("content-type", "").lower()
+        if "application/json" in ctype or (r.text.strip()[:1] in ("{", "[")):
+            try:
+                import json as _cj
+                data = _cj.loads(r.text)
+                # Flatten top-level keys as params for this endpoint
+                if isinstance(data, dict):
+                    for k in data.keys():
+                        params_found[url.split("?")[0]].add(k)
+                elif isinstance(data, list) and data and isinstance(data[0], dict):
+                    for k in data[0].keys():
+                        params_found[url.split("?")[0]].add(k)
+                # Also add any nested URL-like values as links
+                def _extract_urls(obj, depth=0):
+                    if depth > 3: return
+                    if isinstance(obj, str) and obj.startswith(("http://","https://","/")):
+                        links.add(obj if obj.startswith("http") else urllib.parse.urljoin(url, obj))
+                    elif isinstance(obj, dict):
+                        for v in obj.values(): _extract_urls(v, depth+1)
+                    elif isinstance(obj, list):
+                        for v in obj[:5]: _extract_urls(v, depth+1)
+                _extract_urls(data)
+            except Exception:
+                pass
+            continue  # No HTML to parse
+
         soup = BeautifulSoup(r.text, "lxml")
 
         # Extract links
@@ -5895,3 +5934,141 @@ def scan_host_override_chain(web_targets):
                     break
         except: pass
     return findings
+
+
+# ---------------------------------------------------------------------------
+# OpenAPI/Swagger spec parser — auto-discovers ALL endpoints + params
+# This finds more attack surface than any crawler
+# ---------------------------------------------------------------------------
+
+def parse_openapi_spec(base_url):
+    """Fetch and parse OpenAPI/Swagger spec, return crawl_data-compatible dict."""
+    pages = []
+    forms = []
+    params = defaultdict(set)
+
+    spec_paths = [
+        "/swagger.json", "/swagger/v1/swagger.json", "/swagger/v2/swagger.json",
+        "/api-docs", "/api-docs.json", "/api/swagger.json", "/api/v1/swagger.json",
+        "/api/v2/swagger.json", "/openapi.json", "/openapi.yaml", "/openapi/v3/openapi.json",
+        "/v1/api-docs", "/v2/api-docs", "/v3/api-docs",
+        "/swagger-ui/swagger.json", "/docs/swagger.json",
+        "/.well-known/openapi.json",
+    ]
+
+    spec = None
+    spec_url = None
+    for path in spec_paths:
+        try:
+            r = _S.get(f"{base_url}{path}", timeout=5)
+            if r.status_code != 200:
+                continue
+            ctype = r.headers.get("content-type", "")
+            if "yaml" in path or "yaml" in ctype:
+                try:
+                    import yaml
+                    spec = yaml.safe_load(r.text)
+                except ImportError:
+                    # Parse basic YAML manually for common patterns
+                    continue
+            else:
+                try:
+                    import json as _j
+                    spec = _j.loads(r.text)
+                except Exception:
+                    continue
+            if isinstance(spec, dict) and ("paths" in spec or "swagger" in spec or "openapi" in spec):
+                spec_url = f"{base_url}{path}"
+                break
+        except Exception:
+            continue
+
+    if not spec:
+        return None
+
+    # Extract server base URL from spec
+    servers = spec.get("servers", [])
+    api_base = base_url
+    if servers and isinstance(servers, list):
+        srv = servers[0].get("url", "")
+        if srv.startswith("http"):
+            api_base = srv.rstrip("/")
+        elif srv.startswith("/"):
+            api_base = base_url + srv.rstrip("/")
+
+    # Parse all paths
+    paths = spec.get("paths", {})
+    for path, methods in paths.items():
+        if not isinstance(methods, dict):
+            continue
+        full_url = f"{api_base}{path}"
+
+        for method, operation in methods.items():
+            if method.lower() not in ("get", "post", "put", "patch", "delete", "options"):
+                continue
+            if not isinstance(operation, dict):
+                continue
+
+            # Extract parameters
+            op_params = operation.get("parameters", []) + methods.get("parameters", [])
+            path_params = set()
+            query_params = set()
+            body_params = set()
+
+            for p in op_params:
+                if not isinstance(p, dict):
+                    continue
+                name = p.get("name", "")
+                location = p.get("in", "")
+                if location == "query":
+                    query_params.add(name)
+                elif location == "path":
+                    path_params.add(name)
+
+            # Extract request body schema params
+            req_body = operation.get("requestBody", {})
+            if req_body:
+                content = req_body.get("content", {})
+                for ct, ct_data in content.items():
+                    schema = ct_data.get("schema", {})
+                    props = schema.get("properties", {})
+                    body_params.update(props.keys())
+                    # Handle $ref
+                    ref = schema.get("$ref", "")
+                    if ref:
+                        ref_name = ref.split("/")[-1]
+                        defs = spec.get("components", {}).get("schemas", spec.get("definitions", {}))
+                        ref_schema = defs.get(ref_name, {})
+                        body_params.update(ref_schema.get("properties", {}).keys())
+
+            # Add to crawl data
+            # Replace path params with test values
+            test_url = full_url
+            for pp in path_params:
+                test_url = test_url.replace(f"{{{pp}}}", "1")
+
+            if query_params:
+                for qp in query_params:
+                    params[test_url].add(qp)
+
+            pages.append({"url": test_url, "status": 200, "length": 0,
+                          "method": method.upper(), "from_spec": True})
+
+            if method.lower() in ("post", "put", "patch") and body_params:
+                forms.append({
+                    "url": test_url,
+                    "action": test_url,
+                    "method": method.upper(),
+                    "inputs": [{"name": p, "type": "text", "value": "test"} for p in body_params],
+                    "from_spec": True,
+                })
+
+    total = len(pages)
+    return {
+        "pages": pages,
+        "forms": forms,
+        "params": {u: list(p) for u, p in params.items()},
+        "links": [p["url"] for p in pages],
+        "spec_url": spec_url,
+        "total_endpoints": total,
+    }
