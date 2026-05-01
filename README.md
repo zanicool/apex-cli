@@ -77,10 +77,22 @@ Each scan creates a timestamped directory (`scan_example.com_20250501_134500/`) 
 ## Install
 
 ```bash
-git clone <repo-url> && cd apex-cli
-pip install -r requirements.txt
+git clone https://github.com/zanicool/apex-cli.git && cd apex-cli
+chmod +x install.sh && sudo ./install.sh
+```
 
-# Make globally available
+This installs everything: Python deps, Go, subfinder, httpx, nuclei, ffuf, nmap, sqlmap, seclists, and links `apex-cli` to your PATH.
+
+For manual install see below.
+
+<details>
+<summary>Manual install</summary>
+
+```bash
+pip install -r requirements.txt
 sudo ln -sf "$(pwd)/apex.py" /usr/local/bin/apex-cli
 chmod +x apex.py
 ```
+
+Install tools separately: `apt install nmap sqlmap seclists` and Go tools via `go install`.
+</details>
