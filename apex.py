@@ -144,6 +144,52 @@ from scanners import (
     scan_http2_rapid_reset,
     scan_saml_injection,
     scan_dns_rebinding_ssrf,
+    # OOB
+    OOBServer,
+    oob_start,
+    scan_blind_ssrf_oob,
+    scan_blind_cmdi_oob,
+    scan_blind_sqli_oob_confirmed,
+    # Context-aware
+    scan_context_aware_xss,
+    scan_context_aware_sqli,
+    # New scanners v6.6+
+    passive_recon,
+    scan_cors_null_origin,
+    scan_method_override,
+    scan_cookie_injection,
+    scan_host_override_chain,
+    set_rate_limit,
+    parse_openapi_spec,
+    authenticated_crawl,
+    # Batch 5+6
+    scan_subdomain_bruteforce,
+    scan_response_diff_auth_bypass,
+    scan_nextjs_react_vulns,
+    scan_graphql_mutation_fuzzing,
+    scan_te_cl_smuggling,
+    scan_idor_pagination,
+    scan_race_condition_registration,
+    scan_timing_user_enumeration,
+    scan_css_exfil,
+    scan_open_redirect_oauth_chain,
+    scan_ssrf_pdf_generation,
+    scan_ns_takeover,
+    # Batch 7
+    scan_vhost_fuzzing,
+    scan_subdomain_permutation,
+    scan_h2c_smuggling,
+    scan_expression_language_injection,
+    scan_php_object_injection,
+    scan_cache_key_injection,
+    scan_link_injection,
+    # Batch 8 — logic bugs
+    scan_price_manipulation,
+    scan_payment_flow_bypass,
+    scan_account_state_manipulation,
+    scan_forced_browsing,
+    scan_parameter_tampering,
+    scan_multi_step_race,
 )
 
 console = Console()
