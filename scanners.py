@@ -59,6 +59,24 @@ def crawl(base_url, max_pages=50):
             if clean not in visited:
                 to_visit.append(full)
 
+        # Extract params from JS fetch/axios/XHR calls
+        for script in soup.find_all("script", src=False):
+            if not script.string:
+                continue
+            js = script.string
+            for m in re.finditer(r"""(?:fetch|axios\.\w+|\.get|\.post)\s*\(\s*['"]([^'"]+)['"]""", js):
+                ep = m.group(1)
+                if "?" not in ep:
+                    continue
+                ep_base = ep if ep.startswith("http") else urllib.parse.urljoin(url, ep)
+                for k in urllib.parse.parse_qs(urllib.parse.urlparse(ep).query):
+                    params_found[ep_base.split("?")[0]].add(k)
+            for m in re.finditer(r"""url\s*:\s*['"]([^'"?]+\?[^'"]+)['"]""", js):
+                ep = m.group(1)
+                ep_base = ep if ep.startswith("http") else urllib.parse.urljoin(url, ep)
+                for k in urllib.parse.parse_qs(urllib.parse.urlparse(ep).query):
+                    params_found[ep_base.split("?")[0]].add(k)
+
         # Extract forms
         for form in soup.find_all("form"):
             action = form.get("action", "")
@@ -292,7 +310,13 @@ _REDIRECT_PAYLOADS = [
     "https://evil.com%00",
 ]
 
-def scan_open_redirect(crawl_data):
+def _is_open_redirect(location, payload):
+    """Return True only if Location actually redirects to the payload domain."""
+    if not location:
+        return False
+    parsed = urllib.parse.urlparse(location)
+    # Must redirect to evil.com as the host, not just contain it in query params
+    return parsed.netloc in ("evil.com", "www.evil.com") or location.startswith("//evil.com")
     """Test open redirect on URL-like parameters."""
     findings = []
 
@@ -314,12 +338,13 @@ def scan_open_redirect(crawl_data):
             try:
                 r = _S.get(f"{base}?{param}=https://evil.com",
                            timeout=_TIMEOUT, allow_redirects=False)
-                if "evil.com" in r.headers.get("Location", ""):
+                loc = r.headers.get("Location", "")
+                if _is_open_redirect(loc, "https://evil.com"):
                     findings.append({
                         "type": "Open Redirect",
                         "severity": "medium",
                         "url": f"{base}?{param}=https://evil.com",
-                        "detail": f"Redirects to: {r.headers.get('Location', '')}",
+                        "detail": f"Redirects to: {loc}",
                         "template": "apex-redirect",
                     })
                     break
@@ -350,12 +375,13 @@ def _test_redirect(url, param):
         try:
             r = _S.get(f"{url}?{urllib.parse.urlencode({param: payload})}",
                        timeout=_TIMEOUT, allow_redirects=False)
-            if "evil.com" in r.headers.get("Location", ""):
+            loc = r.headers.get("Location", "")
+            if _is_open_redirect(loc, payload):
                 findings.append({
                     "type": "Open Redirect",
                     "severity": "medium",
                     "url": f"{url}?{param}={payload}",
-                    "detail": f"Redirects to: {r.headers.get('Location', '')}",
+                    "detail": f"Redirects to: {loc}",
                     "template": "apex-redirect",
                 })
                 break
@@ -374,12 +400,13 @@ def _test_redirect_form(form, inp):
                 r = _S.get(form["action"], params=data, timeout=_TIMEOUT, allow_redirects=False)
             else:
                 r = _S.post(form["action"], data=data, timeout=_TIMEOUT, allow_redirects=False)
-            if "evil.com" in r.headers.get("Location", ""):
+            loc = r.headers.get("Location", "")
+            if _is_open_redirect(loc, payload):
                 findings.append({
                     "type": "Open Redirect",
                     "severity": "medium",
                     "url": form["action"],
-                    "detail": f"Input '{inp['name']}' redirects to: {r.headers.get('Location', '')}",
+                    "detail": f"Input '{inp['name']}' redirects to: {loc}",
                     "template": "apex-redirect",
                 })
                 break
@@ -5502,13 +5529,19 @@ _CHAIN_RULES = [
 
 
 def deduplicate_findings(findings):
-    """Remove duplicate findings — same type+URL = one finding."""
+    """Remove duplicate findings — same type+base_URL = one finding."""
     seen = set()
     unique = []
     for f in findings:
-        # Key: type + base URL (strip query params for dedup)
-        base_url = f.get("url","").split("?")[0]
-        key = _hashlib.md5(f"{f.get('type','')}|{base_url}".encode()).hexdigest()
+        url = f.get("url","")
+        # For param-based findings, deduplicate by type + base path only
+        base_url = url.split("?")[0]
+        ftype = f.get("type","")
+        # For header/info findings, also deduplicate by host only
+        if f.get("template","") in ("apex-headers","apex-hsts","apex-clickjack","apex-mime","apex-policy"):
+            parsed = urllib.parse.urlparse(url)
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
+        key = _hashlib.md5(f"{ftype}|{base_url}".encode()).hexdigest()
         if key not in seen:
             seen.add(key)
             unique.append(f)
@@ -5575,6 +5608,12 @@ def verify_finding(finding):
             fake = _S.get(url.rsplit("/",1)[0] + "/nonexistent_apex_test_xyz", timeout=3, allow_redirects=False)
             if abs(len(r.content) - len(fake.content)) < 50: return False
             return True
+
+        # Open redirect: re-verify Location actually points to evil.com domain
+        if template in ("apex-redirect",) and "?" in url:
+            r = _S.get(url, timeout=5, allow_redirects=False)
+            loc = r.headers.get("Location", "")
+            return _is_open_redirect(loc, "evil.com")
 
         # XSS: re-verify payload still reflects
         if "xss" in template.lower() and "?" in url:
