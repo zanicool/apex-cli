@@ -1785,6 +1785,43 @@ class ApexCLI:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
 
+    def phase_price_manipulation(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_price_manipulation(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_payment_flow_bypass(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_payment_flow_bypass(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_account_state_manipulation(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_account_state_manipulation(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_forced_browsing(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_forced_browsing(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_parameter_tampering(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_parameter_tampering(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_multi_step_race(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_multi_step_race(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+
 SKULL_ASCII = r"""[bold red]
                      ______
                   .-"      "-.
@@ -2008,6 +2045,12 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("PHP Object Injection", apex.phase_php_object_injection),
         ("Cache Key Injection", apex.phase_cache_key_injection),
         ("Link Injection", apex.phase_link_injection),
+        ("Price Manipulation", apex.phase_price_manipulation),
+        ("Payment Flow Bypass", apex.phase_payment_flow_bypass),
+        ("Account State Manipulation", apex.phase_account_state_manipulation),
+        ("Forced Browsing", apex.phase_forced_browsing),
+        ("Parameter Tampering", apex.phase_parameter_tampering),
+        ("Multi-Step Race", apex.phase_multi_step_race),
     ]
 
     # Measure target response time and adapt concurrency

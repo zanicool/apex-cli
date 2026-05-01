@@ -6583,3 +6583,390 @@ def scan_link_injection(crawl_data):
             except Exception:
                 continue
     return findings
+
+
+# ---------------------------------------------------------------------------
+# ELITE BATCH 8: Automatable logic bugs — the ones scanners miss
+# Multi-step races, price manipulation, payment bypass, account state,
+# mass user enumeration, forced browsing, parameter tampering
+# ---------------------------------------------------------------------------
+
+def scan_price_manipulation(crawl_data):
+    """Test price/quantity/discount manipulation — negative values, zero, overflow."""
+    findings = []
+    price_params = ("price","amount","qty","quantity","total","cost","discount",
+                    "coupon","credit","points","balance","fee","tax","subtotal")
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            if p.lower() not in price_params:
+                continue
+            parsed = urllib.parse.urlparse(url)
+            qs = urllib.parse.parse_qs(parsed.query)
+            orig = qs.get(p, ["1"])[0]
+            for test_val, label in [
+                ("-1", "negative"),
+                ("0", "zero"),
+                ("0.001", "fractional"),
+                ("99999999", "overflow"),
+                ("-0.01", "negative fractional"),
+            ]:
+                try:
+                    qs[p] = [test_val]
+                    test_url = parsed._replace(
+                        query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=_TIMEOUT)
+                    if r.status_code == 200 and not any(
+                            x in r.text.lower() for x in
+                            ["invalid","error","must be","greater","positive","minimum"]):
+                        findings.append({
+                            "type": f"Price Manipulation: {p}={test_val} ({label})",
+                            "severity": "high", "url": test_url,
+                            "detail": f"Param '{p}' accepts {label} value without error",
+                            "template": "apex-price",
+                        })
+                        break
+                except Exception:
+                    continue
+    # Also test POST forms with price fields
+    for form in crawl_data.get("forms", []):
+        if form.get("method", "").upper() != "POST":
+            continue
+        for inp in form.get("inputs", []):
+            if inp.get("name", "").lower() not in price_params:
+                continue
+            for test_val in ["-1", "0", "-0.01"]:
+                try:
+                    data = {i.get("name","f"): i.get("value","1")
+                            for i in form.get("inputs", [])}
+                    data[inp["name"]] = test_val
+                    r = _S.post(form["action"], data=data, timeout=_TIMEOUT)
+                    if r.status_code in (200, 201) and not any(
+                            x in r.text.lower() for x in ["invalid","error","positive"]):
+                        findings.append({
+                            "type": f"Price Manipulation via Form: {inp['name']}={test_val}",
+                            "severity": "high", "url": form["action"],
+                            "detail": f"Form accepts {test_val} for price field '{inp['name']}'",
+                            "template": "apex-price",
+                        })
+                        break
+                except Exception:
+                    continue
+    return findings
+
+
+def scan_payment_flow_bypass(crawl_data):
+    """Test payment/checkout flow bypass — skip to confirmation without paying."""
+    findings = []
+    # Look for multi-step flow indicators
+    step_urls = []
+    confirm_urls = []
+    for page in crawl_data.get("pages", []):
+        url = page["url"].lower()
+        if any(x in url for x in ["checkout","cart","order","payment","pay","billing"]):
+            step_urls.append(page["url"])
+        if any(x in url for x in ["confirm","success","complete","done","thank","receipt"]):
+            confirm_urls.append(page["url"])
+
+    # Try accessing confirmation pages directly without going through payment
+    for confirm_url in confirm_urls[:5]:
+        try:
+            r = _S.get(confirm_url, timeout=5)
+            if r.status_code == 200:
+                body = r.text.lower()
+                # Check if it shows real order data (not just a template)
+                if any(x in body for x in
+                       ["order","confirmation","receipt","thank you","payment","purchase"]):
+                    findings.append({
+                        "type": "Payment Flow Bypass (Direct Access)",
+                        "severity": "high", "url": confirm_url,
+                        "detail": "Confirmation page accessible without completing payment flow",
+                        "template": "apex-payment-bypass",
+                    })
+        except Exception:
+            continue
+
+    # Test parameter tampering on payment forms
+    for form in crawl_data.get("forms", []):
+        action = form.get("action", "").lower()
+        if not any(x in action for x in ["pay","checkout","order","purchase","billing"]):
+            continue
+        inputs = form.get("inputs", [])
+        # Look for hidden fields that control payment status
+        hidden = [i for i in inputs if i.get("type") == "hidden"]
+        for h in hidden:
+            name = h.get("name", "").lower()
+            val = h.get("value", "").lower()
+            if any(x in name for x in ["status","paid","payment","amount","total","price"]):
+                try:
+                    data = {i.get("name","f"): i.get("value","") for i in inputs}
+                    # Tamper: set status to paid/success, amount to 0
+                    if "status" in name:
+                        data[h["name"]] = "paid"
+                    elif "amount" in name or "total" in name or "price" in name:
+                        data[h["name"]] = "0"
+                    r = _S.post(form["action"], data=data, timeout=5)
+                    if r.status_code in (200, 302):
+                        findings.append({
+                            "type": f"Payment Parameter Tampering: {h['name']}",
+                            "severity": "critical", "url": form["action"],
+                            "detail": f"Hidden field '{h['name']}' controls payment — tampered to '{data[h['name']]}'",
+                            "template": "apex-payment-bypass",
+                        })
+                except Exception:
+                    continue
+    return findings
+
+
+def scan_account_state_manipulation(crawl_data):
+    """Test account state manipulation — activate unverified accounts, bypass email verification."""
+    findings = []
+    for page in crawl_data.get("pages", []):
+        url = page["url"]
+        url_lower = url.lower()
+        # Look for verification/activation endpoints
+        if not any(x in url_lower for x in
+                   ["verify","activate","confirm","token","email","account"]):
+            continue
+        base = "/".join(url.split("/", 3)[:3])
+
+        # Test common verification bypass patterns
+        bypass_tests = [
+            # Empty token
+            (url + "?token=", "empty token"),
+            (url + "?token=null", "null token"),
+            (url + "?token=undefined", "undefined token"),
+            (url + "?token=0", "zero token"),
+            # Already-used token patterns
+            (url + "?token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "predictable token"),
+        ]
+        for test_url, label in bypass_tests:
+            try:
+                r = _S.get(test_url, timeout=5)
+                if r.status_code in (200, 302):
+                    body = r.text.lower()
+                    if any(x in body for x in
+                           ["verified","activated","confirmed","success","welcome"]):
+                        findings.append({
+                            "type": f"Account Verification Bypass ({label})",
+                            "severity": "critical", "url": test_url,
+                            "detail": f"Account verified with {label}",
+                            "template": "apex-account-state",
+                        })
+                        break
+            except Exception:
+                continue
+
+        # Test if verification endpoint leaks valid tokens via timing
+        try:
+            import time as _t
+            times = []
+            for token in ["a"*40, "b"*40, "c"*40]:
+                start = _t.time()
+                _S.get(f"{base}/verify?token={token}", timeout=5)
+                times.append(_t.time() - start)
+            if max(times) - min(times) > 0.5:
+                findings.append({
+                    "type": "Verification Token Timing Oracle",
+                    "severity": "medium", "url": f"{base}/verify",
+                    "detail": f"Token validation timing varies by {(max(times)-min(times))*1000:.0f}ms — oracle possible",
+                    "template": "apex-account-state",
+                })
+        except Exception:
+            pass
+    return findings
+
+
+def scan_forced_browsing(crawl_data, web_targets):
+    """Forced browsing — access resources that should require auth or specific state."""
+    findings = []
+    # Common paths that should be protected but often aren't
+    sensitive_paths = [
+        "/admin", "/admin/users", "/admin/config", "/admin/logs",
+        "/api/admin", "/api/users", "/api/config", "/api/keys",
+        "/api/v1/admin", "/api/v1/users", "/api/v1/export",
+        "/export", "/export/users", "/export/data", "/export/csv",
+        "/backup", "/backup/db", "/dump", "/data/export",
+        "/internal", "/internal/api", "/internal/admin",
+        "/debug", "/debug/vars", "/debug/pprof", "/debug/info",
+        "/metrics", "/health/details", "/status/details",
+        "/swagger", "/swagger-ui", "/api-docs", "/openapi",
+        "/graphql", "/graphiql", "/playground",
+        "/jenkins", "/jenkins/script", "/jenkins/console",
+        "/phpmyadmin", "/adminer", "/dbadmin",
+        "/wp-admin", "/wp-admin/users.php",
+        "/actuator/env", "/actuator/heapdump", "/actuator/beans",
+        "/.git/config", "/.env", "/config.json", "/secrets.json",
+    ]
+    for target in web_targets[:3]:
+        base = "/".join(target.split("/", 3)[:3])
+        try:
+            r404 = _S.get(f"{base}/nonexistent_apex_test_xyz_12345", timeout=3)
+            size_404 = len(r404.content)
+            status_404 = r404.status_code
+        except Exception:
+            continue
+        for path in sensitive_paths:
+            try:
+                r = _S.get(f"{base}{path}", timeout=5, allow_redirects=False)
+                # Must be 200 and different from 404
+                if (r.status_code == 200 and
+                        abs(len(r.content) - size_404) > 100):
+                    body = r.text[:500].lower()
+                    # Must have real content, not a generic page
+                    if any(x in body for x in
+                           ["admin","user","config","key","secret","token","password",
+                            "email","database","export","backup","debug","metric",
+                            "swagger","graphql","actuator","jenkins","phpmyadmin"]):
+                        findings.append({
+                            "type": f"Forced Browsing: {path}",
+                            "severity": "high",
+                            "url": f"{base}{path}",
+                            "detail": f"Sensitive path accessible without auth ({len(r.content)}b)",
+                            "template": "apex-forced-browse",
+                        })
+            except Exception:
+                continue
+    return findings
+
+
+def scan_parameter_tampering(crawl_data):
+    """Parameter tampering — modify role/admin/privilege params to escalate."""
+    findings = []
+    priv_params = ("role","admin","is_admin","isAdmin","superuser","privilege",
+                   "level","group","type","plan","tier","access","permission",
+                   "scope","authority","rank","status","verified","active")
+    priv_values = ("admin","administrator","superuser","root","1","true","staff",
+                   "moderator","owner","manager","super","god","system")
+
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            if p.lower() not in priv_params:
+                continue
+            parsed = urllib.parse.urlparse(url)
+            qs = urllib.parse.parse_qs(parsed.query)
+            orig_val = qs.get(p, ["user"])[0]
+            try:
+                baseline = _S.get(url, timeout=5)
+                baseline_len = len(baseline.content)
+            except Exception:
+                continue
+            for val in priv_values:
+                try:
+                    qs[p] = [val]
+                    test_url = parsed._replace(
+                        query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=5)
+                    if (r.status_code == 200 and
+                            abs(len(r.content) - baseline_len) > 200):
+                        findings.append({
+                            "type": f"Parameter Tampering: {p}={val}",
+                            "severity": "critical", "url": test_url,
+                            "detail": f"Setting '{p}={val}' changes response by {abs(len(r.content)-baseline_len)}b — privilege escalation possible",
+                            "template": "apex-param-tamper",
+                        })
+                        break
+                except Exception:
+                    continue
+
+    # Also test POST forms
+    for form in crawl_data.get("forms", []):
+        if form.get("method", "").upper() != "POST":
+            continue
+        action = form.get("action", "")
+        if not action:
+            continue
+        inputs = form.get("inputs", [])
+        try:
+            baseline_data = {i.get("name","f"): i.get("value","test") for i in inputs}
+            baseline = _S.post(action, data=baseline_data, timeout=5)
+        except Exception:
+            continue
+        for inp in inputs:
+            if inp.get("name","").lower() not in priv_params:
+                continue
+            for val in priv_values[:3]:
+                try:
+                    data = dict(baseline_data)
+                    data[inp["name"]] = val
+                    r = _S.post(action, data=data, timeout=5)
+                    if (r.status_code == 200 and
+                            abs(len(r.content) - len(baseline.content)) > 200):
+                        findings.append({
+                            "type": f"Parameter Tampering in Form: {inp['name']}={val}",
+                            "severity": "critical", "url": action,
+                            "detail": f"Form field '{inp['name']}={val}' changes response",
+                            "template": "apex-param-tamper",
+                        })
+                        break
+                except Exception:
+                    continue
+    return findings
+
+
+def scan_multi_step_race(crawl_data):
+    """Multi-step race conditions — coupon reuse, concurrent purchases, double-spend."""
+    import concurrent.futures as _cf
+    findings = []
+
+    # Find coupon/promo/voucher endpoints
+    coupon_paths = []
+    for page in crawl_data.get("pages", []):
+        url = page["url"].lower()
+        if any(x in url for x in ["coupon","promo","voucher","discount","redeem","code","gift"]):
+            coupon_paths.append(page["url"])
+
+    for form in crawl_data.get("forms", []):
+        action = form.get("action", "").lower()
+        if any(x in action for x in ["coupon","promo","voucher","discount","redeem"]):
+            coupon_paths.append(form["action"])
+
+    for url in coupon_paths[:3]:
+        # Fire 10 simultaneous requests with same coupon code
+        def apply_coupon(u):
+            try:
+                return _S.post(u, data={"code": "TESTCOUPON10", "coupon": "TESTCOUPON10",
+                                        "promo": "TESTCOUPON10"}, timeout=5)
+            except Exception:
+                return None
+
+        with _cf.ThreadPoolExecutor(max_workers=10) as pool:
+            results = list(pool.map(apply_coupon, [url]*10))
+
+        success = [r for r in results if r and r.status_code in (200, 201)
+                   and not any(x in (r.text or "").lower()
+                               for x in ["invalid","expired","used","error"])]
+        if len(success) > 1:
+            findings.append({
+                "type": "Race Condition: Coupon/Promo Reuse",
+                "severity": "high", "url": url,
+                "detail": f"{len(success)}/10 parallel coupon applications succeeded — double-use possible",
+                "template": "apex-race-coupon",
+            })
+
+    # Test concurrent balance/credit operations
+    for form in crawl_data.get("forms", []):
+        action = form.get("action", "").lower()
+        if not any(x in action for x in ["transfer","withdraw","redeem","spend","use"]):
+            continue
+        inputs = form.get("inputs", [])
+        data = {i.get("name","f"): i.get("value","1") for i in inputs}
+
+        def do_request(d):
+            try:
+                return _S.post(form["action"], data=d, timeout=5)
+            except Exception:
+                return None
+
+        with _cf.ThreadPoolExecutor(max_workers=10) as pool:
+            results = list(pool.map(do_request, [data]*10))
+
+        success = [r for r in results if r and r.status_code in (200, 201)
+                   and "success" in (r.text or "").lower()]
+        if len(success) > 1:
+            findings.append({
+                "type": "Race Condition: Concurrent Transaction",
+                "severity": "critical", "url": form["action"],
+                "detail": f"{len(success)}/10 parallel transactions succeeded — double-spend possible",
+                "template": "apex-race-coupon",
+            })
+    return findings
