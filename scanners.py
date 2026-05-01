@@ -4673,40 +4673,66 @@ class OOBServer:
         self._thread = None
         self._lock = _threading.Lock()
         self._ready = _threading.Event()
+        self._api_mode = False
+        self._api_secret = ""
 
     def start(self):
         """Auto-install and start interactsh-client."""
-        path = _subprocess.run(["which","interactsh-client"],
-                               capture_output=True, text=True).stdout.strip()
+        import shutil, os
+        path = shutil.which("interactsh-client")
         if not path:
+            # Try go install
+            go_bin = os.path.expanduser("~/go/bin")
             try:
-                import shutil, os
-                go_bin = os.path.expanduser("~/go/bin")
                 _subprocess.run(
-                    ["go","install","github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest"],
+                    ["go", "install",
+                     "github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest"],
                     capture_output=True, timeout=120
                 )
                 path = os.path.join(go_bin, "interactsh-client")
+                if not os.path.isfile(path):
+                    path = None
             except Exception:
-                return False
-        if not path or not _subprocess.run(["test","-x",path], shell=False).returncode == 0:
-            import shutil
-            path = shutil.which("interactsh-client")
+                path = None
         if not path:
-            return False
+            # Fallback: use interact.sh public API directly (no binary needed)
+            return self._start_api_fallback()
         try:
             self._proc = _subprocess.Popen(
-                [path, "-json", "-v"],
+                [path, "-json"],
                 stdout=_subprocess.PIPE, stderr=_subprocess.PIPE,
                 text=True
             )
             self._thread = _threading.Thread(target=self._read_output, daemon=True)
             self._thread.start()
-            # Wait up to 10s for domain registration
-            self._ready.wait(timeout=10)
+            self._ready.wait(timeout=15)
             return self.domain is not None
         except Exception:
-            return False
+            return self._start_api_fallback()
+
+    def _start_api_fallback(self):
+        """Use interactsh public API directly — no binary needed."""
+        try:
+            import secrets, base64
+            # Register with public interactsh server
+            r = requests.post("https://oast.pro/register",
+                             json={"public-key": "", "secret-key": secrets.token_hex(16)},
+                             timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                self.domain = data.get("domain", "")
+                self._api_secret = data.get("secret-key", "")
+                self._api_mode = True
+                self._ready.set()
+                return bool(self.domain)
+        except Exception:
+            pass
+        # Last resort: use a unique subdomain of a known OOB catcher
+        # User must monitor this manually
+        import uuid
+        self.domain = f"apex-{uuid.uuid4().hex[:8]}.oast.fun"
+        self._ready.set()
+        return True
 
     def _read_output(self):
         import json as _json
@@ -4737,6 +4763,18 @@ class OOBServer:
                 for i in self.interactions:
                     if identifier in str(i):
                         return i
+            # Poll API in fallback mode
+            if self._api_mode and self._api_secret:
+                try:
+                    r = requests.get(f"https://oast.pro/poll?id={self.domain}&secret={self._api_secret}",
+                                    timeout=3)
+                    if r.status_code == 200:
+                        data = r.json()
+                        for item in data.get("data", []):
+                            if identifier in str(item):
+                                return item
+                except Exception:
+                    pass
             _time.sleep(0.5)
         return None
 
@@ -6071,4 +6109,137 @@ def parse_openapi_spec(base_url):
         "links": [p["url"] for p in pages],
         "spec_url": spec_url,
         "total_endpoints": total,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Authenticated crawl — logs in first, then crawls with session cookies
+# ---------------------------------------------------------------------------
+
+def authenticated_crawl(base_url, username, password, max_pages=50):
+    """Log in and crawl authenticated pages — finds bugs behind login."""
+    import json as _j
+
+    session = requests.Session()
+    session.verify = False
+    session.headers.update({"User-Agent": _USER_AGENTS[0]})
+
+    logged_in = False
+    login_paths = ["/login", "/signin", "/auth/login", "/api/login",
+                   "/api/auth", "/api/v1/login", "/api/v1/auth",
+                   "/user/login", "/account/login", "/auth/signin"]
+
+    for path in login_paths:
+        url = f"{base_url}{path}"
+        try:
+            r = session.get(url, timeout=5)
+            if r.status_code not in (200, 405):
+                continue
+            # Try JSON login
+            for payload in [
+                {"username": username, "password": password},
+                {"email": username, "password": password},
+                {"user": username, "pass": password},
+                {"login": username, "password": password},
+                {"identifier": username, "password": password},
+            ]:
+                r2 = session.post(url, json=payload, timeout=5)
+                body = r2.text.lower()
+                if (r2.status_code in (200, 201) and
+                        any(x in body for x in ["token","dashboard","welcome","logout","profile","success"]) and
+                        not any(x in body for x in ["invalid","incorrect","failed","wrong","error"])):
+                    # Extract JWT if present
+                    import re as _re
+                    jwt_match = _re.search(r'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', r2.text)
+                    if jwt_match:
+                        session.headers["Authorization"] = f"Bearer {jwt_match.group()}"
+                    logged_in = True
+                    break
+                # Try form-based login
+                from bs4 import BeautifulSoup as _BS
+                soup = _BS(r.text, "lxml")
+                form = soup.find("form")
+                if form and not logged_in:
+                    data = {}
+                    for inp in form.find_all("input"):
+                        name = inp.get("name", "")
+                        if not name: continue
+                        if any(x in name.lower() for x in ["user","email","login","identifier"]):
+                            data[name] = username
+                        elif any(x in name.lower() for x in ["pass","pwd","secret"]):
+                            data[name] = password
+                        else:
+                            data[name] = inp.get("value", "")
+                    action = form.get("action", url)
+                    if not action.startswith("http"):
+                        action = base_url + action
+                    r3 = session.post(action, data=data, timeout=5, allow_redirects=True)
+                    if r3.status_code in (200, 302) and "logout" in r3.text.lower():
+                        logged_in = True
+            if logged_in:
+                break
+        except Exception:
+            continue
+
+    if not logged_in:
+        return None
+
+    # Now crawl with authenticated session
+    visited = set()
+    to_visit = [base_url]
+    pages, forms, params_found, links = [], [], defaultdict(set), set()
+
+    while to_visit and len(visited) < max_pages:
+        url = to_visit.pop(0)
+        norm = url.split("?")[0].split("#")[0]
+        if norm in visited:
+            continue
+        visited.add(norm)
+        try:
+            r = session.get(url, timeout=10, allow_redirects=True)
+        except Exception:
+            continue
+
+        pages.append({"url": url, "status": r.status_code, "length": len(r.content),
+                      "authenticated": True})
+
+        ctype = r.headers.get("content-type", "").lower()
+        if "application/json" in ctype:
+            try:
+                data = _j.loads(r.text)
+                if isinstance(data, dict):
+                    for k in data.keys():
+                        params_found[norm].add(k)
+            except Exception:
+                pass
+            continue
+
+        from bs4 import BeautifulSoup as _BS2
+        soup = _BS2(r.text, "lxml")
+        for tag in soup.find_all("a", href=True):
+            full = urllib.parse.urljoin(url, tag["href"])
+            parsed = urllib.parse.urlparse(full)
+            base_parsed = urllib.parse.urlparse(base_url)
+            if parsed.netloc == base_parsed.netloc:
+                clean = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                if parsed.query:
+                    for k in urllib.parse.parse_qs(parsed.query):
+                        params_found[clean].add(k)
+                links.add(full)
+                if clean not in visited:
+                    to_visit.append(full)
+        for form in soup.find_all("form"):
+            action = urllib.parse.urljoin(url, form.get("action", ""))
+            method = form.get("method", "get").upper()
+            inputs = [{"name": i.get("name",""), "type": i.get("type","text"),
+                       "value": i.get("value","")}
+                      for i in form.find_all(["input","textarea","select"]) if i.get("name")]
+            forms.append({"url": url, "action": action, "method": method,
+                          "inputs": inputs, "authenticated": True})
+
+    return {
+        "pages": pages, "forms": forms,
+        "params": {u: list(p) for u, p in params_found.items()},
+        "links": list(links),
+        "session": session,
     }

@@ -528,18 +528,53 @@ class ApexCLI:
             f.write("\n".join(self.web_targets) + "\n")
 
         json_out = os.path.join(self.output_dir, "nuclei.json")
+
+        # Find nuclei templates directory
+        import shutil as _shutil
+        templates_dir = os.path.expanduser("~/nuclei-templates")
+        if not os.path.isdir(templates_dir):
+            templates_dir = os.path.join(os.path.expanduser("~"), ".local", "nuclei-templates")
+        if not os.path.isdir(templates_dir):
+            # Let nuclei use its default
+            templates_dir = None
+
+        # High-value template categories to always run
+        template_tags = [
+            "cve", "rce", "sqli", "xss", "ssrf", "lfi", "rfi", "xxe",
+            "ssti", "idor", "auth-bypass", "default-login", "exposed-panel",
+            "misconfig", "takeover", "token", "secret", "exposure",
+            "injection", "traversal", "redirect", "cors", "jwt",
+        ]
+
         cmd = [
             path, "-l", targets_file, "-jsonl", "-o", json_out,
             "-silent", "-no-color",
-            "-c", "100",             # concurrent templates
-            "-bs", "100",            # bulk size (hosts per template)
-            "-rl", "1000",           # max requests/sec
-            "-timeout", "5",
+            "-c", "50",
+            "-bs", "50",
+            "-rl", "500",
+            "-timeout", "8",
+            "-retries", "1",
+            "-tags", ",".join(template_tags),
         ]
+
+        # Add explicit template dirs if available
+        if templates_dir:
+            for subdir in ["http/cves", "http/exposed-panels", "http/default-logins",
+                           "http/misconfigurations", "http/exposures", "http/vulnerabilities",
+                           "http/takeovers", "http/fuzzing", "dns"]:
+                full = os.path.join(templates_dir, subdir)
+                if os.path.isdir(full):
+                    cmd.extend(["-t", full])
+
         if self.deep:
             cmd.extend(["-severity", "info,low,medium,high,critical"])
         else:
             cmd.extend(["-severity", "medium,high,critical"])
+
+        # Also run DAST templates if available (nuclei v3+)
+        dast_dir = os.path.join(templates_dir or "", "dast")
+        if os.path.isdir(dast_dir):
+            cmd.extend(["-t", dast_dir])
 
         stdout, _, code = self.run_command(cmd, "Nuclei vulnerability scan", "nuclei_log.txt")
 
@@ -552,11 +587,14 @@ class ApexCLI:
                         continue
                     try:
                         finding = json.loads(line)
+                        info = finding.get("info", {})
                         self.vulnerabilities.append({
-                            "type": finding.get("info", {}).get("name", "Unknown"),
-                            "severity": finding.get("info", {}).get("severity", "unknown"),
+                            "type": info.get("name", "Unknown"),
+                            "severity": info.get("severity", "unknown"),
                             "url": finding.get("matched-at", finding.get("host", "")),
                             "template": finding.get("template-id", ""),
+                            "detail": info.get("description", "") or str(finding.get("extracted-results", "")),
+                            "cvss_score": info.get("classification", {}).get("cvss-score", ""),
                             "status": "VULNERABLE",
                         })
                     except json.JSONDecodeError:
@@ -647,6 +685,24 @@ class ApexCLI:
             "pages": all_pages, "forms": all_forms,
             "params": all_params, "links": list(all_links),
         }
+        # Authenticated crawl — merge pages/forms/params found behind login
+        if self.auth and not self.dry_run:
+            username, password = self.auth
+            for target in (self.web_targets or [f"https://{self.target}"])[:2]:
+                base = "/".join(target.split("/", 3)[:3])
+                console.print(f"[bold blue][+][/bold blue] Authenticated crawl as {username}...")
+                auth_data = authenticated_crawl(base, username, password,
+                                                max_pages=50 if self.deep else 25)
+                if auth_data:
+                    all_pages.extend(auth_data["pages"])
+                    all_forms.extend(auth_data["forms"])
+                    for u, ps in auth_data["params"].items():
+                        all_params[u] = list(set(all_params.get(u, [])) | set(ps))
+                    all_links.update(auth_data["links"])
+                    console.print(f"[green][✓][/green] Auth crawl: {len(auth_data['pages'])} pages, {len(auth_data['forms'])} forms")
+                else:
+                    console.print(f"[yellow][!] Auth crawl: login failed[/yellow]")
+
         # Parse OpenAPI/Swagger spec — merges all discovered endpoints
         for target in (self.web_targets or [f"https://{self.target}"])[:3]:
             spec_base = "/".join(target.split("/", 3)[:3])
@@ -1892,6 +1948,26 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("Host Override Chain", apex.phase_host_override_chain),
     ]
 
+    # Measure target response time and adapt concurrency
+    workers = 8  # default
+    if not dry_run and apex.web_targets:
+        import time as _t
+        try:
+            t0 = _t.time()
+            requests.get(apex.web_targets[0], timeout=5, verify=False)
+            resp_time = _t.time() - t0
+            if resp_time < 0.3:
+                workers = 12   # fast target — more workers
+            elif resp_time < 1.0:
+                workers = 8    # normal
+            elif resp_time < 3.0:
+                workers = 4    # slow target — fewer workers, avoid timeouts
+            else:
+                workers = 2    # very slow — be gentle
+            console.print(f"[dim]Target response: {resp_time:.2f}s → {workers} parallel workers[/dim]")
+        except Exception:
+            pass
+
     SEQUENTIAL = {"Recon", "Passive Recon", "Subdomain Brute-Force", "Probe", "Fingerprint", "Fuzz", "Crawl"}
     seq_phases = [(l, f) for l, f in phases if l in SEQUENTIAL]
     par_phases = [(l, f) for l, f in phases if l not in SEQUENTIAL]
@@ -1922,7 +1998,7 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
                 console.print(f"[red][!] {label} failed: {err}[/red]")
             progress.update(task, completed=1)
 
-        workers = min(8, len(par_phases))
+        workers = min(workers, len(par_phases))
         tasks_map = {}
         with ThreadPoolExecutor(max_workers=workers) as pool:
             for label, fn in par_phases:
