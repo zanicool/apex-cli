@@ -511,7 +511,7 @@ class ApexCLI:
         for target in self.web_targets:
             safe = re.sub(r"[^\w]", "_", target)
             cmd = [
-                sys.executable, path, "-u", target,
+                path, "-u", target,
                 "--batch", "--crawl", "3" if self.deep else "1",
                 "--random-agent", "--forms",
             ]
@@ -706,42 +706,6 @@ class ApexCLI:
         self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
         self._log_phase("CORS", "ok", f"{len(findings)} found")
 
-    def phase_proto_pollution(self):
-        if self.dry_run or not self.crawl_data: return
-        console.print("[bold blue][+][/bold blue] Testing for prototype pollution...")
-        findings = scan_prototype_pollution(self.crawl_data)
-        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
-
-    def phase_host_injection(self):
-        if self.dry_run or not self.crawl_data: return
-        console.print("[bold blue][+][/bold blue] Testing for host header injection...")
-        findings = scan_host_header_injection(self.crawl_data)
-        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
-
-    def phase_crlf(self):
-        if self.dry_run or not self.crawl_data: return
-        console.print("[bold blue][+][/bold blue] Testing for CRLF injection...")
-        findings = scan_crlf_injection(self.crawl_data)
-        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
-
-    def phase_jwt(self):
-        if self.dry_run or not self.crawl_data: return
-        console.print("[bold blue][+][/bold blue] Testing for JWT issues...")
-        findings = scan_jwt_issues(self.crawl_data)
-        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
-
-    def phase_takeover(self):
-        if self.dry_run or not self.subdomains: return
-        console.print("[bold blue][+][/bold blue] Testing for subdomain takeover...")
-        findings = scan_subdomain_takeover(self.subdomains)
-        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
-
-    def phase_js_secrets(self):
-        if self.dry_run or not self.crawl_data: return
-        console.print("[bold blue][+][/bold blue] Scanning JS files for leaked secrets...")
-        findings = scan_api_keys_in_js(self.crawl_data)
-        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
-
     def phase_graphql(self):
         if self.dry_run or not self.crawl_data: return
         console.print("[bold blue][+][/bold blue] Testing GraphQL endpoints...")
@@ -772,18 +736,6 @@ class ApexCLI:
         findings = scan_wayback(self.target)
         self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
         self._log_phase("Wayback", "ok", f"{len(findings)} found")
-
-    def phase_param_brute(self):
-        if self.dry_run or not self.crawl_data: return
-        console.print("[bold blue][+][/bold blue] Bruteforcing hidden parameters...")
-        findings = scan_param_bruteforce(self.crawl_data)
-        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
-
-    def phase_403_bypass(self):
-        if self.dry_run or not self.crawl_data: return
-        console.print("[bold blue][+][/bold blue] Testing 403 bypasses...")
-        findings = scan_403_bypass(self.crawl_data)
-        self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
     # -- reporting ---------------------------------------------------------
 
@@ -1326,19 +1278,11 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None):
         ("LFI", apex.phase_lfi),
         ("Broken Auth", apex.phase_broken_auth),
         ("CORS", apex.phase_cors),
-        ("Prototype Pollution", apex.phase_proto_pollution),
-        ("Host Injection", apex.phase_host_injection),
-        ("CRLF", apex.phase_crlf),
-        ("JWT", apex.phase_jwt),
-        ("Subdomain Takeover", apex.phase_takeover),
-        ("JS Secrets", apex.phase_js_secrets),
         ("GraphQL", apex.phase_graphql),
         ("Rate Limit", apex.phase_rate_limit),
         ("Info Disclosure", apex.phase_info_disclosure),
         ("JS Endpoints", apex.phase_js_endpoints),
         ("Wayback Recon", apex.phase_wayback),
-        ("Param Bruteforce", apex.phase_param_brute),
-        ("403 Bypass", apex.phase_403_bypass),
         ("Path Traversal", apex.phase_path_traversal),
         ("Prototype Pollution", apex.phase_prototype_pollution),
         ("Host Header Injection", apex.phase_host_header_injection),
@@ -1441,8 +1385,6 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None):
         apex.report_json()
     if "html" in report_formats:
         apex.report_html()
-    # Always save JSON for records
-    apex.report_json()
 
 
 def interactive_menu():

@@ -866,11 +866,6 @@ def scan_subdomain_takeover(subdomains):
                     except: pass
                 break
             except: break
-    return findings
-
-
-import json as json
-import subprocess
 
 
 # ---------------------------------------------------------------------------
