@@ -1053,7 +1053,7 @@ class ApexCLI:
 
     def phase_subdomain_takeover(self):
         if self.dry_run or not self.subdomains: return
-        findings = scan_subdomain_takeover(self.subdomains)
+        findings = scan_subdomain_takeover(list(self.subdomains))
         self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
     def phase_api_keys_in_js(self):

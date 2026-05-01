@@ -941,6 +941,8 @@ def scan_jwt_issues(crawl_data):
 
 def scan_subdomain_takeover(subdomains):
     """Check for subdomain takeover opportunities."""
+    if not subdomains:
+        return []
     findings = []
     takeover_sigs = {
         "There isn't a GitHub Pages site here": "GitHub Pages",
