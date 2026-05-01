@@ -1,6 +1,8 @@
 """Apex CLI v5.0 — Built-in scanners (no external tool dependencies)."""
 
 import re
+import socket
+import subprocess
 import time
 import urllib.parse
 from collections import defaultdict
@@ -400,8 +402,10 @@ def _is_open_redirect(location, payload):
     if not location:
         return False
     parsed = urllib.parse.urlparse(location)
-    # Must redirect to evil.com as the host, not just contain it in query params
     return parsed.netloc in ("evil.com", "www.evil.com") or location.startswith("//evil.com")
+
+
+def scan_open_redirect(crawl_data):
     """Test open redirect on URL-like parameters."""
     findings = []
 
@@ -5155,7 +5159,6 @@ _DNS_WORDLIST = [
 
 def scan_subdomain_bruteforce(target):
     """DNS brute-force subdomain enumeration — finds what cert transparency misses."""
-    import socket
     findings = []
     found = []
     domain_parts = target.split(".")
@@ -6447,6 +6450,7 @@ def scan_expression_language_injection(crawl_data):
 
 def scan_php_object_injection(crawl_data):
     """PHP object injection via serialized cookie/param values."""
+    import base64 as _b64
     findings = []
     # PHP serialized object markers
     php_serial_re = re.compile(r'[OoAasSiIdDbBrR]:\d+:')
@@ -6461,7 +6465,6 @@ def scan_php_object_injection(crawl_data):
             r = _S.get(page["url"], timeout=5)
             # Check cookies for serialized PHP objects
             for name, val in r.cookies.items():
-                import base64 as _b64
                 try:
                     decoded = _b64.b64decode(val + "==").decode("utf-8", errors="ignore")
                     if php_serial_re.search(decoded):
