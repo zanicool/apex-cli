@@ -1759,23 +1759,73 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("HTTP/2 Rapid Reset", apex.phase_http2_rapid_reset),
         ("SAML Injection", apex.phase_saml_injection),
         ("DNS Rebinding SSRF", apex.phase_dns_rebinding_ssrf),
+        # OOB confirmed
+        ("OOB SSRF", apex.phase_oob_ssrf),
+        ("OOB CMDi", apex.phase_oob_cmdi),
+        ("OOB SQLi", apex.phase_oob_sqli),
+        # Context-aware
+        ("Context XSS", apex.phase_context_xss),
+        ("Context SQLi", apex.phase_context_sqli),
+        # Authenticated
+        ("Authenticated Scan", apex.phase_authenticated),
+        # Elite batch 5+6
+        ("Subdomain Brute-Force", apex.phase_subdomain_bruteforce),
+        ("Response Diff Auth Bypass", apex.phase_response_diff_auth_bypass),
+        ("Next.js/React Vulns", apex.phase_nextjs_react_vulns),
+        ("GraphQL Mutation Fuzzing", apex.phase_graphql_mutation_fuzzing),
+        ("TE.CL Smuggling", apex.phase_te_cl_smuggling),
+        ("IDOR Pagination", apex.phase_idor_pagination),
+        ("Race Condition Registration", apex.phase_race_condition_registration),
+        ("Timing User Enumeration", apex.phase_timing_user_enumeration),
+        ("CSS Exfil", apex.phase_css_exfil),
+        ("Open Redirect OAuth Chain", apex.phase_open_redirect_oauth_chain),
+        ("SSRF PDF Generation", apex.phase_ssrf_pdf_generation),
+        ("NS Takeover", apex.phase_ns_takeover),
     ]
+
+    SEQUENTIAL = {"Recon", "Subdomain Brute-Force", "Probe", "Fingerprint", "Fuzz", "Crawl"}
+    seq_phases = [(l, f) for l, f in phases if l in SEQUENTIAL]
+    par_phases = [(l, f) for l, f in phases if l not in SEQUENTIAL]
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def run_phase(label, fn):
+        if label.lower() in skip:
+            apex._log_phase(label, "skipped", "user --skip")
+            return label, None
+        try:
+            fn()
+            return label, None
+        except Exception as e:
+            apex._log_phase(label, "error", str(e))
+            return label, str(e)
 
     with Progress(
         SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
         BarColumn(), TimeElapsedColumn(), console=console,
     ) as progress:
-        for label, fn in phases:
-            if label.lower() in skip:
-                apex._log_phase(label, "skipped", "user --skip")
-                continue
+        for label, fn in seq_phases:
             task = progress.add_task(f"[cyan]{label}...", total=1)
-            try:
-                fn()
-            except Exception as e:
-                console.print(f"[red][!] {label} failed: {e}[/red]")
-                apex._log_phase(label, "error", str(e))
+            _, err = run_phase(label, fn)
+            if err:
+                console.print(f"[red][!] {label} failed: {err}[/red]")
             progress.update(task, completed=1)
+
+        workers = min(8, len(par_phases))
+        tasks_map = {}
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for label, fn in par_phases:
+                t = progress.add_task(f"[cyan]{label}...", total=1)
+                tasks_map[pool.submit(run_phase, label, fn)] = (label, t)
+            for future in as_completed(tasks_map):
+                label, task_id = tasks_map[future]
+                _, err = future.result()
+                if err:
+                    console.print(f"[red][!] {label} failed: {err}[/red]")
+                progress.update(task_id, completed=1)
+
+    if apex.oob:
+        apex.oob.stop()
 
     # Reports
     apex.report_terminal()
