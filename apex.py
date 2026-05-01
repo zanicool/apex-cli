@@ -405,6 +405,10 @@ class ApexCLI:
 
         self.web_targets = list(dict.fromkeys(self.web_targets))  # dedup, preserve order
         self.web_targets = prioritize_targets(self.web_targets, self.technologies)
+        if scope:
+            self.web_targets = [t for t in self.web_targets
+                                if any(s in t for s in scope)]
+            console.print(f"[dim]Scope filter: {len(self.web_targets)} targets match {scope}[/dim]")
         console.print(f"[green][✓][/green] {len(self.web_targets)} live web targets.")
 
     def _probe_httpx(self, path):
@@ -1619,6 +1623,40 @@ class ApexCLI:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
 
+    def phase_passive_recon(self):
+        if self.dry_run: return
+        console.print(f"[bold blue][+][/bold blue] Passive recon on {self.target}...")
+        subs, findings = passive_recon(self.target)
+        self.subdomains = list(dict.fromkeys(self.subdomains + subs))
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+        self._log_phase("Passive Recon", "ok", f"{len(subs)} subdomains, {len(findings)} findings")
+
+    def phase_cors_null_origin(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_cors_null_origin(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_method_override(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_method_override(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_cookie_injection(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_cookie_injection(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_host_override_chain(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_host_override_chain(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+
 SKULL_ASCII = r"""[bold red]
                      ______
                   .-"      "-.
@@ -1662,7 +1700,7 @@ def show_tools():
     console.print(table)
 
 
-def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, auth=None, resume_dir=None):
+def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, auth=None, resume_dir=None, scope=None):
     report_formats = report_formats or ["terminal"]
     skip = [s.lower() for s in (skip or [])]
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1687,6 +1725,7 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
 
     phases = [
         ("Recon", apex.phase_recon),
+        ("Passive Recon", apex.phase_passive_recon),
         ("Probe", apex.phase_probe),
         ("Fingerprint", apex.phase_fingerprint),
         ("Fuzz", apex.phase_fuzz),
@@ -1830,9 +1869,13 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("Open Redirect OAuth Chain", apex.phase_open_redirect_oauth_chain),
         ("SSRF PDF Generation", apex.phase_ssrf_pdf_generation),
         ("NS Takeover", apex.phase_ns_takeover),
+        ("CORS Null Origin", apex.phase_cors_null_origin),
+        ("Method Override", apex.phase_method_override),
+        ("Cookie Injection", apex.phase_cookie_injection),
+        ("Host Override Chain", apex.phase_host_override_chain),
     ]
 
-    SEQUENTIAL = {"Recon", "Subdomain Brute-Force", "Probe", "Fingerprint", "Fuzz", "Crawl"}
+    SEQUENTIAL = {"Recon", "Passive Recon", "Subdomain Brute-Force", "Probe", "Fingerprint", "Fuzz", "Crawl"}
     seq_phases = [(l, f) for l, f in phases if l in SEQUENTIAL]
     par_phases = [(l, f) for l, f in phases if l not in SEQUENTIAL]
 
@@ -2013,6 +2056,10 @@ def main():
                         help="Credentials for authenticated scanning")
     parser.add_argument("--resume", type=str, metavar="SCAN_DIR",
                         help="Resume a previous scan from its output directory")
+    parser.add_argument("--rate", type=float, default=0.0, metavar="SECONDS",
+                        help="Delay between requests per thread (e.g. 0.1 for 10 req/s)")
+    parser.add_argument("--scope", nargs="+", default=[],
+                        help="Restrict scan to these subdomains/paths (e.g. --scope api.example.com /api)")
 
     args = parser.parse_args()
 
@@ -2051,6 +2098,10 @@ def main():
                 resume_dir=resume_dir)
         return
 
+    if args.rate > 0:
+        set_rate_limit(args.rate)
+        console.print(f"[dim]Rate limit: {args.rate}s between requests[/dim]")
+
     target = validate_target(target)
     console.print(f"[bold white]Target:[/bold white] {target}")
     console.print(f"[bold white]Mode:[/bold white] {'deep' if args.deep else 'standard'} | "
@@ -2059,7 +2110,8 @@ def main():
 
     run_scan(target, dry_run=args.dry_run, deep=args.deep,
             report_formats=args.report, skip=args.skip,
-            auth=tuple(args.auth) if args.auth else None)
+            auth=tuple(args.auth) if args.auth else None,
+            scope=args.scope)
 
 
 if __name__ == "__main__":

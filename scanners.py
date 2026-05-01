@@ -9,10 +9,56 @@ import requests
 from bs4 import BeautifulSoup
 
 requests.packages.urllib3.disable_warnings()
-_S = requests.Session()
-_S.headers.update({"User-Agent": "ApexCLI/5.0"})
-_S.verify = False
 _TIMEOUT = 10
+_RATE_DELAY = 0.0  # seconds between requests per thread, set via set_rate_limit()
+
+import threading as _tl_threading
+_thread_local = _tl_threading.local()
+
+_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
+]
+
+def _get_session():
+    """Return a thread-local requests session with rotating User-Agent."""
+    if not hasattr(_thread_local, "session"):
+        import random
+        s = requests.Session()
+        s.headers.update({
+            "User-Agent": random.choice(_USER_AGENTS),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        })
+        s.verify = False
+        _thread_local.session = s
+    return _thread_local.session
+
+# Backwards-compat proxy — reads from thread-local session
+class _SessionProxy:
+    def get(self, *a, **kw):
+        if _RATE_DELAY > 0:
+            time.sleep(_RATE_DELAY)
+        return _get_session().get(*a, **kw)
+    def post(self, *a, **kw):
+        if _RATE_DELAY > 0:
+            time.sleep(_RATE_DELAY)
+        return _get_session().post(*a, **kw)
+    def request(self, *a, **kw):
+        if _RATE_DELAY > 0:
+            time.sleep(_RATE_DELAY)
+        return _get_session().request(*a, **kw)
+    def options(self, *a, **kw):
+        return _get_session().options(*a, **kw)
+
+_S = _SessionProxy()
+
+def set_rate_limit(delay_seconds):
+    global _RATE_DELAY
+    _RATE_DELAY = delay_seconds
 
 # ---------------------------------------------------------------------------
 # Crawler
@@ -5648,3 +5694,204 @@ def prioritize_targets(web_targets, technologies):
         else:
             normal.append(t)
     return high_value + normal
+
+
+# ---------------------------------------------------------------------------
+# Passive Recon: Shodan, VirusTotal, SecurityTrails (free tier / no key needed)
+# ---------------------------------------------------------------------------
+
+def passive_recon(target):
+    """Gather intel from public sources without touching the target."""
+    findings = []
+    subdomains = set()
+
+    # crt.sh (already have get_cert_transparency_subdomains)
+    # HackerTarget subdomain API (free, no key)
+    try:
+        r = requests.get(f"https://api.hackertarget.com/hostsearch/?q={target}", timeout=10)
+        if r.status_code == 200 and "," in r.text:
+            for line in r.text.splitlines():
+                parts = line.split(",")
+                if len(parts) >= 1:
+                    sub = parts[0].strip()
+                    if sub.endswith(f".{target}") or sub == target:
+                        subdomains.add(sub)
+    except: pass
+
+    # AlienVault OTX (no key needed for passive)
+    try:
+        r = requests.get(f"https://otx.alienvault.com/api/v1/indicators/domain/{target}/passive_dns",
+                        timeout=10, headers={"User-Agent": "ApexCLI"})
+        if r.status_code == 200:
+            data = r.json()
+            for entry in data.get("passive_dns", []):
+                hostname = entry.get("hostname", "")
+                if hostname.endswith(f".{target}") or hostname == target:
+                    subdomains.add(hostname)
+    except: pass
+
+    # URLScan.io (no key for search)
+    try:
+        r = requests.get(f"https://urlscan.io/api/v1/search/?q=domain:{target}&size=100",
+                        timeout=10, headers={"User-Agent": "ApexCLI"})
+        if r.status_code == 200:
+            data = r.json()
+            for result in data.get("results", []):
+                page = result.get("page", {})
+                domain = page.get("domain", "")
+                if domain.endswith(f".{target}") or domain == target:
+                    subdomains.add(domain)
+                # Check for interesting findings in scan results
+                for vuln in result.get("verdicts", {}).get("overall", {}).get("tags", []):
+                    if vuln in ("malware", "phishing", "suspicious"):
+                        findings.append({"type": f"URLScan: {vuln} verdict",
+                                         "severity": "high", "url": f"https://{domain}",
+                                         "detail": f"URLScan.io flagged {domain} as {vuln}",
+                                         "template": "apex-passive"})
+    except: pass
+
+    # Wayback CDX for interesting historical endpoints
+    try:
+        r = requests.get(
+            f"https://web.archive.org/cdx/search/cdx?url=*.{target}/*&output=json&fl=original&collapse=urlkey&limit=200&filter=statuscode:200",
+            timeout=15)
+        if r.status_code == 200:
+            urls = r.json()[1:]  # skip header
+            for entry in urls:
+                url = entry[0] if entry else ""
+                if any(x in url for x in [".env", "config", "backup", "admin", "api/v", "graphql",
+                                           "swagger", "token", "secret", "password", "debug"]):
+                    findings.append({"type": "Passive: Interesting Historical URL",
+                                     "severity": "low", "url": url,
+                                     "detail": "Found in Wayback Machine — may still be live",
+                                     "template": "apex-passive"})
+    except: pass
+
+    # DNS history via SecurityTrails (no key for basic)
+    try:
+        r = requests.get(f"https://api.securitytrails.com/v1/domain/{target}/subdomains",
+                        timeout=10, headers={"APIKEY": "none"})
+        # Will 401 without key but worth trying
+        if r.status_code == 200:
+            data = r.json()
+            for sub in data.get("subdomains", []):
+                subdomains.add(f"{sub}.{target}")
+    except: pass
+
+    return list(subdomains), findings
+
+
+# ---------------------------------------------------------------------------
+# Missing vuln classes: null origin CORS, X-HTTP-Method-Override,
+#                       cookie header injection, host override chain
+# ---------------------------------------------------------------------------
+
+def scan_cors_null_origin(crawl_data):
+    """CORS with null origin — sandboxed iframes can send null origin requests."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages", [])[:10]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        try:
+            r = _S.get(page["url"], timeout=5, headers={"Origin": "null"})
+            acao = r.headers.get("Access-Control-Allow-Origin", "")
+            acac = r.headers.get("Access-Control-Allow-Credentials", "")
+            if acao == "null":
+                sev = "critical" if acac.lower() == "true" else "high"
+                findings.append({"type": "CORS Null Origin Allowed",
+                                 "severity": sev, "url": page["url"],
+                                 "detail": f"null origin accepted, credentials={acac} — sandboxed iframe attack",
+                                 "template": "apex-cors-null"})
+        except: pass
+    return findings
+
+
+def scan_method_override(web_targets):
+    """X-HTTP-Method-Override / _method bypass — turn GET into DELETE/PUT."""
+    findings = []
+    override_headers = [
+        "X-HTTP-Method-Override",
+        "X-Method-Override",
+        "X-HTTP-Method",
+        "_method",
+    ]
+    for target in web_targets[:5]:
+        for path in ["/api/users/1", "/api/admin", "/api/v1/users/1", "/user/1"]:
+            url = f"{target}{path}"
+            try:
+                # Check if GET returns 200
+                r_get = _S.get(url, timeout=5)
+                if r_get.status_code != 200: continue
+                # Try DELETE via override
+                for header in override_headers:
+                    r_del = _S.get(url, timeout=5, headers={header: "DELETE"})
+                    if r_del.status_code in (200, 204):
+                        findings.append({"type": f"HTTP Method Override: {header}",
+                                         "severity": "high", "url": url,
+                                         "detail": f"{header}: DELETE accepted on {path}",
+                                         "template": "apex-method-override"})
+                        break
+                    r_put = _S.get(url, timeout=5, headers={header: "PUT"})
+                    if r_put.status_code in (200, 201):
+                        findings.append({"type": f"HTTP Method Override: {header}",
+                                         "severity": "high", "url": url,
+                                         "detail": f"{header}: PUT accepted on {path}",
+                                         "template": "apex-method-override"})
+                        break
+            except: continue
+    return findings
+
+
+def scan_cookie_injection(crawl_data):
+    """Cookie header injection via newline in cookie values."""
+    findings = []
+    payload = "apex_test=1\r\nSet-Cookie: injected=apex_injected; Path=/"
+    for page in crawl_data.get("pages", [])[:5]:
+        url = page["url"]
+        for param in crawl_data.get("params", {}).get(url.split("?")[0], []):
+            try:
+                parsed = urllib.parse.urlparse(url)
+                qs = urllib.parse.parse_qs(parsed.query)
+                qs[param] = [payload]
+                test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                r = _S.get(test_url, timeout=_TIMEOUT)
+                # Check if injected cookie appears in response headers
+                set_cookies = r.headers.get("Set-Cookie", "")
+                if "apex_injected" in set_cookies:
+                    findings.append({"type": "Cookie Header Injection",
+                                     "severity": "high", "url": test_url,
+                                     "detail": f"CRLF injection in param '{param}' sets arbitrary cookies",
+                                     "template": "apex-cookie-inject"})
+                    break
+            except: continue
+    return findings
+
+
+def scan_host_override_chain(web_targets):
+    """Host header override chain — X-Forwarded-Host changes internal routing."""
+    findings = []
+    override_headers = [
+        {"X-Forwarded-Host": "internal.localhost"},
+        {"X-Forwarded-Host": "169.254.169.254"},
+        {"X-Original-Host": "internal.localhost"},
+        {"X-Host": "internal.localhost"},
+        {"Forwarded": "host=internal.localhost"},
+    ]
+    for target in web_targets[:3]:
+        try:
+            baseline = _S.get(target, timeout=5)
+            for headers in override_headers:
+                r = _S.get(target, timeout=5, headers=headers)
+                # Different response = host header affects routing
+                if (r.status_code != baseline.status_code or
+                        abs(len(r.content) - len(baseline.content)) > 200):
+                    hname = list(headers.keys())[0]
+                    findings.append({"type": f"Host Override Affects Routing: {hname}",
+                                     "severity": "high", "url": target,
+                                     "detail": f"{hname} changes response — internal routing bypass possible",
+                                     "template": "apex-host-override"})
+                    break
+        except: pass
+    return findings
