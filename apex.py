@@ -294,6 +294,7 @@ class ApexCLI:
         self.crawl_data: dict = {}
         self.technologies: list[str] = []
         self.waf_detected: list[str] = []
+        self.scope = []
         self._vuln_lock = __import__("threading").Lock()
         os.makedirs(self.output_dir, exist_ok=True)
 
@@ -434,9 +435,11 @@ class ApexCLI:
         except Exception:
             pass
         self._dedup_subdomains()
-        if not self.subdomains:
-            self.subdomains = [self.target]
-            console.print("[yellow][!] No subdomains found — using base target.[/yellow]")
+        # Always include the base target itself
+        if self.target not in self.subdomains:
+            self.subdomains.insert(0, self.target)
+        if len(self.subdomains) == 1:
+            console.print("[yellow][!] No additional subdomains found.[/yellow]")
         console.print(f"[green][✓][/green] {len(self.subdomains)} unique subdomains after dedup.")
         # Save consolidated list
         with open(os.path.join(self.output_dir, "subdomains.txt"), "w") as f:
@@ -457,10 +460,10 @@ class ApexCLI:
 
         self.web_targets = list(dict.fromkeys(self.web_targets))  # dedup, preserve order
         self.web_targets = prioritize_targets(self.web_targets, self.technologies)
-        if scope:
+        if self.scope:
             self.web_targets = [t for t in self.web_targets
-                                if any(s in t for s in scope)]
-            console.print(f"[dim]Scope filter: {len(self.web_targets)} targets match {scope}[/dim]")
+                                if any(s in t for s in self.scope)]
+            console.print(f"[dim]Scope filter: {len(self.web_targets)} targets match {self.scope}[/dim]")
         console.print(f"[green][✓][/green] {len(self.web_targets)} live web targets.")
 
     def _probe_httpx(self, path):
@@ -1049,7 +1052,7 @@ class ApexCLI:
         self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
     def phase_subdomain_takeover(self):
-        if self.dry_run: return
+        if self.dry_run or not self.subdomains: return
         findings = scan_subdomain_takeover(self.subdomains)
         self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
@@ -1925,6 +1928,7 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
     if resume_dir:
         output_dir = resume_dir
     apex = ApexCLI(target, output_dir, dry_run=dry_run, deep=deep, auth=auth)
+    apex.scope = scope or []
     if resume_dir and apex._load_state():
         completed_phases = {p["phase"] for p in apex.phase_results}
         console.print(f"[green][✓][/green] Resumed — {len(completed_phases)} phases already done")
