@@ -294,6 +294,43 @@ class ApexCLI:
 
     def _log_phase(self, name, status, detail=""):
         self.phase_results.append({"phase": name, "status": status, "detail": detail})
+        self._save_state()
+
+    def _save_state(self):
+        """Persist scan state so it can be resumed after a crash."""
+        state = {
+            "target": self.target,
+            "subdomains": self.subdomains,
+            "web_targets": self.web_targets,
+            "technologies": self.technologies,
+            "waf_detected": self.waf_detected,
+            "phase_results": self.phase_results,
+            "vulnerabilities": self.vulnerabilities,
+        }
+        try:
+            state_file = os.path.join(self.output_dir, ".apex_state.json")
+            with open(state_file, "w") as f:
+                json.dump(state, f)
+        except Exception:
+            pass
+
+    def _load_state(self):
+        """Load previous scan state for resume."""
+        state_file = os.path.join(self.output_dir, ".apex_state.json")
+        if not os.path.isfile(state_file):
+            return False
+        try:
+            with open(state_file) as f:
+                state = json.load(f)
+            self.subdomains = state.get("subdomains", [])
+            self.web_targets = state.get("web_targets", [])
+            self.technologies = state.get("technologies", [])
+            self.waf_detected = state.get("waf_detected", [])
+            self.phase_results = state.get("phase_results", [])
+            self.vulnerabilities = state.get("vulnerabilities", [])
+            return True
+        except Exception:
+            return False
 
     # -- phases ------------------------------------------------------------
 
@@ -1625,12 +1662,19 @@ def show_tools():
     console.print(table)
 
 
-def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, auth=None):
+def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, auth=None, resume_dir=None):
     report_formats = report_formats or ["terminal"]
     skip = [s.lower() for s in (skip or [])]
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = f"scan_{target}_{ts}"
+    if resume_dir:
+        output_dir = resume_dir
     apex = ApexCLI(target, output_dir, dry_run=dry_run, deep=deep, auth=auth)
+    if resume_dir and apex._load_state():
+        completed_phases = {p["phase"] for p in apex.phase_results}
+        console.print(f"[green][✓][/green] Resumed — {len(completed_phases)} phases already done")
+    else:
+        completed_phases = set()
 
     # Start OOB server
     if not dry_run:
@@ -1798,6 +1842,8 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         if label.lower() in skip:
             apex._log_phase(label, "skipped", "user --skip")
             return label, None
+        if label in completed_phases:
+            return label, None  # already done in previous run
         try:
             fn()
             return label, None
@@ -1965,6 +2011,8 @@ def main():
                         help="Skip phases (e.g. --skip nuclei sqli)")
     parser.add_argument("--auth", nargs=2, metavar=("USER", "PASS"),
                         help="Credentials for authenticated scanning")
+    parser.add_argument("--resume", type=str, metavar="SCAN_DIR",
+                        help="Resume a previous scan from its output directory")
 
     args = parser.parse_args()
 
@@ -1983,6 +2031,25 @@ def main():
         target = console.input("[bold cyan]Enter target domain/IP: [/bold cyan]").strip()
     else:
         target = args.target
+
+    if args.resume:
+        # Resume mode: load state from existing scan dir
+        resume_dir = args.resume
+        state_file = os.path.join(resume_dir, ".apex_state.json")
+        if not os.path.isfile(state_file):
+            console.print(f"[red]No state file found in {resume_dir}[/red]")
+            sys.exit(1)
+        import json as _j
+        state = _j.load(open(state_file))
+        target = state["target"]
+        console.print(f"[bold yellow]Resuming scan of {target} from {resume_dir}[/bold yellow]")
+        completed = {p["phase"] for p in state.get("phase_results", [])}
+        console.print(f"[dim]{len(completed)} phases already completed[/dim]")
+        run_scan(target, dry_run=args.dry_run, deep=args.deep,
+                report_formats=args.report, skip=args.skip,
+                auth=tuple(args.auth) if args.auth else None,
+                resume_dir=resume_dir)
+        return
 
     target = validate_target(target)
     console.print(f"[bold white]Target:[/bold white] {target}")
