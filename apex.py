@@ -850,6 +850,14 @@ class ApexCLI:
             "pages": all_pages, "forms": all_forms,
             "params": all_params, "links": list(all_links),
         }
+        # Auto-login: try to detect and log in automatically if no --auth provided
+        if not self.auth and not self.dry_run and self.web_targets:
+            base = "/".join(self.web_targets[0].split("/", 3)[:3])
+            session, email, pwd = auto_login_attempt(base, {"forms": all_forms, "pages": all_pages})
+            if session and email:
+                console.print(f"[bold green][+][/bold green] Auto-login succeeded as {email} — scanning authenticated pages")
+                self.auth = (email, pwd)
+
         # Authenticated crawl — merge pages/forms/params found behind login
         if self.auth and not self.dry_run:
             username, password = self.auth

@@ -3378,7 +3378,59 @@ def ajax_spider(target, max_pages=100):
     except Exception:
         pass
 
+    # Extract hardcoded endpoints and tokens from JS bundles
+    js_secrets = []
+    js_endpoints = set()
+    try:
+        with sync_playwright() as p2:
+            b2 = p2.chromium.launch(headless=True, args=["--no-sandbox"])
+            pg2 = b2.new_context(ignore_https_errors=True).new_page()
+            try:
+                pg2.goto(target, timeout=10000, wait_until="networkidle")
+                # Extract from JS variables in page context
+                extracted = pg2.evaluate("""() => {
+                    const results = {endpoints: [], tokens: [], localStorage: {}};
+                    // localStorage tokens
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const k = localStorage.key(i);
+                        results.localStorage[k] = localStorage.getItem(k);
+                    }
+                    // Inline script endpoints
+                    const scripts = Array.from(document.querySelectorAll('script:not([src])'));
+                    const epRe = /['"](\/api\/[^'"]{3,60})['"]/g;
+                    const tokenRe = /(?:token|key|secret|auth)['"\s]*[:=]['"\s]*(['"\w\-\.]{16,})/gi;
+                    for (const s of scripts) {
+                        let m;
+                        while ((m = epRe.exec(s.textContent)) !== null) results.endpoints.push(m[1]);
+                        while ((m = tokenRe.exec(s.textContent)) !== null) results.tokens.push(m[1]);
+                    }
+                    return results;
+                }""")
+                for ep in extracted.get("endpoints", []):
+                    js_endpoints.add(ep)
+                for token in extracted.get("tokens", []):
+                    if len(token) >= 16:
+                        js_secrets.append(token[:40])
+                # Add localStorage tokens to api_calls for scanning
+                for k, v in extracted.get("localStorage", {}).items():
+                    if any(x in k.lower() for x in ["token","auth","jwt","key","secret"]):
+                        api_calls.append({"url": f"localStorage:{k}", "method": "GET",
+                                          "post_data": v[:100]})
+            except Exception:
+                pass
+            b2.close()
+    except Exception:
+        pass
+
+    # Add JS-discovered endpoints as pages
+    base_url_parsed = urllib.parse.urlparse(target)
+    base = f"{base_url_parsed.scheme}://{base_url_parsed.netloc}"
+    for ep in js_endpoints:
+        full_ep = ep if ep.startswith("http") else base + ep
+        pages.append({"url": full_ep, "status": 200, "length": 0})
+
     return {"pages": pages, "forms": forms, "api_calls": api_calls,
+            "js_secrets": js_secrets,
             "params": {p["url"]: set(urllib.parse.parse_qs(urllib.parse.urlparse(p["url"]).query).keys())
                        for p in pages if "?" in p["url"]},
             "links": [p["url"] for p in pages]}
@@ -5764,6 +5816,58 @@ def scan_ns_takeover(target, subdomains):
                     break
         except: continue
     return findings
+
+
+
+def auto_login_attempt(base_url, crawl_data):
+    """Auto-detect login forms and attempt login with test credentials — no --auth needed."""
+    import requests as _r
+    session = _r.Session()
+    session.verify = False
+    session.headers.update({"User-Agent": _USER_AGENTS[0]})
+
+    # Find login/register forms
+    for form in crawl_data.get("forms", []):
+        action = form.get("action", "").lower()
+        inputs = form.get("inputs", [])
+        method = form.get("method", "").upper()
+        if method != "POST": continue
+        if not any(x in action for x in ["login","signin","auth","register","signup"]): continue
+
+        has_email = any(i.get("type") == "email" or "email" in i.get("name","").lower() for i in inputs)
+        has_pass = any(i.get("type") == "password" or "pass" in i.get("name","").lower() for i in inputs)
+        if not (has_email or has_pass): continue
+
+        # Try registration first (creates account we control)
+        import time as _t
+        uid = int(_t.time()) % 100000
+        test_email = f"apextest{uid}@wearehackerone.com"
+        test_pass = "ApexTest1234!"
+
+        data = {}
+        for inp in inputs:
+            name = inp.get("name", "")
+            itype = inp.get("type", "text")
+            if "email" in name.lower() or itype == "email":
+                data[name] = test_email
+            elif "pass" in name.lower() or itype == "password":
+                data[name] = test_pass
+            elif "user" in name.lower() or "name" in name.lower():
+                data[name] = f"apextest{uid}"
+            elif itype not in ("submit", "hidden", "button"):
+                data[name] = inp.get("value", "test")
+            else:
+                data[name] = inp.get("value", "")
+
+        try:
+            r = session.post(form["action"], data=data, timeout=8, allow_redirects=True)
+            body = r.text.lower()
+            if any(x in body for x in ["dashboard","welcome","logout","profile","token","success","verify"]):
+                return session, test_email, test_pass
+        except Exception:
+            continue
+
+    return None, None, None
 
 
 # ---------------------------------------------------------------------------
