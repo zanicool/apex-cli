@@ -10,7 +10,7 @@ import requests
 
 console = Console()
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL = "llama3.1:8b"  # Use llama3.1 — faster, fits in VRAM
+MODEL = "llama3.2:latest"  # 2GB — fits in 6GB VRAM, ~10-15s response
 RESULTS_DIR = Path.home() / "apex-auto-results"
 
 SYSTEM_PROMPT = """You are an elite bug bounty hunter with 10 years experience. You think like a human attacker, not a scanner.
@@ -35,7 +35,7 @@ def ask_ai(prompt, stream=True):
         if stream:
             r = requests.post(OLLAMA_URL, json={
                 "model": MODEL, "prompt": prompt, "system": SYSTEM_PROMPT,
-                "stream": True, "options": {"temperature": 0.4, "num_predict": 3000}
+                "stream": True, "options": {"temperature": 0.4, "num_predict": 1500}
             }, stream=True, timeout=180)
             result = ""
             for line in r.iter_lines():
