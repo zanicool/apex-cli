@@ -1669,11 +1669,17 @@ def scan_s3_buckets(target, subdomains):
             try:
                 r = requests.get(url, timeout=5, verify=False)
                 if r.status_code == 200 and "<ListBucketResult" in r.text:
-                    # Count files
-                    files = len(_re.findall(r"<Key>", r.text))
-                    findings.append({"type": "Public S3 Bucket", "severity": "critical",
-                                     "url": url, "detail": f"Bucket {bucket} is public — {files} files listed",
-                                     "template": "apex-s3"})
+                    # Verify bucket content relates to target domain (avoid false positives)
+                    content_sample = r.text[:5000].lower()
+                    target_domain = target.replace("www.", "").split(".")[0].lower()
+                    # Check if bucket name or content references the target
+                    if target_domain in bucket or target_domain in content_sample or target in content_sample:
+                        files = len(_re.findall(r"<Key>", r.text))
+                        findings.append({"type": "Public S3 Bucket", "severity": "critical",
+                                         "url": url, "detail": f"Bucket {bucket} is public — {files} files listed",
+                                         "template": "apex-s3"})
+                        break
+                    # Generic public bucket not related to target - skip
                     break
                 elif r.status_code == 403:
                     findings.append({"type": "S3 Bucket Exists (Private)", "severity": "low",
