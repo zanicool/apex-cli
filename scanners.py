@@ -4913,10 +4913,26 @@ _OOB = OOBServer()
 _OOB_ACTIVE = False
 
 def oob_start():
-    global _OOB_ACTIVE
-    _OOB = OOBServer()
-    _OOB_ACTIVE = _OOB.start()
-    return _OOB if _OOB_ACTIVE else None
+    """Start OOB server — tries local server first, then interactsh."""
+    # Check local OOB server first (fastest, most reliable)
+    for local_url in ["http://localhost:9877", "http://10.0.0.72:9877"]:
+        try:
+            r = requests.get(f"{local_url}/oob_health_check", timeout=2)
+            if r.status_code == 200:
+                oob = OOBServer()
+                oob.domain = local_url
+                oob._api_mode = True
+                oob._api_server = local_url
+                oob._api_secret = ""
+                oob._ready.set()
+                return oob
+        except Exception:
+            pass
+    # Fall back to interactsh
+    oob = OOBServer()
+    if oob.start():
+        return oob
+    return None
 
 def scan_blind_ssrf_oob(crawl_data, oob=None):
     """Blind SSRF confirmed via OOB DNS callback — the gold standard."""
