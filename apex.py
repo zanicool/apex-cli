@@ -434,6 +434,10 @@ class ApexCLI:
     def _log_phase(self, name, status, detail=""):
         self.phase_results.append({"phase": name, "status": status, "detail": detail})
         self._save_state()
+        global _dragon_line
+        if status in ("ok", "error") and _dragon_line < len(_SCAN_DRAGON):
+            console.print(f"[bold red]{_SCAN_DRAGON[_dragon_line]}[/bold red]")
+            _dragon_line += 1
         # Incremental: print new findings immediately
         new_vulns = [v for v in self.vulnerabilities
                      if v.get("severity") in ("critical", "high")
@@ -2367,6 +2371,31 @@ SKULL_ASCII = r"""[bold red]
 [/bold red]
 """
 
+_SCAN_DRAGON = [
+    "                                                    /===-_---~~~~~~~~~------____",
+    "                                                   |===-~___                _,-'",
+    "                    -==/                          `//~\\   ~~~~`---.___.-~~",
+    "                ______-==|                         | |  \\           _-~`",
+    "          __--~~~  ,-/-==/                         | |   `\\        ,'",
+    "       _-~       /'    |  \\                      / /      \\      /",
+    "     .'        /       |   \\                   /' /        \\   /",
+    "    /  ____  /         |    `.__/-~~ ~ \\ _ _/'  /          \\/'",
+    "   /-'~    ~~~~~---__  |     ~-/~         ( )   /'        _--~`",
+    "                     \\_|      /        _) | ;  ),   __--~~",
+    "                       '~~--_/      _-~/- |/ \\   '-~ \\",
+    "                      {\\__--_/}    / \\_>-|)<__\\      \\",
+    "                      /'   (_/  _-~  | |__>--<__|      |",
+    "                     |0  0 _/) )-~     | |__>--<__|     |",
+    "                     / /~ ,_/       / /__>---<__/      |",
+    "                    o o _//        /-~_>---<__-~      /",
+    "                    (^(~          /~_>---<__-      _-~",
+    "                   ,/|           /__>--<__/     _-~",
+    "                ,//('(          |__>--<__|     /",
+    "               ( ( '))          |__>--<__|    |",
+]
+_dragon_line = 0
+
+
 def show_banner():
     console.print(SKULL_ASCII, justify="center")
     console.print(Panel.fit(
@@ -2418,6 +2447,7 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
     output_dir = f"scan_{target}_{ts}"
     if resume_dir:
         output_dir = resume_dir
+    global _dragon_line; _dragon_line = 0
     apex = ApexCLI(target, output_dir, dry_run=dry_run, deep=deep, auth=auth)
     apex.scope = scope or []
     if resume_dir and apex._load_state():
