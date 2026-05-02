@@ -196,6 +196,10 @@ from scanners import (
     scan_api_version_enumeration,
     scan_legacy_endpoints,
     scan_idor_horizontal_vertical,
+    # WAF bypass + tech helpers
+    _run_wp_enum,
+    _run_spring_deep,
+    _run_laravel_secrets,
     # Intelligence engine
     deduplicate_findings,
     score_findings,
@@ -2206,6 +2210,26 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
             if err:
                 console.print(f"[red][!] {label} failed: {err}[/red]")
             progress.update(task, completed=1)
+            # After fingerprint: inject tech-specific phases into parallel queue
+            if label == "Fingerprint" and apex.technologies:
+                tech = " ".join(apex.technologies).lower()
+                extra = []
+                if "wordpress" in tech:
+                    extra += [("WP User Enum", lambda: _run_wp_enum(apex))]
+                if any(x in tech for x in ["spring", "java", "tomcat"]):
+                    extra += [("Spring Actuator Deep", lambda: _run_spring_deep(apex))]
+                if any(x in tech for x in ["laravel", "php"]):
+                    extra += [("Laravel Secrets", lambda: _run_laravel_secrets(apex))]
+                if "graphql" in tech or any("/graphql" in t for t in apex.web_targets):
+                    extra += [("GraphQL Deep", apex.phase_graphql_advanced)]
+                if extra:
+                    console.print(f"[bold green][+][/bold green] Tech detected: {', '.join(apex.technologies)} — adding {len(extra)} targeted phases")
+                    par_phases.extend(extra)
+            # After WAF detection: switch to bypass payloads
+            if label == "Fingerprint" and apex.waf_detected:
+                console.print(f"[bold yellow][!][/bold yellow] WAF detected: {', '.join(apex.waf_detected)} — enabling bypass encodings")
+                import scanners as _sc
+                _sc._WAF_BYPASS_MODE = True
 
         workers = min(workers, len(par_phases))
         tasks_map = {}
@@ -2219,6 +2243,30 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
                 if err:
                     console.print(f"[red][!] {label} failed: {err}[/red]")
                 progress.update(task_id, completed=1)
+
+    # Feedback loop: findings from earlier phases feed into targeted follow-up
+    sqli_urls = [v["url"] for v in apex.vulnerabilities
+                 if "sql" in v.get("type","").lower() and v.get("url","").startswith("http")]
+    if sqli_urls and not dry_run:
+        sqlmap_path = apex._tool("sqlmap")
+        if sqlmap_path:
+            console.print(f"[bold red][+][/bold red] SQLi confirmed on {len(sqli_urls)} URLs — running sqlmap for exploitation")
+            for url in sqli_urls[:3]:
+                safe = re.sub(r"[^\w]", "_", url)
+                cmd = [sqlmap_path, "-u", url, "--batch", "--dbs",
+                       "--random-agent", "--level", "3", "--risk", "2",
+                       "--output-dir", apex.output_dir]
+                apex.run_command(cmd, f"SQLMap exploitation → {url[:50]}", f"sqlmap_exploit_{safe[:30]}.txt")
+
+    ssrf_urls = [v["url"] for v in apex.vulnerabilities
+                 if "ssrf" in v.get("type","").lower() and v.get("url","").startswith("http")]
+    if ssrf_urls and apex.oob and not dry_run:
+        console.print(f"[bold red][+][/bold red] SSRF found — running OOB confirmation on {len(ssrf_urls)} URLs")
+        from scanners import scan_blind_ssrf_oob
+        oob_findings = scan_blind_ssrf_oob({"params": {u: ["url","src","dest"] for u in ssrf_urls},
+                                             "forms": []}, apex.oob)
+        with apex._vuln_lock:
+            apex.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in oob_findings)
 
     if apex.oob:
         apex.oob.stop()
