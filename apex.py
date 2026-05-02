@@ -196,6 +196,15 @@ from scanners import (
     scan_api_version_enumeration,
     scan_legacy_endpoints,
     scan_idor_horizontal_vertical,
+    # Batch 12
+    scan_jwt_kid_injection,
+    scan_rate_limit_bypass_headers,
+    scan_idor_json_body,
+    scan_auth_bypass_content_type,
+    scan_ssrf_via_svg,
+    scan_unkeyed_cache_poisoning,
+    scan_graphql_alias_introspection,
+    scan_nosql_operator_injection,
     # Batch 11
     scan_subdomain_takeover_deep,
     scan_account_takeover_vectors,
@@ -2012,6 +2021,55 @@ class ApexCLI:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
 
+    def phase_jwt_kid_injection(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_jwt_kid_injection(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_rate_limit_bypass_headers(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_rate_limit_bypass_headers(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_idor_json_body(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_idor_json_body(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_auth_bypass_content_type(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_auth_bypass_content_type(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_ssrf_via_svg(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_ssrf_via_svg(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_unkeyed_cache_poisoning(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_unkeyed_cache_poisoning(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_graphql_alias_introspection(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_graphql_alias_introspection(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_nosql_operator_injection(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_nosql_operator_injection(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+
 SKULL_ASCII = r"""[bold red]
                      ______
                   .-"      "-.
@@ -2259,6 +2317,14 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("OAuth Deep", apex.phase_oauth_deep),
         ("XXE File Upload", apex.phase_xxe_file_upload),
         ("SSRF Redirect Chain", apex.phase_ssrf_redirect_chain),
+        ("JWT kid Injection", apex.phase_jwt_kid_injection),
+        ("Rate Limit Bypass Headers", apex.phase_rate_limit_bypass_headers),
+        ("IDOR JSON Body", apex.phase_idor_json_body),
+        ("Auth Bypass Content-Type", apex.phase_auth_bypass_content_type),
+        ("SSRF via SVG", apex.phase_ssrf_via_svg),
+        ("Unkeyed Cache Poisoning", apex.phase_unkeyed_cache_poisoning),
+        ("GraphQL Alias Introspection", apex.phase_graphql_alias_introspection),
+        ("NoSQL Operator Injection", apex.phase_nosql_operator_injection),
     ]
 
     # Measure target response time and adapt concurrency
