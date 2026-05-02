@@ -206,6 +206,14 @@ from scanners import (
     scan_clickjacking_advanced,
     scan_subdomain_ns_takeover,
     set_proxy,
+    # Batch 15
+    scan_password_spray,
+    scan_graphql_injection,
+    scan_broken_function_level_auth,
+    scan_mass_user_enumeration,
+    scan_cors_vary_origin,
+    scan_insecure_jwt_storage,
+    scan_2fa_bypass_response,
     # Batch 13
     scan_ldap_injection,
     scan_template_injection_twig,
@@ -2189,6 +2197,49 @@ class ApexCLI:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
 
+    def phase_password_spray(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_password_spray(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_graphql_injection(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_graphql_injection(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_broken_function_level_auth(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_broken_function_level_auth(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_mass_user_enumeration(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_mass_user_enumeration(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_cors_vary_origin(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_cors_vary_origin(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_insecure_jwt_storage(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_insecure_jwt_storage(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_2fa_bypass_response(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_2fa_bypass_response(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+
 SKULL_ASCII = r"""[bold red]
                      ______
                   .-"      "-.
@@ -2459,6 +2510,13 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("CORS With Credentials", apex.phase_cors_with_credentials),
         ("Clickjacking Advanced", apex.phase_clickjacking_advanced),
         ("Subdomain NS Takeover", apex.phase_subdomain_ns_takeover),
+        ("Password Spray", apex.phase_password_spray),
+        ("GraphQL Injection", apex.phase_graphql_injection),
+        ("Broken Function Level Auth", apex.phase_broken_function_level_auth),
+        ("Mass User Enumeration", apex.phase_mass_user_enumeration),
+        ("CORS Vary Origin", apex.phase_cors_vary_origin),
+        ("Insecure JWT Storage", apex.phase_insecure_jwt_storage),
+        ("2FA Bypass Response", apex.phase_2fa_bypass_response),
     ]
 
     # Measure target response time and adapt concurrency

