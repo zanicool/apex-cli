@@ -167,6 +167,12 @@ td{padding:.6rem 1rem;border-top:1px solid var(--border);font-size:.85rem;word-b
         <h4>Proof of Concept</h4>
         <pre>{{ poc_cmd }}</pre>
       </div>
+      {% if v.screenshot %}
+      <div class="poc-box">
+        <h4>Screenshot</h4>
+        <img src="{{ v.screenshot }}" style="max-width:100%;border-radius:4px;border:1px solid var(--border);" alt="Screenshot of finding">
+      </div>
+      {% endif %}
       {% set remediation = {
         'apex-xss': 'Encode all user-supplied output using context-appropriate escaping (HTML entity encoding for HTML context, JS escaping for script context). Implement a strict Content-Security-Policy.',
         'apex-xss-ctx': 'Context-aware output encoding. Use a templating engine with auto-escaping enabled. Add CSP with nonce-based script allowlist.',

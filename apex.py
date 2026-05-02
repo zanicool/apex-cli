@@ -2426,6 +2426,44 @@ def show_tools():
     console.print(table)
 
 
+def take_screenshots(vulnerabilities, output_dir, console):
+    """Take Playwright screenshots of every finding URL."""
+    urls = list({v["url"] for v in vulnerabilities
+                 if v.get("url","").startswith("http") and v.get("severity") in ("critical","high","medium")})
+    if not urls:
+        return {}
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return {}
+
+    screenshots = {}
+    screenshot_dir = os.path.join(output_dir, "screenshots")
+    os.makedirs(screenshot_dir, exist_ok=True)
+
+    console.print(f"[dim]Taking screenshots of {len(urls)} finding URLs...[/dim]")
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=["--no-sandbox","--disable-dev-shm-usage"])
+            ctx = browser.new_context(ignore_https_errors=True, viewport={"width":1280,"height":800})
+            page = ctx.new_page()
+            for url in urls[:20]:  # Max 20 screenshots
+                try:
+                    safe = re.sub(r"[^\w]", "_", url)[:60]
+                    path = os.path.join(screenshot_dir, f"{safe}.png")
+                    page.goto(url, timeout=8000, wait_until="domcontentloaded")
+                    page.screenshot(path=path, full_page=False)
+                    screenshots[url] = path
+                except Exception:
+                    continue
+            browser.close()
+    except Exception:
+        pass
+
+    console.print(f"[green][✓][/green] {len(screenshots)} screenshots saved → {screenshot_dir}/")
+    return screenshots
+
+
 def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, auth=None, resume_dir=None, scope=None, workers=0):
     # Auto-tune on first run
     try:
@@ -2905,6 +2943,15 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         console.print(f"[bold red]🔗 {len(chains)} attack chain(s) detected![/bold red]")
         apex.vulnerabilities = chains + apex.vulnerabilities
 
+    # Screenshots of all medium+ findings
+    screenshots = {}
+    if not dry_run:
+        screenshots = take_screenshots(apex.vulnerabilities, output_dir, console)
+        # Attach screenshot paths to findings for HTML report
+        for v in apex.vulnerabilities:
+            if v.get("url") in screenshots:
+                v["screenshot"] = screenshots[v["url"]]
+
     # Reports
     apex.report_terminal()
     if "json" in report_formats:
@@ -3024,6 +3071,161 @@ def interactive_menu():
             break
 
 
+def scan_apk(apk_path, console):
+    """Decompile APK with jadx and extract endpoints, API keys, hardcoded secrets."""
+    import subprocess as _sp, tempfile, shutil
+
+    if not os.path.isfile(apk_path):
+        console.print(f"[red]APK not found: {apk_path}[/red]")
+        return
+
+    jadx = shutil.which("jadx") or shutil.which("jadx-gui")
+    if not jadx:
+        console.print("[yellow]jadx not found. Install: https://github.com/skylot/jadx/releases[/yellow]")
+        console.print("[dim]Trying strings-based extraction instead...[/dim]")
+        _apk_strings_scan(apk_path, console)
+        return
+
+    console.print(f"[bold red]☠ APK SCAN: {os.path.basename(apk_path)}[/bold red]")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        console.print(f"[dim]Decompiling with jadx...[/dim]")
+        result = _sp.run([jadx, "-d", tmpdir, apk_path], capture_output=True, timeout=120)
+        if result.returncode != 0:
+            console.print("[yellow]jadx decompilation had errors, scanning partial output[/yellow]")
+
+        findings = []
+        patterns = {
+            "API Key (AWS)": re.compile(r"AKIA[0-9A-Z]{16}"),
+            "API Key (Google)": re.compile(r"AIza[0-9A-Za-z\-_]{35}"),
+            "API Key (Stripe)": re.compile(r"sk_live_[0-9a-zA-Z]{24,}"),
+            "GitHub Token": re.compile(r"gh[pousr]_[A-Za-z0-9_]{36,}"),
+            "Private Key": re.compile(r"-----BEGIN (RSA |EC )?PRIVATE KEY-----"),
+            "JWT Secret": re.compile(r'(?:secret|SECRET|jwt_secret)["\'\s]*[:=]["\'\s]*([A-Za-z0-9+/=_\-]{16,})'),
+            "Hardcoded Password": re.compile(r'(?:password|passwd|pwd)["\'\s]*[:=]["\'\s]*["\'"]([^"\']{8,})["\'"]'),
+            "API Endpoint": re.compile(r'https?://[a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,}(?:/[^\s"\'<>]{3,60})?'),
+            "Internal URL": re.compile(r'https?://(?:localhost|127\.0\.0\.1|10\.|192\.168\.|172\.1[6-9]\.|172\.2[0-9]\.|172\.3[01]\.)[^\s"\'<>]+'),
+        }
+
+        seen = set()
+        for root, _, files in os.walk(tmpdir):
+            for fname in files:
+                if not fname.endswith((".java", ".kt", ".xml", ".json", ".properties", ".gradle")):
+                    continue
+                fpath = os.path.join(root, fname)
+                try:
+                    content = open(fpath, errors="ignore").read()
+                    for pname, pattern in patterns.items():
+                        for match in pattern.finditer(content):
+                            val = match.group()[:80]
+                            key = f"{pname}:{val[:30]}"
+                            if key not in seen:
+                                seen.add(key)
+                                findings.append({"type": pname, "value": val,
+                                                 "file": os.path.relpath(fpath, tmpdir)})
+                except Exception:
+                    continue
+
+        # Display results
+        from rich.table import Table
+        t = Table(title=f"APK Findings: {os.path.basename(apk_path)}")
+        t.add_column("Type", style="red")
+        t.add_column("Value", style="cyan")
+        t.add_column("File", style="dim")
+        for f in findings[:50]:
+            t.add_row(f["type"], f["value"][:60], f["file"][:50])
+        console.print(t)
+        console.print(f"[green][✓][/green] {len(findings)} findings in APK")
+
+        # Save report
+        out = apk_path + "_apex_scan.json"
+        import json as _j
+        _j.dump(findings, open(out, "w"), indent=2)
+        console.print(f"[green][✓][/green] Saved → {out}")
+
+
+def _apk_strings_scan(apk_path, console):
+    """Fallback: extract strings from APK without jadx."""
+    import subprocess as _sp, zipfile
+    findings = []
+    patterns = {
+        "API Key (AWS)": re.compile(r"AKIA[0-9A-Z]{16}"),
+        "API Key (Google)": re.compile(r"AIza[0-9A-Za-z\-_]{35}"),
+        "API Endpoint": re.compile(r"https?://[a-zA-Z0-9.-]+[.][a-zA-Z]{2,}/[^\s<>]{3,60}"),
+        "Private Key": re.compile(r"-----BEGIN.*PRIVATE KEY-----"),
+    }
+    try:
+        with zipfile.ZipFile(apk_path) as z:
+            for name in z.namelist():
+                if name.endswith(".dex") or name.endswith(".xml"):
+                    try:
+                        content = z.read(name).decode("utf-8", errors="ignore")
+                        for pname, pat in patterns.items():
+                            for m in pat.finditer(content):
+                                findings.append({"type": pname, "value": m.group()[:80]})
+                    except Exception:
+                        continue
+    except Exception as e:
+        console.print(f"[red]Failed to read APK: {e}[/red]")
+        return
+
+    for f in findings[:20]:
+        console.print(f"  [red]{f['type']}[/red]: {f['value'][:70]}")
+    console.print(f"[green][✓][/green] {len(findings)} findings (strings-only scan)")
+
+
+def diff_scans(scan1_dir, scan2_dir, console):
+    """Compare two scan directories, show only new findings in scan2."""
+    import json as _j
+
+    def load_vulns(d):
+        r = os.path.join(d, "report.json")
+        if not os.path.isfile(r):
+            return []
+        return _j.load(open(r)).get("vulnerabilities", [])
+
+    vulns1 = load_vulns(scan1_dir)
+    vulns2 = load_vulns(scan2_dir)
+
+    if not vulns2:
+        console.print(f"[red]No report.json in {scan2_dir}[/red]")
+        return
+
+    # Fingerprint each finding by type + base URL
+    def fingerprint(v):
+        return f"{v.get('type','')}|{v.get('url','').split('?')[0]}"
+
+    old_fps = {fingerprint(v) for v in vulns1}
+    new_findings = [v for v in vulns2 if fingerprint(v) not in old_fps]
+    fixed_findings = [v for v in vulns1 if fingerprint(v) not in {fingerprint(v2) for v2 in vulns2}]
+
+    console.print(f"\n[bold red]☠ SCAN DIFF[/bold red]")
+    console.print(f"[dim]Old: {scan1_dir}[/dim]")
+    console.print(f"[dim]New: {scan2_dir}[/dim]\n")
+
+    if new_findings:
+        console.print(f"[bold green]🆕 {len(new_findings)} NEW findings:[/bold green]")
+        from rich.table import Table
+        t = Table()
+        t.add_column("Severity", style="red")
+        t.add_column("Type", style="cyan")
+        t.add_column("URL", style="magenta")
+        for v in sorted(new_findings, key=lambda x: x.get("cvss_score",0), reverse=True):
+            sev = v.get("severity","").upper()
+            t.add_row(sev, v.get("type","")[:50], v.get("url","")[:70])
+        console.print(t)
+    else:
+        console.print("[green]No new findings — attack surface unchanged[/green]")
+
+    if fixed_findings:
+        console.print(f"\n[bold blue]✅ {len(fixed_findings)} FIXED/GONE findings[/bold blue]")
+
+    # Save diff report
+    diff_out = os.path.join(scan2_dir, "diff_report.json")
+    import json as _j2
+    _j2.dump({"new": new_findings, "fixed": fixed_findings}, open(diff_out, "w"), indent=2)
+    console.print(f"\n[green][✓][/green] Diff saved → {diff_out}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="apex-cli",
@@ -3053,6 +3255,10 @@ def main():
                         help="Custom wordlist for directory fuzzing")
     parser.add_argument("--watch", type=int, default=0, metavar="HOURS",
                         help="Rescan every N hours, alert on new findings (e.g. --watch 24)")
+    parser.add_argument("--apk", type=str, default="", metavar="FILE",
+                        help="Scan an APK file for endpoints, keys, and hardcoded secrets")
+    parser.add_argument("--diff", nargs=2, metavar=("SCAN1","SCAN2"),
+                        help="Compare two scan directories, show only new findings")
     parser.add_argument("--scope", nargs="+", default=[],
                         help="Restrict scan to these subdomains/paths (e.g. --scope api.example.com /api)")
 
@@ -3108,6 +3314,16 @@ def main():
     console.print(f"[bold white]Mode:[/bold white] {'deep' if args.deep else 'standard'} | "
                   f"{'DRY RUN' if args.dry_run else 'LIVE'}")
     console.print()
+
+    # APK scanning mode
+    if hasattr(args, "apk") and args.apk:
+        scan_apk(args.apk, console)
+        return
+
+    # Scan diff mode
+    if hasattr(args, "diff") and args.diff:
+        diff_scans(args.diff[0], args.diff[1], console)
+        return
 
     watch_hours = args.watch if hasattr(args, "watch") else 0
     if watch_hours > 0:
