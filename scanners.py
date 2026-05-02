@@ -11,7 +11,9 @@ import requests
 from bs4 import BeautifulSoup
 
 requests.packages.urllib3.disable_warnings()
-_TIMEOUT = 10
+_TIMEOUT = 10       # default request timeout
+_TIMEOUT_SHORT = 5  # quick probes
+_TIMEOUT_LONG = 15  # external APIs (Wayback, crt.sh)
 _RATE_DELAY = 0.0  # seconds between requests per thread, set via set_rate_limit()
 
 import threading as _tl_threading
