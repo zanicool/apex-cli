@@ -2405,7 +2405,7 @@ def show_banner():
     console.print(Panel.fit(
         "[bold white]Apex CLI v8.x[/bold white]\n"
         "[dim]Automated Pen-Test Orchestrator[/dim]\n"
-        "[bold red]#1 scanner on the planet[/bold red]",
+        "[bold red]\"We don't knock.\"[/bold red]",
         border_style="red",
     ), justify="center")
 
