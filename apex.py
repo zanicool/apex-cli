@@ -196,6 +196,12 @@ from scanners import (
     scan_api_version_enumeration,
     scan_legacy_endpoints,
     scan_idor_horizontal_vertical,
+    # Batch 11
+    scan_subdomain_takeover_deep,
+    scan_account_takeover_vectors,
+    scan_oauth_deep,
+    scan_xxe_file_upload,
+    scan_ssrf_redirect_chain,
     # Batch 10
     scan_jwt_secret_bruteforce,
     scan_cors_subdomain_wildcard,
@@ -1975,6 +1981,37 @@ class ApexCLI:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
 
+    def phase_subdomain_takeover_deep(self):
+        if self.dry_run or not self.subdomains: return
+        findings = scan_subdomain_takeover_deep(self.subdomains)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_account_takeover_vectors(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_account_takeover_vectors(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_oauth_deep(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_oauth_deep(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_xxe_file_upload(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_xxe_file_upload(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_ssrf_redirect_chain(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_ssrf_redirect_chain(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+
 SKULL_ASCII = r"""[bold red]
                      ______
                   .-"      "-.
@@ -2217,6 +2254,11 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("Insecure File Download", apex.phase_insecure_file_download),
         ("Prototype Pollution Path", apex.phase_prototype_pollution_path),
         ("Mass Assignment PATCH", apex.phase_mass_assignment_patch),
+        ("Subdomain Takeover Deep", apex.phase_subdomain_takeover_deep),
+        ("Account Takeover Vectors", apex.phase_account_takeover_vectors),
+        ("OAuth Deep", apex.phase_oauth_deep),
+        ("XXE File Upload", apex.phase_xxe_file_upload),
+        ("SSRF Redirect Chain", apex.phase_ssrf_redirect_chain),
     ]
 
     # Measure target response time and adapt concurrency
