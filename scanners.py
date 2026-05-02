@@ -38,6 +38,8 @@ def _get_session():
             "Accept-Language": "en-US,en;q=0.5",
         })
         s.verify = False
+        if _PROXY:
+            s.proxies = _PROXY
         _thread_local.session = s
     return _thread_local.session
 
@@ -70,6 +72,15 @@ class _SessionProxy:
         return _get_session().patch(*a, **kw)
 
 _S = _SessionProxy()
+_PROXY = None  # Set via set_proxy()
+
+def set_proxy(proxy_url):
+    """Route all requests through a proxy (e.g., Burp Suite: http://127.0.0.1:8080)."""
+    global _PROXY
+    _PROXY = {"http": proxy_url, "https": proxy_url}
+    # Apply to all future thread-local sessions
+    import threading as _pt
+    _thread_local.__dict__.clear()  # Force new sessions with proxy
 
 def set_rate_limit(delay_seconds):
     global _RATE_DELAY
@@ -709,31 +720,38 @@ _SENSITIVE_PATHS = [
 ]
 
 def scan_sensitive_files(base_url):
-    """Check for common sensitive files and directories."""
+    """Check for common sensitive files — concurrent requests."""
+    import concurrent.futures as _cf
     findings = []
-    for path, desc in _SENSITIVE_PATHS:
+
+    def _check_path(path_desc):
+        path, desc = path_desc
         url = base_url.rstrip("/") + path
         try:
-            r = _S.get(url, timeout=_TIMEOUT, allow_redirects=False)
+            r = _S.get(url, timeout=5, allow_redirects=False)
             if r.status_code == 200 and len(r.text) > 0:
-                # Filter out generic error pages
                 if any(x in r.text.lower() for x in ("not found", "404", "error")):
-                    continue
+                    return None
                 severity = "high"
                 if path in ("/robots.txt", "/sitemap.xml", "/.well-known/security.txt"):
                     severity = "info"
                 elif path in ("/admin", "/administrator", "/console"):
                     severity = "medium"
-                findings.append({
+                return {
                     "type": f"Sensitive File: {path}",
                     "severity": severity,
                     "url": url,
                     "detail": f"{desc} ({len(r.text)} bytes)",
                     "template": "apex-sensitive",
-                })
+                }
         except Exception:
-            continue
+            pass
+        return None
 
+    with _cf.ThreadPoolExecutor(max_workers=20) as pool:
+        for result in pool.map(_check_path, _SENSITIVE_PATHS):
+            if result:
+                findings.append(result)
     return findings
 
 

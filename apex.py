@@ -205,6 +205,7 @@ from scanners import (
     scan_cors_with_credentials,
     scan_clickjacking_advanced,
     scan_subdomain_ns_takeover,
+    set_proxy,
     # Batch 13
     scan_ldap_injection,
     scan_template_injection_twig,
@@ -398,6 +399,15 @@ class ApexCLI:
     def _log_phase(self, name, status, detail=""):
         self.phase_results.append({"phase": name, "status": status, "detail": detail})
         self._save_state()
+        # Incremental: print new findings immediately
+        new_vulns = [v for v in self.vulnerabilities
+                     if v.get("severity") in ("critical", "high")
+                     and not v.get("_reported")]
+        for v in new_vulns:
+            v["_reported"] = True
+            sev = v["severity"].upper()
+            color = "bold red" if sev == "CRITICAL" else "red"
+            console.print(f"[{color}]  🎯 {sev}[/{color}] {v['type'][:60]} → {v.get('url','')[:60]}")
 
     def _save_state(self):
         """Persist scan state so it can be resumed after a crash."""
@@ -2700,6 +2710,10 @@ def main():
                         help="Delay between requests per thread (e.g. 0.1 for 10 req/s)")
     parser.add_argument("--workers", type=int, default=0, metavar="N",
                         help="Number of parallel workers (default: auto based on response time)")
+    parser.add_argument("--proxy", type=str, default="",
+                        help="Proxy URL (e.g. http://127.0.0.1:8080 for Burp Suite)")
+    parser.add_argument("--wordlist", type=str, default="",
+                        help="Custom wordlist for directory fuzzing")
     parser.add_argument("--scope", nargs="+", default=[],
                         help="Restrict scan to these subdomains/paths (e.g. --scope api.example.com /api)")
 
@@ -2743,6 +2757,12 @@ def main():
     if args.rate > 0:
         set_rate_limit(args.rate)
         console.print(f"[dim]Rate limit: {args.rate}s between requests[/dim]")
+    if hasattr(args, "proxy") and args.proxy:
+        set_proxy(args.proxy)
+        console.print(f"[dim]Proxy: {args.proxy}[/dim]")
+    if hasattr(args, "wordlist") and args.wordlist:
+        import scanners as _sc
+        _sc.WORDLIST_CANDIDATES.insert(0, args.wordlist)
 
     target = validate_target(target)
     console.print(f"[bold white]Target:[/bold white] {target}")
