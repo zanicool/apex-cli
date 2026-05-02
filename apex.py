@@ -434,10 +434,6 @@ class ApexCLI:
     def _log_phase(self, name, status, detail=""):
         self.phase_results.append({"phase": name, "status": status, "detail": detail})
         self._save_state()
-        global _dragon_line
-        if status in ("ok", "error") and _dragon_line < len(_SCAN_DRAGON):
-            console.print(f"[bold red]{_SCAN_DRAGON[_dragon_line]}[/bold red]", justify="center")
-            _dragon_line += 1
         # Incremental: print new findings immediately
         new_vulns = [v for v in self.vulnerabilities
                      if v.get("severity") in ("critical", "high")
@@ -2687,6 +2683,12 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("SAML Replay", apex.phase_saml_replay),
         ("Iframe Injection", apex.phase_iframe_injection),
     ]
+
+    # Print dragon art before scan starts
+    console.print()
+    for line in _SCAN_DRAGON:
+        console.print(f"[bold red]{line}[/bold red]", justify="center")
+    console.print()
 
     # Measure target response time and adapt concurrency
     workers = workers if workers > 0 else 8  # default
