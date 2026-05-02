@@ -172,6 +172,10 @@ Be specific about bounty value."""
     # Save
     ai_report.write_text(full_output)
     console.print(f"[green][✓][/green] Saved → {ai_report}")
+
+    # Generate HackerOne reports for each finding
+    generate_h1_reports(scan_dir)
+
     return full_output
 
 
@@ -252,6 +256,138 @@ Focus on: RCE, auth bypass, IDOR, injection. Skip generic XSS/SQLi."""
 
     console.print(f"\n[bold red]☠ APEX AI — Custom Payload Generation[/bold red]")
     return ask_ai(prompt)
+
+
+
+def generate_h1_reports(scan_dir):
+    """Generate ready-to-submit HackerOne reports for each high/critical finding."""
+    data = load_scan(scan_dir)
+    if not data:
+        return
+    target = data.get("target", "unknown")
+    vulns = [v for v in data.get("vulnerabilities", [])
+             if v.get("severity") in ("critical", "high")
+             and v.get("template") not in ("apex-headers", "apex-hsts",
+                                            "apex-clickjack", "apex-mime")]
+
+    if not vulns:
+        console.print("[dim]No high/critical findings to generate reports for[/dim]")
+        return
+
+    # Deduplicate by type+base_url
+    seen = set()
+    unique = []
+    for v in vulns:
+        key = f"{v['type']}|{v.get('url','').split('?')[0]}"
+        if key not in seen:
+            seen.add(key)
+            unique.append(v)
+
+    reports_dir = Path(scan_dir) / "h1_reports"
+    reports_dir.mkdir(exist_ok=True)
+
+    _CVSS = {
+        "apex-takeover": ("9.3", "AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:N", "CWE-350"),
+        "apex-takeover-deep": ("9.3", "AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:N", "CWE-350"),
+        "apex-ns-takeover": ("9.3", "AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:N", "CWE-350"),
+        "apex-s3": ("7.5", "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N", "CWE-200"),
+        "apex-gcs": ("7.5", "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N", "CWE-200"),
+        "apex-azure": ("7.5", "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N", "CWE-200"),
+        "apex-ssrf": ("9.8", "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", "CWE-918"),
+        "apex-sqli": ("9.8", "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", "CWE-89"),
+        "apex-xss": ("6.1", "AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N", "CWE-79"),
+        "apex-lfi": ("7.5", "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N", "CWE-22"),
+        "apex-cmdi": ("9.8", "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", "CWE-78"),
+        "apex-ssti": ("9.8", "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", "CWE-94"),
+        "apex-cors": ("8.1", "AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:N", "CWE-942"),
+        "apex-idor": ("8.1", "AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N", "CWE-639"),
+        "apex-secrets": ("9.8", "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", "CWE-540"),
+        "apex-sensitive": ("7.5", "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N", "CWE-200"),
+    }
+
+    _REMEDIATION = {
+        "CWE-350": "Remove the dangling DNS record immediately. Audit all DNS records regularly for dangling CNAMEs/NS records.",
+        "CWE-200": "Restrict bucket/storage access to authorized users only. Enable public access prevention at the organization level.",
+        "CWE-918": "Validate and allowlist URLs before fetching. Block requests to RFC1918 addresses and cloud metadata endpoints.",
+        "CWE-89": "Use parameterized queries / prepared statements. Never concatenate user input into SQL.",
+        "CWE-79": "Encode all user-supplied output using context-appropriate escaping. Implement a strict Content-Security-Policy.",
+        "CWE-22": "Never use user input in file paths. Use a whitelist of allowed files.",
+        "CWE-78": "Never pass user input to shell commands. Use language-native APIs instead.",
+        "CWE-94": "Never render user input as a template. Use sandboxed template engines.",
+        "CWE-942": "Set Access-Control-Allow-Origin to specific trusted origins only. Never reflect the Origin header.",
+        "CWE-639": "Implement object-level authorization checks on every request. Use indirect references.",
+        "CWE-540": "Rotate the exposed credential immediately. Use a secrets manager. Add pre-commit hooks.",
+    }
+
+    generated = []
+    for i, v in enumerate(unique[:10]):  # Max 10 reports
+        template = v.get("template", "")
+        cvss_score, cvss_vector, cwe = _CVSS.get(template, ("7.5", "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N", "CWE-200"))
+        sev = v["severity"].capitalize()
+        vtype = v["type"]
+        url = v.get("url", "")
+        detail = v.get("detail", "")
+        remediation = _REMEDIATION.get(cwe, "Review and fix the vulnerability following OWASP guidelines.")
+
+        # Generate PoC command
+        poc = f'curl -sk "{url}"'
+        if "takeover" in template.lower():
+            poc = f'curl -sk "{url}"\n# Observe: returns third-party service error page indicating dangling DNS'
+        elif "s3" in template.lower() or "gcs" in template.lower() or "azure" in template.lower():
+            poc = f'curl -sk "{url}"\n# Observe: returns XML bucket listing without authentication'
+
+        report = f"""# {vtype}
+
+**Target:** {target}
+**Asset:** {url}
+**Severity:** {sev}
+**CVSS Score:** {cvss_score}
+**CVSS Vector:** {cvss_vector}
+**Weakness:** {cwe}
+
+---
+
+## Summary
+
+{vtype} was identified on `{url}`. {detail}
+
+---
+
+## Steps to Reproduce
+
+1. Send a request to the affected URL:
+```
+{poc}
+```
+
+2. Observe the response confirming the vulnerability:
+```
+{detail}
+```
+
+---
+
+## Impact
+
+{detail}. This vulnerability affects the confidentiality and/or integrity of DoorDash's systems and user data.
+
+---
+
+## Remediation
+
+{remediation}
+
+---
+
+*Report generated by Apex CLI v8.x*
+"""
+        fname = reports_dir / f"report_{i+1}_{template.replace('-','_')[:30]}.md"
+        fname.write_text(report)
+        generated.append(str(fname))
+        console.print(f"[green][✓][/green] H1 report → {fname.name}")
+
+    console.print(f"\n[bold green]{len(generated)} HackerOne reports saved to {reports_dir}/[/bold green]")
+    return generated
 
 
 if __name__ == "__main__":
