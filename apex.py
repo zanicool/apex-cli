@@ -276,21 +276,36 @@ console = Console()
 # ---------------------------------------------------------------------------
 
 def find_tool(name):
-    """Return absolute path for *name* or None."""
-    return shutil.which(name)
+    """Return absolute path for *name* or None — checks PATH and ~/go/bin."""
+    import os as _os
+    path = shutil.which(name)
+    if path:
+        return path
+    # Also check ~/go/bin (Go tools installed by user)
+    go_path = _os.path.expanduser(f"~/go/bin/{name}")
+    if _os.path.isfile(go_path) and _os.access(go_path, _os.X_OK):
+        return go_path
+    return None
 
 def find_httpx():
     """Find ProjectDiscovery's httpx, not the Python pip httpx."""
-    path = find_tool("httpx")
-    if not path:
-        return None
-    try:
-        r = subprocess.run([path, "-version"], capture_output=True, text=True, timeout=5)
-        output = (r.stdout + r.stderr).lower()
-        if "projectdiscovery" in output or "current" in output:
-            return path
-    except Exception:
-        pass
+    import os as _os
+    # Check go/bin first (PD httpx is usually here)
+    candidates = [
+        _os.path.expanduser("~/go/bin/httpx"),
+        "/usr/local/bin/httpx",
+        shutil.which("httpx") or "",
+    ]
+    for path in candidates:
+        if not path or not _os.path.isfile(path):
+            continue
+        try:
+            r = subprocess.run([path, "-version"], capture_output=True, text=True, timeout=5)
+            output = (r.stdout + r.stderr).lower()
+            if "projectdiscovery" in output or "current" in output:
+                return path
+        except Exception:
+            pass
     return None
 
 TOOLS = {
