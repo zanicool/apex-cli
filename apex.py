@@ -563,7 +563,8 @@ class ApexCLI:
 
     def _probe_httpx(self, path):
         subs_file = os.path.join(self.output_dir, "subdomains.txt")
-        cmd = [path, "-l", subs_file, "-silent", "-no-color"]
+        cmd = [path, "-l", subs_file, "-silent", "-no-color",
+               "-threads", os.environ.get("APEX_HTTPX_T", "50")]
         if self.deep:
             cmd.extend(["-ports", "80,443,8080,8443,8000,3000"])
         stdout, _, code = self.run_command(cmd, "httpx probing for live hosts", "httpx.txt")
@@ -579,7 +580,7 @@ class ApexCLI:
     def _probe_nmap(self, path):
         targets_file = os.path.join(self.output_dir, "subdomains.txt")
         ports = "80,443,8080,8443,8000,3000" if self.deep else "80,443,8080,8443"
-        cmd = [path, "-iL", targets_file, "-p", ports, "--open", "-oG",
+        cmd = [path, f"-{os.environ.get('APEX_NMAP_T','T3')}", "-iL", targets_file, "-p", ports, "--open", "-oG",
                os.path.join(self.output_dir, "nmap.gnmap")]
         stdout, _, code = self.run_command(cmd, "Nmap port scan", "nmap.txt")
         # Parse gnmap
@@ -643,7 +644,7 @@ class ApexCLI:
             cmd = [
                 path, "-u", f"{target}/FUZZ", "-w", DEFAULT_WORDLIST,
                 "-mc", "200,301,302,403", "-o", out_path,
-                "-of", "json", "-s", "-t", "300",
+                "-of", "json", "-s", "-t", os.environ.get("APEX_FFUF_T", "100"),
             ]
             self.run_command(cmd, f"Ffuf → {target}")
             # Collect discovered URLs to feed into nuclei/sqlmap
@@ -713,9 +714,9 @@ class ApexCLI:
         cmd = [
             path, "-l", targets_file, "-jsonl", "-o", json_out,
             "-silent", "-no-color",
-            "-c", "50",
-            "-bs", "50",
-            "-rl", "500",
+            "-c", os.environ.get("APEX_NUCLEI_C", "50"),
+            "-bs", os.environ.get("APEX_NUCLEI_BS", "50"),
+            "-rl", os.environ.get("APEX_NUCLEI_RL", "500"),
             "-timeout", "8",
             "-retries", "1",
             "-tags", ",".join(template_tags),
@@ -783,8 +784,8 @@ class ApexCLI:
                 "--batch", "--crawl", "3" if self.deep else "1",
                 "--random-agent", "--forms",
             ]
-            if self.deep:
-                cmd.extend(["--level", "3", "--risk", "2"])
+            cmd.extend(["--level", os.environ.get("APEX_SQLMAP_L","2"),
+                         "--risk", os.environ.get("APEX_SQLMAP_R","1")])
             stdout, _, _ = self.run_command(cmd, f"SQLMap → {target}", f"sqlmap_{safe}.txt")
             if "is vulnerable" in stdout.lower():
                 self.vulnerabilities.append({

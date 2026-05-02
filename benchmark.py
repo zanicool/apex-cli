@@ -194,6 +194,38 @@ def run_benchmark(force=False):
     # Rate limit: be gentle on slow networks
     settings["rate_delay"] = 0.0 if net_score == "fast" else 0.05
 
+    # --- Tool-specific tuning ---
+
+    # Nuclei: concurrent templates + bulk size + rate limit
+    if cpu_score == "fast" and net_score == "fast":
+        settings["nuclei_c"] = 100       # concurrent templates
+        settings["nuclei_bs"] = 100      # bulk size
+        settings["nuclei_rl"] = 1000     # requests/sec
+    elif cpu_score == "slow" or net_score == "slow":
+        settings["nuclei_c"] = 25
+        settings["nuclei_bs"] = 25
+        settings["nuclei_rl"] = 150
+    else:
+        settings["nuclei_c"] = 50
+        settings["nuclei_bs"] = 50
+        settings["nuclei_rl"] = 500
+
+    # ffuf: threads
+    settings["ffuf_threads"] = 500 if net_score == "fast" else 100 if net_score == "medium" else 50
+
+    # nmap: timing template (T1=paranoid T5=insane)
+    settings["nmap_timing"] = "T4" if net_score != "slow" else "T3"
+
+    # sqlmap: level + risk (higher = more tests but slower)
+    settings["sqlmap_level"] = 3 if cpu_score == "fast" else 2
+    settings["sqlmap_risk"] = 2 if cpu_score == "fast" else 1
+
+    # subfinder: timeout per source
+    settings["subfinder_timeout"] = 30 if net_score == "fast" else 60
+
+    # httpx: threads
+    settings["httpx_threads"] = 200 if net_score == "fast" else 50
+
     config["settings"] = settings
 
     # Save
@@ -201,11 +233,13 @@ def run_benchmark(force=False):
 
     print(f"""
 \033[1;32m✓ Auto-tuned settings:\033[0m
-  Workers:     {settings['workers']} parallel threads
-  Timeout:     {settings['timeout']}s per request
-  AI model:    {settings['ai_model']}
-  AI workers:  {settings['ai_workers']} parallel queries
-  Rate delay:  {settings['rate_delay']}s between requests
+  Scanner:     {settings['workers']} workers | {settings['timeout']}s timeout | {settings['rate_delay']}s rate delay
+  Nuclei:      {settings['nuclei_c']} concurrent | {settings['nuclei_rl']} req/s
+  ffuf:        {settings['ffuf_threads']} threads
+  nmap:        {settings['nmap_timing']} timing
+  sqlmap:      level={settings['sqlmap_level']} risk={settings['sqlmap_risk']}
+  httpx:       {settings['httpx_threads']} threads
+  AI:          {settings['ai_model']} | {settings['ai_workers']} parallel queries
 """)
 
     return config
@@ -217,7 +251,7 @@ def get_settings():
 
 
 def apply_settings(settings):
-    """Apply benchmark settings to scanners module."""
+    """Apply benchmark settings to scanners module and store for tool phases."""
     try:
         sys.path.insert(0, str(APEX_DIR))
         import scanners
@@ -227,6 +261,15 @@ def apply_settings(settings):
             scanners._TIMEOUT = settings["timeout"]
     except Exception:
         pass
+    # Store settings globally so phase methods can read them
+    os.environ["APEX_NUCLEI_C"] = str(settings.get("nuclei_c", 50))
+    os.environ["APEX_NUCLEI_BS"] = str(settings.get("nuclei_bs", 50))
+    os.environ["APEX_NUCLEI_RL"] = str(settings.get("nuclei_rl", 500))
+    os.environ["APEX_FFUF_T"] = str(settings.get("ffuf_threads", 100))
+    os.environ["APEX_NMAP_T"] = settings.get("nmap_timing", "T3")
+    os.environ["APEX_SQLMAP_L"] = str(settings.get("sqlmap_level", 2))
+    os.environ["APEX_SQLMAP_R"] = str(settings.get("sqlmap_risk", 1))
+    os.environ["APEX_HTTPX_T"] = str(settings.get("httpx_threads", 50))
 
 
 if __name__ == "__main__":
