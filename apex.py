@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apex CLI v7.0 — Automated Pen-Test Orchestrator."""
+"""Apex CLI v8.x — Automated Pen-Test Orchestrator."""
 
 import argparse
 import subprocess
@@ -2336,27 +2336,26 @@ class ApexCLI:
 
 
 SKULL_ASCII = r"""[bold red]
-                     ______
-                  .-"      "-.
-                 /            \
-                |              |
-                |,  .-.  .-.  ,|
-                | )(__/  \__)( |
-                |/     /\     \|
-                (_     ^^     _)
-                 \__|IIIIII|__/
-                  | \IIIIII/ |
-                  \          /
-                   `--------`
-[/bold red][bold white]
-                 A P E X  C L I
-[/bold white]"""
+    ██████████████████████████████████████████████████████
+    ██                                                  ██
+    ██    ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░    ██
+    ██    ░   ▄████████████████████████████████▄   ░    ██
+    ██    ░   ██  ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄  ██   ░    ██
+    ██    ░   ██  ██  ╔══════════════════╗  ██  ██   ░    ██
+    ██    ░   ██  ██  ║  ☠  APEX  CLI  ☠ ║  ██  ██   ░    ██
+    ██    ░   ██  ██  ╚══════════════════╝  ██  ██   ░    ██
+    ██    ░   ██  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀  ██   ░    ██
+    ██    ░   ▀████████████████████████████████▀   ░    ██
+    ██    ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░    ██
+    ██                                                  ██
+    ██████████████████████████████████████████████████████
+[/bold red]"""
 
 
 def show_banner():
     console.print(SKULL_ASCII, justify="center")
     console.print(Panel.fit(
-        "[bold white]Apex CLI v7.0[/bold white]\n"
+        "[bold white]Apex CLI v8.x[/bold white]\n"
         "[dim]Automated Pen-Test Orchestrator[/dim]",
         border_style="red",
     ), justify="center")
@@ -2957,7 +2956,7 @@ def interactive_menu():
 def main():
     parser = argparse.ArgumentParser(
         prog="apex-cli",
-        description="Apex CLI v7.0 — Automated Pen-Test Orchestrator",
+        description="Apex CLI v8.x — Automated Pen-Test Orchestrator",
     )
     parser.add_argument("target", nargs="?", help="Target domain or IP (e.g. example.com)")
     parser.add_argument("--auto", type=str, metavar="FILE",
