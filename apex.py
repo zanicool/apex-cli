@@ -507,8 +507,12 @@ class ApexCLI:
             self.web_targets = [f"https://{s}" for s in self.subdomains]
             self._log_phase("Probe (curl)", "ok", f"{len(self.web_targets)} assumed")
             return
+        # Always try the base target on standard ports first
         ports = [("https", 443), ("http", 80), ("http", 8080), ("http", 5000), ("http", 3000)]
-        for sub in self.subdomains:
+        subs = list(self.subdomains)
+        if self.target not in subs:
+            subs.insert(0, self.target)
+        for sub in subs:
             for proto, port in ports:
                 url = f"{proto}://{sub}:{port}" if port not in (80, 443) else f"{proto}://{sub}"
                 try:

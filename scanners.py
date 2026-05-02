@@ -4687,7 +4687,9 @@ class OOBServer:
     def start(self):
         """Auto-install and start interactsh-client."""
         import shutil, os
-        path = shutil.which("interactsh-client")
+        # Also check ~/go/bin which isn't always in PATH
+        go_bin = os.path.expanduser("~/go/bin/interactsh-client")
+        path = shutil.which("interactsh-client") or (go_bin if os.path.isfile(go_bin) else None)
         if not path:
             # Try go install
             go_bin = os.path.expanduser("~/go/bin")
