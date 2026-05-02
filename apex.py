@@ -196,6 +196,15 @@ from scanners import (
     scan_api_version_enumeration,
     scan_legacy_endpoints,
     scan_idor_horizontal_vertical,
+    # Batch 14
+    scan_http_desync_te_te,
+    scan_idor_batch_api,
+    scan_graphql_persisted_query,
+    scan_xxe_parameter_entity,
+    scan_open_redirect_meta,
+    scan_cors_with_credentials,
+    scan_clickjacking_advanced,
+    scan_subdomain_ns_takeover,
     # Batch 13
     scan_ldap_injection,
     scan_template_injection_twig,
@@ -2121,6 +2130,55 @@ class ApexCLI:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
 
+    def phase_http_desync_te_te(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_http_desync_te_te(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_idor_batch_api(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_idor_batch_api(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_graphql_persisted_query(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_graphql_persisted_query(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_xxe_parameter_entity(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_xxe_parameter_entity(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_open_redirect_meta(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_open_redirect_meta(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_cors_with_credentials(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_cors_with_credentials(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_clickjacking_advanced(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_clickjacking_advanced(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_subdomain_ns_takeover(self):
+        if self.dry_run or not self.subdomains: return
+        findings = scan_subdomain_ns_takeover(self.target, self.subdomains)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+
 SKULL_ASCII = r"""[bold red]
                      ______
                   .-"      "-.
@@ -2383,6 +2441,14 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("CSP Bypass JSONP", apex.phase_csp_bypass_jsonp),
         ("API Key Rotation Bypass", apex.phase_api_key_rotation_bypass),
         ("GraphQL Circular Fragment", apex.phase_graphql_circular_fragment),
+        ("HTTP Desync TE.TE", apex.phase_http_desync_te_te),
+        ("IDOR Batch API", apex.phase_idor_batch_api),
+        ("GraphQL Persisted Query", apex.phase_graphql_persisted_query),
+        ("XXE Parameter Entity", apex.phase_xxe_parameter_entity),
+        ("Open Redirect Meta", apex.phase_open_redirect_meta),
+        ("CORS With Credentials", apex.phase_cors_with_credentials),
+        ("Clickjacking Advanced", apex.phase_clickjacking_advanced),
+        ("Subdomain NS Takeover", apex.phase_subdomain_ns_takeover),
     ]
 
     # Measure target response time and adapt concurrency

