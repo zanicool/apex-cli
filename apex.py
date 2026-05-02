@@ -2731,12 +2731,23 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
         BarColumn(), TimeElapsedColumn(), console=console,
     ) as progress:
+        # Load dragon ASCII art
+        try:
+            from dragon import DRAGON
+        except ImportError:
+            DRAGON = []
+        _dragon_idx = 0
+
         for label, fn in seq_phases:
             task = progress.add_task(f"[cyan]{label}...", total=1)
             _, err = run_phase(label, fn)
             if err:
                 console.print(f"[red][!] {label} failed: {err}[/red]")
             progress.update(task, completed=1)
+            # Reveal dragon line by line as phases complete
+            if DRAGON and _dragon_idx < len(DRAGON):
+                console.print(f"[bold red]{DRAGON[_dragon_idx]}[/bold red]")
+                _dragon_idx += 1
             # After fingerprint: smart skip irrelevant phases + inject tech-specific
             if label == "Fingerprint":
                 tech = " ".join(apex.technologies).lower()
@@ -2829,6 +2840,10 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
                 if err:
                     console.print(f"[red][!] {label} failed: {err}[/red]")
                 progress.update(task_id, completed=1)
+                # Continue revealing dragon
+                if DRAGON and _dragon_idx < len(DRAGON):
+                    console.print(f"[bold red]{DRAGON[_dragon_idx]}[/bold red]")
+                    _dragon_idx += 1
 
     # Feedback loop: findings from earlier phases feed into targeted follow-up
     sqli_urls = [v["url"] for v in apex.vulnerabilities
