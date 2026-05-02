@@ -2378,6 +2378,24 @@ def show_tools():
 
 
 def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, auth=None, resume_dir=None, scope=None, workers=0):
+    # Auto-tune on first run
+    try:
+        from benchmark import get_settings, apply_settings
+        bm = get_settings()
+        apply_settings(bm)
+        # Use benchmark workers if not overridden by user
+        if workers == 0 and bm.get("workers"):
+            workers = bm["workers"]
+        # Use benchmark AI model
+        if bm.get("ai_model"):
+            try:
+                import apex_ai as _ai
+                _ai.MODEL = bm["ai_model"]
+                _ai.AI_WORKERS = bm.get("ai_workers", 3)
+            except Exception:
+                pass
+    except Exception:
+        pass
     report_formats = report_formats or ["terminal"]
     skip = [s.lower() for s in (skip or [])]
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")

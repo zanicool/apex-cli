@@ -11,6 +11,7 @@ import requests
 console = Console()
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL = "llama3.2:latest"  # 2GB — fits in 6GB VRAM, ~10-15s response
+AI_WORKERS = 3  # parallel queries — set by benchmark.py
 RESULTS_DIR = Path.home() / "apex-auto-results"
 
 SYSTEM_PROMPT = """You are an elite bug bounty hunter with 10 years experience. You think like a human attacker, not a scanner.
@@ -140,7 +141,7 @@ Be specific about bounty value."""
     console.print("\n[bold red]AI Analysis (3 parallel queries):[/bold red]\n")
 
     results = {}
-    with _cf.ThreadPoolExecutor(max_workers=3) as pool:
+    with _cf.ThreadPoolExecutor(max_workers=AI_WORKERS) as pool:
         futures = {
             pool.submit(ask_ai, q1, stream=False): "follow_up",
             pool.submit(ask_ai, q2, stream=False): "business_logic",
