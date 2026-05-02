@@ -2233,7 +2233,7 @@ def interactive_menu():
             except SystemExit:
                 continue
             console.print()
-            run_scan(target, deep=deep, report_formats=[report_fmt])
+            run_scan(target, deep=deep, report_formats=[report_fmt], auth=None, scope=[])
 
         elif choice == "2":
             console.print("[bold yellow]Starting auto-scan of bug bounty targets...[/bold yellow]")

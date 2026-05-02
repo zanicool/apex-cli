@@ -959,7 +959,7 @@ def scan_subdomain_takeover(subdomains):
     for sub in subdomains[:50]:
         for proto in ["https", "http"]:
             try:
-                r = requests.get(f"{proto}://{sub}", timeout=5, verify=False, allow_redirects=True)
+                r = _S.get(f"{proto}://{sub}", timeout=5, allow_redirects=True)
                 for sig, service in takeover_sigs.items():
                     if sig in r.text:
                         findings.append({"type": f"Subdomain Takeover ({service})", "severity": "critical",
@@ -1766,7 +1766,7 @@ def scan_open_ports_web(subdomains):
         for port in ports:
             try:
                 proto = "https" if port in (8443, 7443, 9443, 4443) else "http"
-                r = requests.get(f"{proto}://{sub}:{port}", timeout=3, verify=False)
+                r = _S.get(f"{proto}://{sub}:{port}", timeout=3)
                 if r.status_code < 400:
                     title = ""
                     try:
@@ -2443,7 +2443,7 @@ def scan_robots_sitemap(target):
     base = f"https://{target}"
     for url in [f"{base}/robots.txt", f"http://{target}/robots.txt"]:
         try:
-            r = requests.get(url, timeout=5, verify=False)
+            r = _S.get(url, timeout=5)
             if r.status_code == 200 and ("Disallow" in r.text or "Allow" in r.text):
                 disallowed = re.findall(r"Disallow:\s*(/[^\s]+)", r.text)
                 sensitive = [p for p in disallowed if any(x in p.lower() for x in
@@ -2456,7 +2456,7 @@ def scan_robots_sitemap(target):
                 # Test if disallowed paths are actually accessible
                 for path in disallowed[:10]:
                     try:
-                        rp = requests.get(f"{base}{path}", timeout=3, verify=False)
+                        rp = _S.get(f"{base}{path}", timeout=3)
                         if rp.status_code == 200 and len(rp.content) > 100:
                             findings.append({"type": f"Robots.txt Path Accessible: {path}",
                                              "severity": "medium", "url": f"{base}{path}",
@@ -2467,7 +2467,7 @@ def scan_robots_sitemap(target):
     # Sitemap
     for url in [f"{base}/sitemap.xml", f"{base}/sitemap_index.xml"]:
         try:
-            r = requests.get(url, timeout=5, verify=False)
+            r = _S.get(url, timeout=5)
             if r.status_code == 200 and "<url>" in r.text:
                 urls = re.findall(r"<loc>([^<]+)</loc>", r.text)
                 sensitive = [u for u in urls if any(x in u.lower() for x in
@@ -2494,7 +2494,7 @@ def scan_staging_exposure(target, subdomains):
             if candidate in subdomains: continue
             for proto in ["https", "http"]:
                 try:
-                    r = requests.get(f"{proto}://{candidate}", timeout=3, verify=False)
+                    r = _S.get(f"{proto}://{candidate}", timeout=3)
                     if r.status_code < 400:
                         findings.append({"type": f"Staging/Dev Environment: {candidate}",
                                          "severity": "medium", "url": f"{proto}://{candidate}",
@@ -3372,7 +3372,7 @@ def scan_trace_options(web_targets):
 
         # OPTIONS — reveals allowed methods
         try:
-            r = requests.options(target, timeout=5, verify=False)
+            r = _S.options(target, timeout=5)
             allow = r.headers.get("Allow", r.headers.get("Access-Control-Allow-Methods", ""))
             if allow:
                 dangerous = [m for m in ["PUT","DELETE","PATCH","CONNECT","TRACE"] if m in allow.upper()]
@@ -3390,12 +3390,12 @@ def scan_range_amplification(web_targets):
     for target in web_targets[:3]:
         try:
             # First get content length
-            r = requests.head(target, timeout=5, verify=False)
+            r = _S.head(target, timeout=5)
             cl = int(r.headers.get("Content-Length", 0))
             if cl < 100: continue
 
             # Test if range requests are supported
-            r2 = requests.get(target, timeout=5, verify=False, headers={"Range": "bytes=0-10"})
+            r2 = _S.get(target, timeout=5, headers={"Range": "bytes=0-10"})
             if r2.status_code != 206: continue
 
             # Test overlapping ranges (amplification)
