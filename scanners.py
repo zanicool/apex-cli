@@ -978,12 +978,12 @@ def scan_subdomain_takeover(subdomains):
                     # Check if CNAME exists
                     try:
                         result = subprocess.run(["dig", "+short", "CNAME", sub], capture_output=True, text=True, timeout=5)
-                        cname = result.stdout.strip()
+                        cname = (result.stdout or "").strip()
                         if cname and not cname.endswith(sub.split(".")[-2] + "."):
                             findings.append({"type": "Potential Subdomain Takeover", "severity": "high",
                                              "url": sub, "detail": f"CNAME {cname} but host unreachable",
                                              "template": "apex-takeover"})
-                    except: pass
+                    except Exception: pass
                 break
             except: break
 
