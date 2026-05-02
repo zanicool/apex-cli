@@ -190,6 +190,12 @@ from scanners import (
     scan_forced_browsing,
     scan_parameter_tampering,
     scan_multi_step_race,
+    # Batch 9
+    scan_multi_step_auth_flow,
+    scan_graphql_field_enumeration,
+    scan_api_version_enumeration,
+    scan_legacy_endpoints,
+    scan_idor_horizontal_vertical,
     # Intelligence engine
     deduplicate_findings,
     score_findings,
@@ -1883,6 +1889,37 @@ class ApexCLI:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
 
+    def phase_multi_step_auth_flow(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_multi_step_auth_flow(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_graphql_field_enumeration(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_graphql_field_enumeration(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_api_version_enumeration(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_api_version_enumeration(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_legacy_endpoints(self):
+        if self.dry_run: return
+        findings = scan_legacy_endpoints(self.target, self.subdomains)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_idor_horizontal_vertical(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_idor_horizontal_vertical(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+
 SKULL_ASCII = r"""[bold red]
                      ______
                   .-"      "-.
@@ -2113,6 +2150,11 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("Forced Browsing", apex.phase_forced_browsing),
         ("Parameter Tampering", apex.phase_parameter_tampering),
         ("Multi-Step Race", apex.phase_multi_step_race),
+        ("Multi-Step Auth Flow", apex.phase_multi_step_auth_flow),
+        ("GraphQL Field Enumeration", apex.phase_graphql_field_enumeration),
+        ("API Version Enumeration", apex.phase_api_version_enumeration),
+        ("Legacy Endpoints", apex.phase_legacy_endpoints),
+        ("IDOR Horizontal/Vertical", apex.phase_idor_horizontal_vertical),
     ]
 
     # Measure target response time and adapt concurrency

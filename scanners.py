@@ -6982,3 +6982,308 @@ def scan_multi_step_race(crawl_data):
                 "template": "apex-race-coupon",
             })
     return findings
+
+
+# ---------------------------------------------------------------------------
+# ELITE BATCH 9: Multi-step flow testing, two-account IDOR,
+#                GraphQL field suggestion enumeration,
+#                API version detection, legacy endpoint finder
+# ---------------------------------------------------------------------------
+
+def scan_multi_step_auth_flow(crawl_data, web_targets):
+    """Test multi-step authentication flows for bypass — skip steps, replay tokens."""
+    findings = []
+    # Find multi-step indicators in pages
+    step_indicators = ["step=", "stage=", "phase=", "wizard", "step-", "/step/",
+                       "verify", "confirm", "otp", "2fa", "mfa", "token="]
+    flow_pages = [p for p in crawl_data.get("pages", [])
+                  if any(x in p["url"].lower() for x in step_indicators)]
+
+    for page in flow_pages[:5]:
+        url = page["url"]
+        base = "/".join(url.split("/", 3)[:3])
+        # Try to skip to later steps directly
+        for skip_path in ["/confirm", "/verify", "/complete", "/success",
+                          "/step/3", "/step/4", "/final", "/done"]:
+            try:
+                r = _S.get(f"{base}{skip_path}", timeout=5)
+                if r.status_code == 200 and len(r.content) > 200:
+                    body = r.text.lower()
+                    if not any(x in body for x in ["login", "sign in", "unauthorized", "forbidden"]):
+                        findings.append({
+                            "type": f"Multi-Step Flow Bypass: {skip_path}",
+                            "severity": "high",
+                            "url": f"{base}{skip_path}",
+                            "detail": f"Step {skip_path} accessible without completing prior steps",
+                            "template": "apex-flow-bypass",
+                        })
+            except: continue
+
+    # Test token reuse — submit same OTP/token twice
+    for page in flow_pages[:3]:
+        url = page["url"]
+        if "token=" in url or "otp=" in url or "code=" in url:
+            try:
+                # First request
+                r1 = _S.get(url, timeout=5)
+                # Second request with same token
+                r2 = _S.get(url, timeout=5)
+                if r1.status_code == 200 and r2.status_code == 200:
+                    if "invalid" not in r2.text.lower() and "expired" not in r2.text.lower():
+                        findings.append({
+                            "type": "Token Reuse (No Single-Use Enforcement)",
+                            "severity": "medium",
+                            "url": url,
+                            "detail": "Token/OTP accepted on second use — not invalidated after first use",
+                            "template": "apex-token-reuse",
+                        })
+            except: pass
+
+    return findings
+
+
+def scan_graphql_field_enumeration(crawl_data):
+    """Enumerate GraphQL schema via field suggestions — works even when introspection is disabled."""
+    findings = []
+    tested = set()
+    # Common field names to probe
+    field_guesses = [
+        "user", "users", "me", "profile", "account", "admin", "password",
+        "email", "token", "secret", "key", "apiKey", "creditCard", "card",
+        "payment", "balance", "limit", "creditLimit", "ssn", "phone",
+        "address", "dob", "dateOfBirth", "role", "permissions", "isAdmin",
+    ]
+    for page in crawl_data.get("pages", [])[:3]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        for path in ["/graphql", "/api/graphql", "/gql", "/query"]:
+            url = f"{base}{path}"
+            try:
+                # First check if endpoint exists
+                r = _S.post(url, json={"query": "{__typename}"},
+                           headers={"Content-Type": "application/json"}, timeout=5)
+                if r.status_code not in (200, 400): continue
+
+                # Check if introspection is disabled
+                r_intro = _S.post(url, json={"query": "{__schema{types{name}}}"},
+                                  headers={"Content-Type": "application/json"}, timeout=5)
+                if "__schema" in r_intro.text:
+                    continue  # Introspection enabled, already handled elsewhere
+
+                # Probe field suggestions
+                discovered = []
+                for field in field_guesses:
+                    r_probe = _S.post(url,
+                                     json={"query": f"{{ {field} {{ id }} }}"},
+                                     headers={"Content-Type": "application/json"},
+                                     timeout=5)
+                    body = r_probe.text
+                    # "Did you mean X?" reveals real field names
+                    suggestions = re.findall(r'[Dd]id you mean ["\']?(\w+)["\']?', body)
+                    if suggestions:
+                        discovered.extend(suggestions)
+                    # Field exists if no "Cannot query field" error
+                    if "Cannot query field" not in body and "Unknown field" not in body:
+                        if r_probe.status_code == 200 and "errors" not in body.lower():
+                            discovered.append(field)
+
+                if discovered:
+                    unique = list(set(discovered))
+                    findings.append({
+                        "type": "GraphQL Schema Enumeration (Field Suggestion)",
+                        "severity": "medium",
+                        "url": url,
+                        "detail": f"Schema fields discovered without introspection: {', '.join(unique[:10])}",
+                        "template": "apex-gql-enum",
+                    })
+            except: continue
+    return findings
+
+
+def scan_api_version_enumeration(web_targets):
+    """Find all active API versions — old versions often lack security fixes."""
+    findings = []
+    versions = ["v0", "v1", "v2", "v3", "v4", "v5",
+                "beta", "alpha", "legacy", "old", "dev", "internal",
+                "2023", "2022", "2021", "2020"]
+    sensitive_endpoints = [
+        "users", "user/me", "me", "profile", "accounts", "admin",
+        "config", "settings", "keys", "tokens", "payments", "cards",
+    ]
+    for target in web_targets[:3]:
+        active_versions = []
+        for ver in versions:
+            for prefix in ["/api/", "/api/", "/"]:
+                url = f"{target}{prefix}{ver}/users"
+                try:
+                    r = _S.get(url, timeout=3, allow_redirects=False)
+                    if r.status_code in (200, 401, 403):
+                        active_versions.append(f"{prefix}{ver}")
+                        break
+                except: continue
+
+        if len(active_versions) > 1:
+            # Multiple versions active — test each for unauth access
+            for ver_path in active_versions:
+                for ep in sensitive_endpoints[:5]:
+                    url = f"{target}{ver_path}/{ep}"
+                    try:
+                        r = _S.get(url, timeout=3)
+                        if r.status_code == 200:
+                            try:
+                                data = r.json()
+                                if isinstance(data, (list, dict)) and len(str(data)) > 50:
+                                    findings.append({
+                                        "type": f"Unprotected API Version: {ver_path}/{ep}",
+                                        "severity": "high",
+                                        "url": url,
+                                        "detail": f"API version {ver_path} exposes /{ep} without auth",
+                                        "template": "apex-api-ver",
+                                    })
+                            except: pass
+                    except: continue
+
+        if len(active_versions) >= 2:
+            findings.append({
+                "type": f"Multiple API Versions Active",
+                "severity": "medium",
+                "url": target,
+                "detail": f"Active versions: {', '.join(active_versions)} — old versions may lack security patches",
+                "template": "apex-api-ver",
+            })
+    return findings
+
+
+def scan_legacy_endpoints(target, subdomains):
+    """Find legacy/forgotten endpoints via common patterns and historical naming."""
+    findings = []
+    base = f"https://{target}"
+    legacy_paths = [
+        # Old API versions
+        "/api/v1/", "/api/v2/", "/api/old/", "/api/legacy/", "/api/beta/",
+        # Old admin paths
+        "/admin/", "/administrator/", "/wp-admin/", "/phpmyadmin/",
+        "/adminer/", "/manager/", "/management/",
+        # Dev/debug leftovers
+        "/debug/", "/test/", "/dev/", "/staging/", "/demo/",
+        "/console/", "/shell/", "/terminal/",
+        # Config/backup files
+        "/.env", "/.env.backup", "/.env.old", "/.env.prod",
+        "/config.json", "/config.yml", "/config.yaml",
+        "/app.config.js", "/settings.json",
+        "/backup/", "/bak/", "/old/",
+        # Framework specific
+        "/actuator/", "/actuator/env", "/actuator/heapdump",
+        "/telescope/", "/horizon/", "/nova/",
+        "/_profiler/", "/_wdt/",
+        # API docs
+        "/swagger/", "/swagger-ui/", "/api-docs/",
+        "/openapi.json", "/openapi.yaml",
+        "/graphiql", "/playground",
+        # Source maps
+        "/main.js.map", "/app.js.map", "/bundle.js.map",
+        "/static/js/main.chunk.js.map",
+    ]
+    try:
+        r404 = _S.get(f"{base}/nonexistent_apex_xyz_test", timeout=3)
+        size_404 = len(r404.content)
+    except: return findings
+
+    for path in legacy_paths:
+        try:
+            r = _S.get(f"{base}{path}", timeout=4, allow_redirects=False)
+            if r.status_code == 200 and abs(len(r.content) - size_404) > 100:
+                body = r.text[:300].lower()
+                # Filter generic pages
+                if any(x in body for x in ["<html", "<!doctype"]) and len(r.content) < 500:
+                    continue
+                sev = "critical" if any(x in path for x in [".env", "heapdump", "config"]) else "high"
+                findings.append({
+                    "type": f"Legacy/Forgotten Endpoint: {path}",
+                    "severity": sev,
+                    "url": f"{base}{path}",
+                    "detail": f"Endpoint accessible ({r.status_code}, {len(r.content)}b)",
+                    "template": "apex-legacy",
+                })
+        except: continue
+
+    # Also check subdomains for legacy patterns
+    for sub in subdomains[:10]:
+        for proto in ["https", "http"]:
+            for path in ["/.env", "/api/v1/users", "/admin", "/actuator/env"]:
+                try:
+                    r = _S.get(f"{proto}://{sub}{path}", timeout=3, allow_redirects=False)
+                    if r.status_code == 200 and len(r.content) > 50:
+                        findings.append({
+                            "type": f"Legacy Endpoint on Subdomain: {sub}{path}",
+                            "severity": "high",
+                            "url": f"{proto}://{sub}{path}",
+                            "detail": f"Sensitive path accessible on subdomain",
+                            "template": "apex-legacy",
+                        })
+                        break
+                except: continue
+    return findings
+
+
+def scan_idor_horizontal_vertical(crawl_data):
+    """Test both horizontal IDOR (other users' data) and vertical IDOR (privilege escalation)."""
+    findings = []
+    # Find endpoints with numeric IDs or UUIDs
+    id_pattern = re.compile(r'/(\d{1,10}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:/|$|\?)')
+
+    tested_bases = set()
+    for page in crawl_data.get("pages", []):
+        url = page["url"]
+        m = id_pattern.search(url)
+        if not m: continue
+        current_id = m.group(1)
+        base_path = url[:m.start(1)]
+        if base_path in tested_bases: continue
+        tested_bases.add(base_path)
+
+        is_uuid = "-" in current_id
+        if is_uuid:
+            # Can't easily enumerate UUIDs
+            continue
+
+        current_num = int(current_id)
+        # Test adjacent IDs (horizontal IDOR)
+        responses = {}
+        for test_id in [1, 2, current_num - 1, current_num + 1, current_num + 100]:
+            if test_id <= 0: continue
+            test_url = url[:m.start(1)] + str(test_id) + url[m.end(1):]
+            try:
+                r = _S.get(test_url, timeout=5)
+                if r.status_code == 200 and len(r.content) > 50:
+                    responses[test_id] = r.text[:200]
+            except: continue
+
+        if len(set(responses.values())) > 1:
+            findings.append({
+                "type": "IDOR - Horizontal (Access Other Users' Data)",
+                "severity": "high",
+                "url": url,
+                "detail": f"Different responses for IDs {list(responses.keys())} — user data accessible without ownership check",
+                "template": "apex-idor-horiz",
+            })
+
+        # Vertical IDOR — try ID 0, -1, admin IDs
+        for priv_id in [0, -1, 999999, 1000000]:
+            test_url = url[:m.start(1)] + str(priv_id) + url[m.end(1):]
+            try:
+                r = _S.get(test_url, timeout=5)
+                if r.status_code == 200 and len(r.content) > 100:
+                    body = r.text.lower()
+                    if any(x in body for x in ["admin", "root", "superuser", "system", "internal"]):
+                        findings.append({
+                            "type": "IDOR - Vertical (Privilege Escalation)",
+                            "severity": "critical",
+                            "url": test_url,
+                            "detail": f"ID {priv_id} returns privileged data",
+                            "template": "apex-idor-vert",
+                        })
+            except: continue
+
+    return findings
