@@ -206,6 +206,18 @@ from scanners import (
     scan_clickjacking_advanced,
     scan_subdomain_ns_takeover,
     set_proxy,
+    # Batch 16 — Final
+    scan_account_prehijacking,
+    scan_http_request_splitting,
+    scan_xs_leaks,
+    scan_oauth_token_fixation,
+    scan_api_key_in_headers,
+    scan_idor_graphql,
+    scan_subdomain_a_record_takeover,
+    scan_insecure_deserialization_patterns,
+    scan_http2_push_abuse,
+    scan_saml_replay,
+    scan_iframe_injection,
     # Batch 15
     scan_password_spray,
     scan_graphql_injection,
@@ -2240,6 +2252,73 @@ class ApexCLI:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
 
+    def phase_account_prehijacking(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_account_prehijacking(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_http_request_splitting(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_http_request_splitting(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_xs_leaks(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_xs_leaks(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_oauth_token_fixation(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_oauth_token_fixation(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_api_key_in_headers(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_api_key_in_headers(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_idor_graphql(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_idor_graphql(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_subdomain_a_record_takeover(self):
+        if self.dry_run or not self.subdomains: return
+        findings = scan_subdomain_a_record_takeover(self.subdomains)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_insecure_deserialization_patterns(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_insecure_deserialization_patterns(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_http2_push_abuse(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_http2_push_abuse(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_saml_replay(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_saml_replay(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_iframe_injection(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_iframe_injection(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+
 SKULL_ASCII = r"""[bold red]
                      ______
                   .-"      "-.
@@ -2517,6 +2596,17 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("CORS Vary Origin", apex.phase_cors_vary_origin),
         ("Insecure JWT Storage", apex.phase_insecure_jwt_storage),
         ("2FA Bypass Response", apex.phase_2fa_bypass_response),
+        ("Account Pre-Hijacking", apex.phase_account_prehijacking),
+        ("HTTP Request Splitting", apex.phase_http_request_splitting),
+        ("XS-Leaks", apex.phase_xs_leaks),
+        ("OAuth Token Fixation", apex.phase_oauth_token_fixation),
+        ("API Key in Headers", apex.phase_api_key_in_headers),
+        ("IDOR GraphQL", apex.phase_idor_graphql),
+        ("Subdomain A Record Takeover", apex.phase_subdomain_a_record_takeover),
+        ("Insecure Deserialization Patterns", apex.phase_insecure_deserialization_patterns),
+        ("HTTP/2 Push Abuse", apex.phase_http2_push_abuse),
+        ("SAML Replay", apex.phase_saml_replay),
+        ("Iframe Injection", apex.phase_iframe_injection),
     ]
 
     # Measure target response time and adapt concurrency

