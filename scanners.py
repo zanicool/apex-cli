@@ -45,9 +45,26 @@ def _get_session():
 
 # Backwards-compat proxy — reads from thread-local session
 class _SessionProxy:
+    """Thread-local session proxy with request/response capture for PoC."""
+    _last_request = {}  # thread-local last request details
+
+    def _capture(self, method, url, **kw):
+        """Capture request details for PoC generation."""
+        import threading as _ct
+        tid = _ct.get_ident()
+        headers = dict(_get_session().headers)
+        headers.update(kw.get("headers", {}))
+        self._last_request[tid] = {
+            "method": method.upper(),
+            "url": url,
+            "headers": headers,
+            "body": kw.get("data") or kw.get("json") or "",
+        }
+
     def get(self, *a, **kw):
         if _RATE_DELAY > 0:
             time.sleep(_RATE_DELAY)
+        self._capture("GET", a[0] if a else "", **kw)
         return _get_session().get(*a, **kw)
     def post(self, *a, **kw):
         if _RATE_DELAY > 0:
@@ -72,7 +89,12 @@ class _SessionProxy:
         return _get_session().patch(*a, **kw)
 
 _S = _SessionProxy()
-_PROXY = None  # Set via set_proxy()
+_PROXY = None
+
+def get_last_request():
+    """Get the last HTTP request made by this thread — for PoC capture."""
+    import threading as _ct
+    return _S._last_request.get(_ct.get_ident(), {})  # Set via set_proxy()
 
 def set_proxy(proxy_url):
     """Route all requests through a proxy (e.g., Burp Suite: http://127.0.0.1:8080)."""

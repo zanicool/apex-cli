@@ -2923,6 +2923,8 @@ def main():
                         help="Proxy URL (e.g. http://127.0.0.1:8080 for Burp Suite)")
     parser.add_argument("--wordlist", type=str, default="",
                         help="Custom wordlist for directory fuzzing")
+    parser.add_argument("--watch", type=int, default=0, metavar="HOURS",
+                        help="Rescan every N hours, alert on new findings (e.g. --watch 24)")
     parser.add_argument("--scope", nargs="+", default=[],
                         help="Restrict scan to these subdomains/paths (e.g. --scope api.example.com /api)")
 
@@ -2979,11 +2981,42 @@ def main():
                   f"{'DRY RUN' if args.dry_run else 'LIVE'}")
     console.print()
 
-    run_scan(target, dry_run=args.dry_run, deep=args.deep,
-            report_formats=args.report, skip=args.skip,
-            auth=tuple(args.auth) if args.auth else None,
-            scope=args.scope,
-            workers=args.workers if hasattr(args, "workers") else 0)
+    watch_hours = args.watch if hasattr(args, "watch") else 0
+    if watch_hours > 0:
+        console.print(f"[bold cyan]Watch mode: rescanning every {watch_hours}h[/bold cyan]")
+        known_vulns = set()
+        while True:
+            run_scan(target, dry_run=args.dry_run, deep=args.deep,
+                    report_formats=args.report, skip=args.skip,
+                    auth=tuple(args.auth) if args.auth else None,
+                    scope=args.scope,
+                    workers=args.workers if hasattr(args, "workers") else 0)
+            # Check for new findings
+            import glob as _glob, json as _wj
+            latest = sorted(_glob.glob(f"scan_{target}_*/report.json"))
+            if latest:
+                data = _wj.load(open(latest[-1]))
+                for v in data.get("vulnerabilities", []):
+                    key = f"{v.get('type','')}|{v.get('url','').split('?')[0]}"
+                    if key not in known_vulns and v.get("severity") in ("critical","high"):
+                        known_vulns.add(key)
+                        console.print(f"[bold red]🚨 NEW: {v['severity'].upper()} {v['type']} @ {v.get('url','')[:60]}[/bold red]")
+                        # Send notification
+                        try:
+                            import requests as _nr
+                            _nr.post("https://ntfy.sh/apex-watch",
+                                    data=f"NEW {v['severity'].upper()}: {v['type']} @ {v.get('url','')}".encode(),
+                                    headers={"Title": f"Apex: New finding on {target}"}, timeout=5)
+                        except Exception:
+                            pass
+            console.print(f"[dim]Next scan in {watch_hours}h...[/dim]")
+            import time as _wt; _wt.sleep(watch_hours * 3600)
+    else:
+        run_scan(target, dry_run=args.dry_run, deep=args.deep,
+                report_formats=args.report, skip=args.skip,
+                auth=tuple(args.auth) if args.auth else None,
+                scope=args.scope,
+                workers=args.workers if hasattr(args, "workers") else 0)
 
 
 if __name__ == "__main__":
