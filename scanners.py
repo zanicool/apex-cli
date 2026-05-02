@@ -1,5 +1,6 @@
 """Apex CLI v5.0 — Built-in scanners (no external tool dependencies)."""
 
+import json
 import re
 import socket
 import subprocess
@@ -144,8 +145,7 @@ def crawl(base_url, max_pages=50):
         ctype = r.headers.get("content-type", "").lower()
         if "application/json" in ctype or (r.text.strip()[:1] in ("{", "[")):
             try:
-                import json as _cj
-                data = _cj.loads(r.text)
+                data = json.loads(r.text)
                 # Flatten top-level keys as params for this endpoint
                 if isinstance(data, dict):
                     for k in data.keys():
@@ -3891,7 +3891,7 @@ def scan_jwt_alg_confusion(crawl_data):
                     if len(parts) != 3: continue
                     try:
                         pad = lambda s: s + "=" * (-len(s) % 4)
-                        header = _json.loads(base64.urlsafe_b64decode(pad(parts[0])))
+                        header = json.loads(base64.urlsafe_b64decode(pad(parts[0])))
                         if header.get("alg","").upper() in ("RS256","RS384","RS512","ES256","ES384","ES512"):
                             # Craft none-alg token
                             new_header = base64.urlsafe_b64encode(
@@ -4850,13 +4850,12 @@ class OOBServer:
         return None
 
     def _read_output(self):
-        import json as _json
         for line in self._proc.stdout:
             line = line.strip()
             if not line:
                 continue
             try:
-                data = _json.loads(line)
+                data = json.loads(line)
                 if "interactsh-domain" in data and not self.domain:
                     self.domain = data["interactsh-domain"]
                     self._ready.set()
@@ -5346,8 +5345,7 @@ def scan_nextjs_react_vulns(crawl_data, web_targets):
             r = _S.get(target, timeout=5)
             next_data = re.search(r'<script id="__NEXT_DATA__"[^>]*>({.*?})</script>', r.text, re.DOTALL)
             if next_data:
-                import json as _j
-                data = _j.loads(next_data.group(1))
+                data = json.loads(next_data.group(1))
                 data_str = str(data)
                 if any(x in data_str.lower() for x in ["password","secret","token","key","api","internal","private"]):
                     findings.append({"type": "Next.js __NEXT_DATA__ Sensitive Leak",
@@ -6152,8 +6150,7 @@ def parse_openapi_spec(base_url):
                     continue
             else:
                 try:
-                    import json as _j
-                    spec = _j.loads(r.text)
+                    spec = json.loads(r.text)
                 except Exception:
                     continue
             if isinstance(spec, dict) and ("paths" in spec or "swagger" in spec or "openapi" in spec):
@@ -6259,8 +6256,7 @@ def parse_openapi_spec(base_url):
 
 def authenticated_crawl(base_url, username, password, max_pages=50):
     """Log in and crawl authenticated pages — finds bugs behind login."""
-    import json as _j
-
+    
     session = requests.Session()
     session.verify = False
     session.headers.update({"User-Agent": _USER_AGENTS[0]})
@@ -6347,7 +6343,7 @@ def authenticated_crawl(base_url, username, password, max_pages=50):
         ctype = r.headers.get("content-type", "").lower()
         if "application/json" in ctype:
             try:
-                data = _j.loads(r.text)
+                data = json.loads(r.text)
                 if isinstance(data, dict):
                     for k in data.keys():
                         params_found[norm].add(k)
@@ -7504,9 +7500,8 @@ def _run_wp_enum(apex_instance):
         try:
             r = _r.get(f"{base}{path}", timeout=5, verify=False)
             if r.status_code == 200:
-                import json as _j
                 try:
-                    data = _j.loads(r.text)
+                    data = json.loads(r.text)
                     if isinstance(data, list) and data:
                         users = [u.get("slug", u.get("name", "")) for u in data[:5]]
                         findings.append({
@@ -7625,7 +7620,7 @@ def scan_jwt_secret_bruteforce(crawl_data):
                     if len(parts) != 3: continue
                     try:
                         pad = lambda s: s + "=" * (-len(s) % 4)
-                        header = _j.loads(_b64.urlsafe_b64decode(pad(parts[0])))
+                        header = json.loads(_b64.urlsafe_b64decode(pad(parts[0])))
                         alg = header.get("alg", "").upper()
                         if alg not in ("HS256", "HS384", "HS512"): continue
                         hash_fn = {"HS256": _hl.sha256, "HS384": _hl.sha384,
@@ -7635,7 +7630,7 @@ def scan_jwt_secret_bruteforce(crawl_data):
                         for secret in _WEAK_JWT_SECRETS:
                             expected = _hmac.new(secret.encode(), msg, hash_fn).digest()
                             if _hmac.compare_digest(expected, sig):
-                                payload = _j.loads(_b64.urlsafe_b64decode(pad(parts[1])))
+                                payload = json.loads(_b64.urlsafe_b64decode(pad(parts[1])))
                                 findings.append({
                                     "type": "JWT Weak Secret (Cracked)",
                                     "severity": "critical",
@@ -8245,8 +8240,8 @@ def scan_jwt_kid_injection(crawl_data):
                     if len(parts) != 3: continue
                     try:
                         pad = lambda s: s + "=" * (-len(s) % 4)
-                        header = _j.loads(_b64.urlsafe_b64decode(pad(parts[0])))
-                        payload = _j.loads(_b64.urlsafe_b64decode(pad(parts[1])))
+                        header = json.loads(_b64.urlsafe_b64decode(pad(parts[0])))
+                        payload = json.loads(_b64.urlsafe_b64decode(pad(parts[1])))
                         if "kid" not in header: continue
 
                         base_url = "/".join(page["url"].split("/", 3)[:3])
@@ -8255,7 +8250,7 @@ def scan_jwt_kid_injection(crawl_data):
                         new_header = dict(header)
                         new_header["kid"] = "../../dev/null"
                         new_header_b64 = _b64.urlsafe_b64encode(
-                            _j.dumps(new_header, separators=(",",":")).encode()
+                            json.dumps(new_header, separators=(",",":")).encode()
                         ).rstrip(b"=").decode()
                         # Sign with empty key
                         msg = f"{new_header_b64}.{parts[1]}".encode()
@@ -8277,7 +8272,7 @@ def scan_jwt_kid_injection(crawl_data):
                         # Test 2: kid SQL injection
                         new_header["kid"] = "' UNION SELECT 'secret'--"
                         new_header_b64 = _b64.urlsafe_b64encode(
-                            _j.dumps(new_header, separators=(",",":")).encode()
+                            json.dumps(new_header, separators=(",",":")).encode()
                         ).rstrip(b"=").decode()
                         msg = f"{new_header_b64}.{parts[1]}".encode()
                         sig = _hm.new(b"secret", msg, _hl.sha256).digest()
@@ -8539,9 +8534,8 @@ def scan_graphql_alias_introspection(crawl_data):
                 r2 = _S.post(url, json={"query": "{__type(name:\"Query\"){fields{name}}}"},
                             headers={"Content-Type": "application/json"}, timeout=5)
                 if "fields" in r2.text and "__type" not in r2.text:
-                    import json as _j
                     try:
-                        data = _j.loads(r2.text)
+                        data = json.loads(r2.text)
                         fields = [f["name"] for f in
                                   data.get("data",{}).get("__type",{}).get("fields",[]) or []]
                         if fields:
@@ -8561,7 +8555,7 @@ def scan_graphql_alias_introspection(crawl_data):
                                 headers={"Content-Type": "application/json"}, timeout=3)
                     if r3.status_code == 200 and "fields" in r3.text:
                         try:
-                            data = _j.loads(r3.text)
+                            data = json.loads(r3.text)
                             fields = data.get("data",{}).get("__type",{})
                             if fields and fields.get("fields"):
                                 field_names = [f["name"] for f in fields["fields"][:5]]
@@ -9491,8 +9485,7 @@ def scan_graphql_injection(crawl_data):
                 r = _S.post(url, json={"query": "{__schema{queryType{fields{name args{name type{name}}}}}}"},
                            headers={"Content-Type": "application/json"}, timeout=5)
                 if r.status_code != 200: continue
-                import json as _j
-                schema = _j.loads(r.text)
+                schema = json.loads(r.text)
                 fields = (schema.get("data", {}).get("__schema", {})
                          .get("queryType", {}) or {}).get("fields", []) or []
                 for field in fields[:5]:
@@ -9685,7 +9678,7 @@ def scan_insecure_jwt_storage(crawl_data):
                 for jwt in jwts[:2]:
                     try:
                         pad = lambda s: s + "=" * (-len(s) % 4)
-                        payload = _j.loads(_b64.urlsafe_b64decode(pad(jwt.split(".")[1])))
+                        payload = json.loads(_b64.urlsafe_b64decode(pad(jwt.split(".")[1])))
                         if any(k in payload for k in ["sub", "user_id", "email", "role", "admin"]):
                             findings.append({
                                 "type": "JWT Exposed in Page Source",
@@ -9980,8 +9973,7 @@ def scan_idor_graphql(crawl_data):
                             r = _S.post(url, json={"query": query},
                                        headers={"Content-Type": "application/json"}, timeout=5)
                             if r.status_code == 200 and "errors" not in r.text:
-                                import json as _j
-                                data = _j.loads(r.text).get("data", {})
+                                data = json.loads(r.text).get("data", {})
                                 if data and str(data) != "{}":
                                     responses[test_id] = str(data)[:100]
                         except Exception:
