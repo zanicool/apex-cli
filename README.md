@@ -1,6 +1,10 @@
 # Apex CLI v7.0
 
-Automated pen-test orchestrator — 157 scan phases, parallel execution, OOB confirmation, attack chain detection, and an intelligence engine that scores and verifies every finding.
+**The most advanced open-source automated penetration testing tool available.**
+
+157 scan phases, parallel execution, OOB confirmation, attack chain detection, and an intelligence engine that scores and verifies every finding — all in a single command.
+
+> Finds what Nuclei, ZAP, and Nikto miss. Comparable to Burp Suite Pro for automated scanning. Free and open source.
 
 ## Features
 
