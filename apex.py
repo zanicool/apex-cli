@@ -2787,7 +2787,10 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
 
     # Feedback loop: findings from earlier phases feed into targeted follow-up
     sqli_urls = [v["url"] for v in apex.vulnerabilities
-                 if "sql" in v.get("type","").lower() and v.get("url","").startswith("http")]
+                 if "sql" in v.get("type","").lower()
+                 and v.get("url","").startswith("http")
+                 and "?" in v.get("url","")  # Only URLs with actual params
+                 and v.get("severity") == "critical"]  # Only confirmed criticals
     if sqli_urls and not dry_run:
         sqlmap_path = apex._tool("sqlmap")
         if sqlmap_path:
