@@ -196,6 +196,14 @@ from scanners import (
     scan_api_version_enumeration,
     scan_legacy_endpoints,
     scan_idor_horizontal_vertical,
+    # Batch 13
+    scan_ldap_injection,
+    scan_template_injection_twig,
+    scan_websocket_origin_bypass,
+    scan_server_timing_oracle,
+    scan_csp_bypass_jsonp,
+    scan_api_key_rotation_bypass,
+    scan_graphql_circular_fragment,
     # Batch 12
     scan_jwt_kid_injection,
     scan_rate_limit_bypass_headers,
@@ -2070,6 +2078,49 @@ class ApexCLI:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
 
+    def phase_ldap_injection(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_ldap_injection(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_template_injection_twig(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_template_injection_twig(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_websocket_origin_bypass(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_websocket_origin_bypass(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_server_timing_oracle(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_server_timing_oracle(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_csp_bypass_jsonp(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_csp_bypass_jsonp(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_api_key_rotation_bypass(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_api_key_rotation_bypass(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_graphql_circular_fragment(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_graphql_circular_fragment(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+
 SKULL_ASCII = r"""[bold red]
                      ______
                   .-"      "-.
@@ -2325,6 +2376,13 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("Unkeyed Cache Poisoning", apex.phase_unkeyed_cache_poisoning),
         ("GraphQL Alias Introspection", apex.phase_graphql_alias_introspection),
         ("NoSQL Operator Injection", apex.phase_nosql_operator_injection),
+        ("LDAP Injection", apex.phase_ldap_injection),
+        ("Template Injection Twig", apex.phase_template_injection_twig),
+        ("WebSocket Origin Bypass", apex.phase_websocket_origin_bypass),
+        ("Server Timing Oracle", apex.phase_server_timing_oracle),
+        ("CSP Bypass JSONP", apex.phase_csp_bypass_jsonp),
+        ("API Key Rotation Bypass", apex.phase_api_key_rotation_bypass),
+        ("GraphQL Circular Fragment", apex.phase_graphql_circular_fragment),
     ]
 
     # Measure target response time and adapt concurrency
