@@ -2820,6 +2820,22 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
     if "html" in report_formats:
         apex.report_html()
 
+    # AI continuation — analyze results and suggest next steps
+    if not dry_run and apex.vulnerabilities:
+        try:
+            import requests as _r
+            _r.get("http://localhost:11434/api/tags", timeout=2)  # Check Ollama is running
+            console.print(f"\n[bold red]☠ APEX AI — Continuing the hunt...[/bold red]")
+            import subprocess as _sp
+            _sp.Popen([
+                sys.executable,
+                str(Path(__file__).parent / "apex-ai.py"),
+                output_dir,
+            ], stdout=None, stderr=None)
+            console.print(f"[dim]AI analysis running in background → {output_dir}/ai_analysis.md[/dim]")
+        except Exception:
+            pass  # Ollama not running — skip AI
+
 
 def interactive_menu():
     """Full interactive TUI when apex-cli is run with no arguments."""
