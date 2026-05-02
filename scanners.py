@@ -4800,7 +4800,8 @@ class OOBServer:
         """Use interactsh REST API directly — no binary needed."""
         import secrets, base64, json as _j
         # Try multiple public interactsh servers
-        servers = ["https://oast.pro", "https://oast.fun", "https://oast.live",
+        servers = ["http://localhost:9877", "http://10.0.0.72:9877",
+                   "https://oast.pro", "https://oast.fun", "https://oast.live",
                    "https://oast.site", "https://oast.online"]
         for server in servers:
             try:
@@ -4831,10 +4832,19 @@ class OOBServer:
         return True  # domain set, polling won't work but payloads will fire
 
     def _poll_api(self, identifier):
-        """Poll interactsh REST API for callbacks."""
+        """Poll OOB server for callbacks."""
         if not self._api_mode or not hasattr(self, '_api_server'):
             return None
         try:
+            # Local server uses uid-based polling
+            if "localhost" in self._api_server or "10.0.0" in self._api_server:
+                r = requests.get(f"{self._api_server}/poll",
+                                params={"uid": identifier}, timeout=3)
+                if r.status_code == 200:
+                    data = r.json()
+                    if data.get("hit"):
+                        return data.get("data")
+                return None
             r = requests.get(
                 f"{self._api_server}/poll",
                 params={"id": self.domain.split(".")[0], "secret": self._api_secret},
@@ -4885,9 +4895,11 @@ class OOBServer:
         return None
 
     def unique_id(self):
-        """Generate a unique subdomain for tracking a specific payload."""
+        """Generate a unique ID for tracking a specific payload."""
         import uuid as _uuid
-        return _uuid.uuid4().hex[:8]
+        uid = _uuid.uuid4().hex[:12]
+        # For local server: use as path; for remote: use as subdomain
+        return uid
 
     def stop(self):
         if self._proc:
@@ -4918,7 +4930,11 @@ def scan_blind_ssrf_oob(crawl_data, oob=None):
             if p.lower() not in fetch_params:
                 continue
             uid = oob.unique_id()
-            payload = f"http://{uid}.{oob.domain}/"
+            # Local server: use path-based URL; remote: use subdomain
+            if oob.domain and ("localhost" in oob.domain or "10.0.0" in oob.domain):
+                payload = f"{oob.domain}/{uid}"
+            else:
+                payload = f"http://{uid}.{oob.domain}/"
             try:
                 parsed = urllib.parse.urlparse(url)
                 qs = urllib.parse.parse_qs(parsed.query)
@@ -4937,7 +4953,11 @@ def scan_blind_ssrf_oob(crawl_data, oob=None):
         for inp in form.get("inputs", []):
             if inp.get("name","").lower() not in fetch_params: continue
             uid = oob.unique_id()
-            payload = f"http://{uid}.{oob.domain}/"
+            # Local server: use path-based URL; remote: use subdomain
+            if oob.domain and ("localhost" in oob.domain or "10.0.0" in oob.domain):
+                payload = f"{oob.domain}/{uid}"
+            else:
+                payload = f"http://{uid}.{oob.domain}/"
             try:
                 data = {i.get("name","f"): i.get("value","test") for i in form.get("inputs",[])}
                 data[inp["name"]] = payload
