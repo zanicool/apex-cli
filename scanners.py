@@ -69,10 +69,12 @@ class _SessionProxy:
     def post(self, *a, **kw):
         if _RATE_DELAY > 0:
             time.sleep(_RATE_DELAY)
+        self._capture("POST", a[0] if a else "", **kw)
         return _get_session().post(*a, **kw)
     def request(self, *a, **kw):
         if _RATE_DELAY > 0:
             time.sleep(_RATE_DELAY)
+        self._capture(a[0] if a else "REQUEST", a[1] if len(a) > 1 else "", **kw)
         return _get_session().request(*a, **kw)
     def options(self, *a, **kw):
         return _get_session().options(*a, **kw)
@@ -80,12 +82,15 @@ class _SessionProxy:
         return _get_session().head(*a, **kw)
     def put(self, *a, **kw):
         if _RATE_DELAY > 0: time.sleep(_RATE_DELAY)
+        self._capture("PUT", a[0] if a else "", **kw)
         return _get_session().put(*a, **kw)
     def delete(self, *a, **kw):
         if _RATE_DELAY > 0: time.sleep(_RATE_DELAY)
+        self._capture("DELETE", a[0] if a else "", **kw)
         return _get_session().delete(*a, **kw)
     def patch(self, *a, **kw):
         if _RATE_DELAY > 0: time.sleep(_RATE_DELAY)
+        self._capture("PATCH", a[0] if a else "", **kw)
         return _get_session().patch(*a, **kw)
 
 _S = _SessionProxy()
