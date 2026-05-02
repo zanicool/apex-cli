@@ -5750,18 +5750,52 @@ def deduplicate_findings(findings):
     return unique
 
 
-def score_findings(findings):
-    """Add CVSS-like score and exploitability rating to each finding."""
+def score_findings(findings, technologies=None, waf_detected=None):
+    """Dynamic CVSS scoring based on tech stack, WAF, context, and confirmation."""
+    tech = " ".join(technologies or []).lower()
+    waf = bool(waf_detected)
+
     for f in findings:
-        sev = f.get("severity","info").lower()
+        sev = f.get("severity", "info").lower()
         base_score = _SEVERITY_SCORE.get(sev, 0.5)
-        # Boost score for confirmed OOB findings
-        if "OOB Confirmed" in f.get("type","") or "Confirmed" in f.get("detail",""):
+        url = f.get("url", "").lower()
+        ftype = f.get("type", "").lower()
+        template = f.get("template", "")
+        detail = f.get("detail", "").lower()
+
+        # +2.0: OOB confirmed = definitely real
+        if "oob confirmed" in ftype or "confirmed" in detail:
+            base_score = min(10.0, base_score + 2.0)
+
+        # +1.5: Attack chain finding
+        if f.get("status") == "CHAIN":
             base_score = min(10.0, base_score + 1.5)
-        # Boost for critical paths
-        url = f.get("url","").lower()
-        if any(x in url for x in ["/admin","/api/v1","/graphql","/auth","/login"]):
+
+        # +1.0: High-value endpoint
+        if any(x in url for x in ["/admin", "/api/v1", "/graphql", "/auth",
+                                    "/login", "/payment", "/credit", "/card"]):
+            base_score = min(10.0, base_score + 1.0)
+
+        # +0.5: Tech stack amplifies severity
+        if "sqli" in template and any(x in tech for x in ["mysql","postgres","oracle","mssql"]):
+            base_score = min(10.0, base_score + 0.5)  # Known DB = higher impact
+        if "ssti" in template and any(x in tech for x in ["jinja","flask","django","twig","smarty"]):
+            base_score = min(10.0, base_score + 0.5)  # Known template engine = RCE likely
+        if "spring" in template and "spring" in tech:
+            base_score = min(10.0, base_score + 0.5)  # Spring actuator on Spring app = confirmed
+
+        # -1.0: WAF present reduces exploitability
+        if waf and sev in ("high", "medium") and "bypass" not in ftype:
+            base_score = max(0.5, base_score - 1.0)
+
+        # -0.5: Info/low severity on non-sensitive path
+        if sev in ("info", "low") and not any(x in url for x in ["/admin","/api","/auth"]):
+            base_score = max(0.1, base_score - 0.5)
+
+        # Fintech/payment context boosts
+        if any(x in url for x in ["credit","limit","payment","transfer","balance","card"]):
             base_score = min(10.0, base_score + 0.5)
+
         f["cvss_score"] = round(base_score, 1)
         f["exploitability"] = (
             "Trivial" if base_score >= 9 else
@@ -5769,6 +5803,7 @@ def score_findings(findings):
             "Moderate" if base_score >= 5 else
             "Hard"
         )
+
     return sorted(findings, key=lambda x: x.get("cvss_score", 0), reverse=True)
 
 

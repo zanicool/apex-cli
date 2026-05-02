@@ -2658,7 +2658,66 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
             if err:
                 console.print(f"[red][!] {label} failed: {err}[/red]")
             progress.update(task, completed=1)
-            # After fingerprint: inject tech-specific phases into parallel queue
+            # After fingerprint: smart skip irrelevant phases + inject tech-specific
+            if label == "Fingerprint":
+                tech = " ".join(apex.technologies).lower()
+                waf = " ".join(apex.waf_detected).lower()
+
+                # Build skip set based on what we know
+                smart_skip = set()
+
+                # No PHP detected → skip PHP-specific phases
+                if not any(x in tech for x in ["php","laravel","wordpress","drupal","joomla","symfony"]):
+                    smart_skip.update(["Laravel Secrets", "WordPress User Enum"])
+
+                # No Java/Spring detected → skip Spring phases
+                if not any(x in tech for x in ["spring","java","tomcat","struts","jboss"]):
+                    smart_skip.update(["Spring Actuator Deep"])
+
+                # No GraphQL detected → skip GraphQL-heavy phases
+                if "graphql" not in tech and not any("/graphql" in t for t in apex.web_targets):
+                    smart_skip.update([
+                        "GraphQL Depth Attack", "GraphQL Mutation Fuzzing",
+                        "GraphQL Alias Introspection", "GraphQL Circular Fragment",
+                        "GraphQL Persisted Query", "GraphQL Injection",
+                        "GraphQL Field Enumeration", "IDOR GraphQL",
+                    ])
+
+                # No SAML/SSO detected → skip SAML phases
+                if not any(x in tech for x in ["saml","sso","keycloak","okta","auth0","onelogin"]):
+                    smart_skip.update(["SAML Injection", "SAML Replay"])
+
+                # Static site (no forms, no params) → skip injection phases
+                if not apex.crawl_data.get("forms") and not apex.crawl_data.get("params"):
+                    smart_skip.update([
+                        "XSS", "CMDi", "SQLi", "SSRF", "SSTI", "LFI",
+                        "Context XSS", "Context SQLi", "LDAP Injection",
+                        "NoSQL Operator Injection", "Template Injection Twig",
+                        "GraphQL Injection", "IDOR JSON Body",
+                    ])
+
+                # WAF detected → enable bypass mode, skip phases that won't work
+                if waf:
+                    import scanners as _sc
+                    _sc._WAF_BYPASS_MODE = True
+                    console.print(f"[yellow][!][/yellow] WAF bypass mode enabled for: {', '.join(apex.waf_detected)}")
+
+                # React/Next.js → prioritize DOM XSS, prototype pollution
+                if any(x in tech for x in ["react","next.js","nextjs","vue","angular","nuxt"]):
+                    console.print(f"[green][+][/green] SPA detected — prioritizing client-side attacks")
+                    # Move these to front of par_phases
+                    priority = {"Context XSS", "Deep XSS", "Prototype Pollution JSON",
+                                "Prototype Pollution Path", "Next.js/React Vulns",
+                                "DOM XSS", "Postmessage Abuse"}
+                    par_phases[:] = (
+                        [(l,f) for l,f in par_phases if l in priority] +
+                        [(l,f) for l,f in par_phases if l not in priority]
+                    )
+
+                if smart_skip:
+                    console.print(f"[dim]Smart skip: {len(smart_skip)} irrelevant phases skipped[/dim]")
+                    skip.extend([s.lower() for s in smart_skip])
+
             if label == "Fingerprint" and apex.technologies:
                 tech = " ".join(apex.technologies).lower()
                 extra = []
@@ -2731,7 +2790,9 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         if dropped:
             console.print(f"[yellow][!] Dropped {dropped} false positives[/yellow]")
         apex.vulnerabilities = verified
-    apex.vulnerabilities = score_findings(apex.vulnerabilities)
+    apex.vulnerabilities = score_findings(apex.vulnerabilities,
+                                          technologies=apex.technologies,
+                                          waf_detected=apex.waf_detected)
     chains = detect_attack_chains(apex.vulnerabilities)
     if chains:
         console.print(f"[bold red]🔗 {len(chains)} attack chain(s) detected![/bold red]")
