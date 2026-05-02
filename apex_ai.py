@@ -67,105 +67,111 @@ def load_scan(scan_dir):
 
 
 def ai_continue_scan(scan_dir, auto_test=False):
-    """
-    Main function: read scan results, reason about what to test next,
-    optionally run follow-up tests automatically.
-    """
+    """Optimized: parallel focused queries, deduped findings, cached results."""
+    import concurrent.futures as _cf, hashlib as _hl
+
     data = load_scan(scan_dir)
     if not data:
         console.print(f"[red]No report.json in {scan_dir}[/red]")
         return
-    # Run AI even with 0 vulns — scanner may have missed things
+
+    # Cache check — skip if already analyzed and scan hasn't changed
+    ai_report = Path(scan_dir) / "ai_analysis.md"
+    report_mtime = Path(scan_dir, "report.json").stat().st_mtime
+    if ai_report.exists() and ai_report.stat().st_mtime > report_mtime:
+        console.print(f"[dim]AI analysis cached → {ai_report}[/dim]")
+        console.print(ai_report.read_text()[:2000])
+        return
 
     target = data.get("target", "unknown")
     vulns = data.get("vulnerabilities", [])
-    tech = data.get("technologies", [])
-    waf = data.get("waf", [])
-    subdomains = data.get("subdomains", [])
+    tech = ", ".join(data.get("technologies", [])) or "unknown"
+    waf = ", ".join(data.get("waf", [])) or "none"
     web_targets = data.get("web_targets", [])
-    phases = data.get("phases", [])
 
-    # What the scanner found
-    found_types = [v["type"] for v in vulns]
-    found_severities = {v["severity"] for v in vulns}
-    skipped_phases = [p["phase"] for p in phases if p["status"] == "skipped"]
-    error_phases = [p["phase"] for p in phases if p["status"] == "error"]
+    # Deduplicate findings by type (not URL) for AI context
+    seen = set()
+    unique_vulns = []
+    for v in sorted(vulns, key=lambda x: x.get("cvss_score", 0), reverse=True):
+        key = v["type"]
+        if key not in seen:
+            seen.add(key)
+            unique_vulns.append(v)
 
-    # What the scanner didn't find (no params = no injection testing)
     crawl_file = Path(scan_dir) / "crawl.json"
-    crawl_data = json.load(open(crawl_file)) if crawl_file.exists() else {}
-    params_found = len(crawl_data.get("params", {}))
-    forms_found = len(crawl_data.get("forms", []))
-    pages_found = len(crawl_data.get("pages", []))
+    crawl = json.load(open(crawl_file)) if crawl_file.exists() else {}
+    params = len(crawl.get("params", {}))
+    forms = len(crawl.get("forms", []))
+
+    # Compact finding summary
+    findings_str = "; ".join(
+        f"[{v['severity']}] {v['type']}" + (f" @ {v['url'].split('?')[0][-40:]}" if v.get('url') else "")
+        for v in unique_vulns[:10]
+    ) or "none"
 
     console.print(Panel(
-        f"[bold cyan]{target}[/bold cyan]\n"
-        f"[dim]Tech: {', '.join(tech) or 'unknown'} | WAF: {', '.join(waf) or 'none'}[/dim]\n"
-        f"[dim]Pages: {pages_found} | Forms: {forms_found} | Params: {params_found}[/dim]\n"
-        f"[dim]Subdomains: {len(subdomains)} | Web targets: {len(web_targets)}[/dim]",
-        title="[bold red]☠ APEX AI — Continuing the Hunt[/bold red]",
-        border_style="red"
+        f"[bold cyan]{target}[/bold cyan] | tech={tech} | waf={waf} | "
+        f"params={params} forms={forms} | {len(unique_vulns)} unique findings",
+        title="[bold red]☠ APEX AI[/bold red]", border_style="red"
     ))
 
-    # Build context for AI
-    vuln_summary = "\n".join([
-        f"- [{v['severity'].upper()}] {v['type']}: {v.get('url','')[:80]}"
-        + (f"\n  Detail: {v.get('detail','')[:100]}" if v.get('detail') else "")
-        for v in sorted(vulns, key=lambda x: x.get('cvss_score', 0), reverse=True)[:20]
-    ]) or "None found"
+    # 3 parallel focused queries — faster than one big query
+    q1 = f"""Bug bounty target: {target} (tech: {tech}, waf: {waf})
+Scanner found: {findings_str}
+Crawl: {params} params, {forms} forms found.
 
-    prompt = f"""I just ran an automated security scan on {target}. Here's what happened:
+Give me 3 specific follow-up tests the scanner missed. For each:
+- One sentence WHY it likely exists
+- Exact curl command (copy-paste ready, use {web_targets[0] if web_targets else 'https://'+target} as base URL)
+Be concise. No fluff."""
 
-TARGET INFO:
-- Technologies: {', '.join(tech) or 'unknown'}
-- WAF: {', '.join(waf) or 'none'}
-- Subdomains found: {len(subdomains)} ({', '.join(subdomains[:5])})
-- Web targets: {', '.join(web_targets[:3])}
-- Pages crawled: {pages_found}
-- Forms found: {forms_found}
-- Parameterized URLs: {params_found}
+    q2 = f"""Bug bounty on {target} — a {'fintech/bank' if any(x in target for x in ['bank','plata','pay','fin','credit']) else 'web app'}.
+Scanner found: {findings_str}
 
-WHAT THE SCANNER FOUND:
-{vuln_summary}
+What business logic bugs should I test that scanners can't find?
+Give 3 specific tests with exact HTTP requests. Focus on money/auth/data."""
 
-WHAT THE SCANNER COULDN'T TEST (skipped/failed):
-{', '.join(skipped_phases[:10]) or 'none'}
+    q3 = f"""Scanner found these on {target}: {findings_str}
 
-GAPS I NEED YOU TO FILL:
-{"- Very few params/forms found — likely a SPA or API-first app" if params_found < 5 else ""}
-{"- No crawl data — scanner couldn't reach authenticated pages" if pages_found < 3 else ""}
-{"- WAF present — some payloads may have been blocked" if waf else ""}
-{"- No criticals found — need to look harder" if 'critical' not in found_severities else ""}
+Can any be chained for higher impact? Show the exact attack chain.
+Also: what's the single highest-value finding to report first and why?
+Be specific about bounty value."""
 
-Based on this, give me:
+    console.print("\n[bold red]AI Analysis (3 parallel queries):[/bold red]\n")
 
-1. **WHAT TO TEST NEXT** — 5 specific hypotheses about bugs the scanner missed, based on the tech stack and what was found. For each hypothesis, explain WHY you think it exists.
+    results = {}
+    with _cf.ThreadPoolExecutor(max_workers=3) as pool:
+        futures = {
+            pool.submit(ask_ai, q1, stream=False): "follow_up",
+            pool.submit(ask_ai, q2, stream=False): "business_logic",
+            pool.submit(ask_ai, q3, stream=False): "chains",
+        }
+        for future in _cf.as_completed(futures):
+            key = futures[future]
+            results[key] = future.result()
 
-2. **EXACT COMMANDS** — For each hypothesis, write the exact curl/Python command to test it. Make them copy-paste ready.
+    # Display results
+    labels = {
+        "follow_up": "🔍 Follow-up Tests",
+        "business_logic": "💰 Business Logic",
+        "chains": "🔗 Attack Chains & Priority",
+    }
+    full_output = f"# AI Analysis: {target}\nGenerated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+    for key in ["follow_up", "business_logic", "chains"]:
+        console.print(f"[bold yellow]{labels[key]}:[/bold yellow]")
+        console.print(results.get(key, ""))
+        console.print()
+        full_output += f"## {labels[key]}\n\n{results.get(key,'')}\n\n"
 
-3. **BUSINESS LOGIC ATTACKS** — Based on what {target} does as a business, what business logic bugs should I test? Be specific to this company.
-
-4. **ATTACK CHAINS** — Can any of the found vulnerabilities be chained for higher impact? Show the exact chain.
-
-5. **PRIORITY ORDER** — Which test should I run first for maximum bounty value?"""
-
-    console.print("\n[bold red]AI Analysis:[/bold red]")
-    ai_response = ask_ai(prompt)
-
-    # Parse AI response for executable commands
+    # Auto-test
     if auto_test:
-        console.print("\n[bold yellow]Auto-testing AI suggestions...[/bold yellow]")
-        _auto_test_suggestions(ai_response, target, web_targets, scan_dir)
+        all_text = " ".join(results.values())
+        _auto_test_suggestions(all_text, target, web_targets, scan_dir)
 
-    # Save AI analysis to scan directory
-    ai_report = Path(scan_dir) / "ai_analysis.md"
-    with open(ai_report, "w") as f:
-        f.write(f"# AI Analysis: {target}\n\n")
-        f.write(f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-        f.write(ai_response)
-    console.print(f"\n[green][✓][/green] AI analysis saved → {ai_report}")
-
-    return ai_response
+    # Save
+    ai_report.write_text(full_output)
+    console.print(f"[green][✓][/green] Saved → {ai_report}")
+    return full_output
 
 
 def _auto_test_suggestions(ai_response, target, web_targets, scan_dir):
