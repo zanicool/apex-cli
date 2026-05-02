@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apex CLI v5.0 — Automated Pen-Test Orchestrator."""
+"""Apex CLI v7.0 — Automated Pen-Test Orchestrator."""
 
 import argparse
 import subprocess
@@ -1898,7 +1898,7 @@ SKULL_ASCII = r"""[bold red]
 def show_banner():
     console.print(SKULL_ASCII, justify="center")
     console.print(Panel.fit(
-        "[bold white]Apex CLI v5.0[/bold white]\n"
+        "[bold white]Apex CLI v7.0[/bold white]\n"
         "[dim]Automated Pen-Test Orchestrator[/dim]",
         border_style="red",
     ), justify="center")
@@ -2294,7 +2294,7 @@ def interactive_menu():
 def main():
     parser = argparse.ArgumentParser(
         prog="apex-cli",
-        description="Apex CLI v5.0 — Automated Pen-Test Orchestrator",
+        description="Apex CLI v7.0 — Automated Pen-Test Orchestrator",
     )
     parser.add_argument("target", nargs="?", help="Target domain or IP (e.g. example.com)")
     parser.add_argument("--auto", type=str, metavar="FILE",
