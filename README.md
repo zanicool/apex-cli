@@ -1,6 +1,9 @@
-# Apex CLI v7.0
+# Apex CLI v8.x
 
 **The most advanced open-source automated penetration testing tool available.**
+
+![Apex CLI vs Other Scanners](scanner_comparison.png)
+
 
 157 scan phases, parallel execution, OOB confirmation, attack chain detection, and an intelligence engine that scores and verifies every finding — all in a single command.
 
