@@ -760,7 +760,7 @@ class ApexCLI:
             console.print("[bold blue][+][/bold blue] AJAX spider (headless browser crawl)...")
             base_targets = [t for t in self.web_targets if t.count("/") <= 3]
             for target in (base_targets or self.web_targets)[:2]:
-                data = ajax_spider(target, max_pages=50 if self.deep else 25)
+                data = ajax_spider(target, max_pages=100 if self.deep else 50)
                 self.crawl_data["pages"] = self.crawl_data.get("pages", []) + data["pages"]
                 self.crawl_data["forms"] = self.crawl_data.get("forms", []) + data["forms"]
                 self.crawl_data.setdefault("params", {}).update(data["params"])
@@ -775,7 +775,7 @@ class ApexCLI:
         except ImportError:
             pass  # Fall back to basic crawler
         all_pages, all_forms, all_params, all_links = [], [], {}, set()
-        max_pages = 100 if self.deep else 50
+        max_pages = 200 if self.deep else 75
         # Crawl from each base target
         base_targets = [t for t in self.web_targets if t.count("/") <= 3]
         for target in base_targets or self.web_targets[:3]:
@@ -2164,7 +2164,7 @@ def show_tools():
     console.print(table)
 
 
-def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, auth=None, resume_dir=None, scope=None):
+def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, auth=None, resume_dir=None, scope=None, workers=0):
     report_formats = report_formats or ["terminal"]
     skip = [s.lower() for s in (skip or [])]
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -2386,7 +2386,7 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
     ]
 
     # Measure target response time and adapt concurrency
-    workers = 8  # default
+    workers = workers if workers > 0 else 8  # default
     if not dry_run and apex.web_targets:
         import time as _t
         try:
@@ -2632,6 +2632,8 @@ def main():
                         help="Resume a previous scan from its output directory")
     parser.add_argument("--rate", type=float, default=0.0, metavar="SECONDS",
                         help="Delay between requests per thread (e.g. 0.1 for 10 req/s)")
+    parser.add_argument("--workers", type=int, default=0, metavar="N",
+                        help="Number of parallel workers (default: auto based on response time)")
     parser.add_argument("--scope", nargs="+", default=[],
                         help="Restrict scan to these subdomains/paths (e.g. --scope api.example.com /api)")
 
@@ -2685,7 +2687,8 @@ def main():
     run_scan(target, dry_run=args.dry_run, deep=args.deep,
             report_formats=args.report, skip=args.skip,
             auth=tuple(args.auth) if args.auth else None,
-            scope=args.scope)
+            scope=args.scope,
+            workers=args.workers if hasattr(args, "workers") else 0)
 
 
 if __name__ == "__main__":

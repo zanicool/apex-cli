@@ -166,6 +166,30 @@ def crawl(base_url, max_pages=50):
                 for k in urllib.parse.parse_qs(urllib.parse.urlparse(ep).query):
                     params_found[ep_base.split("?")[0]].add(k)
 
+        # Extract params from data-* attributes and inline handlers
+        for tag in soup.find_all(True):
+            for attr, val in tag.attrs.items():
+                if isinstance(val, str) and "?" in val:
+                    try:
+                        ep = val if val.startswith("http") else urllib.parse.urljoin(url, val)
+                        ep_parsed = urllib.parse.urlparse(ep)
+                        for k in urllib.parse.parse_qs(ep_parsed.query):
+                            params_found[ep.split("?")[0]].add(k)
+                    except Exception:
+                        pass
+            # Inline event handlers with URLs
+            for attr in ("onclick", "onsubmit", "onchange", "data-url", "data-href", "data-action"):
+                val = tag.get(attr, "")
+                if val and "?" in val:
+                    try:
+                        for m in re.finditer(r"""['"]([^'"]+\?[^'"]+)['"]""", val):
+                            ep = m.group(1)
+                            ep_base = ep if ep.startswith("http") else urllib.parse.urljoin(url, ep)
+                            for k in urllib.parse.parse_qs(urllib.parse.urlparse(ep).query):
+                                params_found[ep_base.split("?")[0]].add(k)
+                    except Exception:
+                        pass
+
         # Extract forms
         for form in soup.find_all("form"):
             action = form.get("action", "")
@@ -213,7 +237,8 @@ def scan_xss(crawl_data):
                 test_url = f"{url}?{urllib.parse.urlencode({param: payload})}"
                 try:
                     r = _S.get(test_url, timeout=_TIMEOUT)
-                    if payload in r.text:
+                    ctype = r.headers.get("content-type", "").lower()
+                    if payload in r.text and "text/html" in ctype:
                         findings.append({
                             "type": "Reflected XSS",
                             "severity": "high",
