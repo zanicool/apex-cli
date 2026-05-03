@@ -10,7 +10,7 @@ import requests
 
 console = Console()
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL = "llama3.2:latest"  # 2GB — fits in 6GB VRAM, ~10-15s response
+MODEL = "llama3.1:8b"  # Use best available model
 AI_WORKERS = 3  # parallel queries — set by benchmark.py
 RESULTS_DIR = Path.home() / "apex-auto-results"
 
@@ -390,6 +390,106 @@ def generate_h1_reports(scan_dir):
     return generated
 
 
+def generate_h1_reports(scan_dir):
+    """Generate full HackerOne-ready reports for each real finding."""
+    data = load_scan(scan_dir)
+    if not data:
+        console.print(f"[red]No report.json in {scan_dir}[/red]")
+        return
+
+    target = data.get("target", "unknown")
+    vulns = data.get("vulnerabilities", [])
+
+    # Filter to reportable findings only
+    reportable = [v for v in vulns
+                  if v.get("severity") in ("critical", "high", "medium")
+                  and v.get("template") not in ("apex-headers", "apex-hsts",
+                                                  "apex-clickjack", "apex-mime",
+                                                  "apex-policy", "apex-csp")]
+
+    # Deduplicate by type
+    seen = set()
+    unique = []
+    for v in reportable:
+        if v["type"] not in seen:
+            seen.add(v["type"])
+            unique.append(v)
+
+    if not unique:
+        console.print("[yellow]No reportable findings found[/yellow]")
+        return
+
+    console.print(f"[bold red]☠ APEX AI — Generating {len(unique)} HackerOne reports[/bold red]\n")
+
+    reports_dir = Path(scan_dir) / "h1_reports"
+    reports_dir.mkdir(exist_ok=True)
+
+    for i, vuln in enumerate(unique[:10], 1):
+        ftype = vuln["type"]
+        severity = vuln["severity"].upper()
+        url = vuln.get("url", "")
+        detail = vuln.get("detail", "")
+        template = vuln.get("template", "")
+
+        console.print(f"[cyan]Generating report {i}/{min(len(unique),10)}: {ftype[:50]}...[/cyan]")
+
+        prompt = f"""Write a professional HackerOne bug bounty report for this vulnerability found on {target}.
+
+FINDING:
+- Type: {ftype}
+- Severity: {severity}
+- URL: {url}
+- Detail: {detail}
+- Template: {template}
+
+Write the complete report with these exact sections:
+
+**Title:** (concise, specific title)
+
+**Asset:** (the affected URL/domain)
+
+**Weakness:** (CWE number and name, e.g. CWE-942 — Permissive Cross-domain Policy)
+
+**Severity:** {severity}
+
+**CVSS 4.0 Score:** (calculate and show the vector string and numeric score)
+- Attack Vector: 
+- Attack Complexity:
+- Privileges Required:
+- User Interaction:
+- Scope:
+- Confidentiality:
+- Integrity:
+- Availability:
+- Score: X.X
+
+**Description:**
+(2-3 paragraphs explaining the vulnerability technically)
+
+**Steps to Reproduce:**
+(numbered steps with exact curl commands)
+
+**Impact:**
+(specific business impact for this company)
+
+**Remediation:**
+(specific fix recommendations)
+
+Be specific to {target} and this exact finding. No generic advice."""
+
+        report = ask_ai(prompt, stream=False)
+
+        # Save report
+        safe_name = re.sub(r'[^\w]', '_', ftype)[:40].lower()
+        report_file = reports_dir / f"report_{i}_{safe_name}.md"
+        report_file.write_text(f"# HackerOne Report: {ftype}\n\n{report}")
+        console.print(f"[green][✓][/green] {report_file.name}")
+        console.print()
+
+    console.print(f"\n[bold green]{min(len(unique),10)} reports saved to {reports_dir}/[/bold green]")
+    return reports_dir
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(prog="apex-ai",
@@ -399,6 +499,7 @@ if __name__ == "__main__":
     parser.add_argument("--watch", type=str, metavar="TARGET", help="Watch for new scans on target")
     parser.add_argument("--payloads", nargs=2, metavar=("TARGET","TECH"), help="Generate custom payloads")
     parser.add_argument("--chains", action="store_true", help="Cross-target chain analysis")
+    parser.add_argument("--reports", action="store_true", help="Generate full HackerOne reports for all findings")
     args = parser.parse_args()
 
     if args.watch:
@@ -415,14 +516,22 @@ if __name__ == "__main__":
             if all_vulns:
                 prompt = f"Analyze these findings for attack chains and bounty value:\n" + "\n".join(all_vulns[:50])
                 ask_ai(prompt)
+    elif args.reports and args.scan_dir:
+        generate_h1_reports(args.scan_dir)
     elif args.scan_dir:
-        ai_continue_scan(args.scan_dir, auto_test=args.auto)
+        if args.reports:
+            generate_h1_reports(args.scan_dir)
+        else:
+            ai_continue_scan(args.scan_dir, auto_test=args.auto)
     else:
         # Find most recent scan and analyze it
         scan_dirs = sorted(Path(".").glob("scan_*"), key=lambda p: p.stat().st_mtime, reverse=True)
         if scan_dirs and (scan_dirs[0] / "report.json").exists():
             console.print(f"[dim]Analyzing most recent scan: {scan_dirs[0]}[/dim]")
-            ai_continue_scan(str(scan_dirs[0]), auto_test=args.auto)
+            if args.reports:
+                generate_h1_reports(str(scan_dirs[0]))
+            else:
+                ai_continue_scan(str(scan_dirs[0]), auto_test=args.auto)
         else:
             parser.print_help()
             print("\nExamples:")
