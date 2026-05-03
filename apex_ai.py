@@ -68,159 +68,59 @@ def load_scan(scan_dir):
 
 
 def ai_continue_scan(scan_dir, auto_test=False):
-    """Optimized: parallel focused queries, deduped findings, cached results."""
-    import concurrent.futures as _cf, hashlib as _hl
-
+    """Generate a bug bounty report from scan findings — streams to CLI."""
     data = load_scan(scan_dir)
     if not data:
         console.print(f"[red]No report.json in {scan_dir}[/red]")
         return
 
-    # Cache check — skip if already analyzed and scan hasn't changed
-    ai_report = Path(scan_dir) / "ai_analysis.md"
-    report_mtime = Path(scan_dir, "report.json").stat().st_mtime
-    if ai_report.exists() and ai_report.stat().st_mtime > report_mtime:
-        console.print(f"[dim]AI analysis cached → {ai_report}[/dim]")
-        console.print(ai_report.read_text()[:2000])
-        return
-
     target = data.get("target", "unknown")
     vulns = data.get("vulnerabilities", [])
-    tech = ", ".join(data.get("technologies", [])) or "unknown"
-    waf = ", ".join(data.get("waf", [])) or "none"
-    web_targets = data.get("web_targets", [])
 
-    # Deduplicate findings by type (not URL) for AI context
+    # Deduplicate, keep only reportable severities
     seen = set()
-    unique_vulns = []
+    reportable = []
     for v in sorted(vulns, key=lambda x: x.get("cvss_score", 0), reverse=True):
-        key = v["type"]
+        if v.get("severity") not in ("critical", "high", "medium"):
+            continue
+        key = f"{v['type']}|{v.get('url','').split('?')[0]}"
         if key not in seen:
             seen.add(key)
-            unique_vulns.append(v)
+            reportable.append(v)
 
-    crawl_file = Path(scan_dir) / "crawl.json"
-    crawl = json.load(open(crawl_file)) if crawl_file.exists() else {}
-    params = len(crawl.get("params", {}))
-    forms = len(crawl.get("forms", []))
-
-    # Compact finding summary
-    findings_str = "; ".join(
-        f"[{v['severity']}] {v['type']}" + (f" @ {v['url'].split('?')[0][-40:]}" if v.get('url') else "")
-        for v in unique_vulns[:10]
-    ) or "none"
-
-    console.print(Panel(
-        f"[bold cyan]{target}[/bold cyan] | tech={tech} | waf={waf} | "
-        f"params={params} forms={forms} | {len(unique_vulns)} unique findings",
-        title="[bold red]☠ APEX AI[/bold red]", border_style="red"
-    ))
-
-    # 3 parallel focused queries — faster than one big query
-    q1 = f"""Bug bounty target: {target} (tech: {tech}, waf: {waf})
-Scanner found: {findings_str}
-Crawl: {params} params, {forms} forms found.
-
-Give me 3 specific follow-up tests the scanner missed. For each:
-- One sentence WHY it likely exists
-- Exact curl command (copy-paste ready, use {web_targets[0] if web_targets else 'https://'+target} as base URL)
-Be concise. No fluff."""
-
-    q2 = f"""Bug bounty on {target} — a {'fintech/bank' if any(x in target for x in ['bank','plata','pay','fin','credit']) else 'web app'}.
-Scanner found: {findings_str}
-
-What business logic bugs should I test that scanners can't find?
-Give 3 specific tests with exact HTTP requests. Focus on money/auth/data."""
-
-    q3 = f"""Scanner found these on {target}: {findings_str}
-
-Can any be chained for higher impact? Show the exact attack chain.
-Also: what's the single highest-value finding to report first and why?
-Be specific about bounty value."""
-
-    console.print("\n[bold red]AI Analysis (3 parallel queries):[/bold red]\n")
-
-    results = {}
-    with _cf.ThreadPoolExecutor(max_workers=AI_WORKERS) as pool:
-        futures = {
-            pool.submit(ask_ai, q1, stream=False): "follow_up",
-            pool.submit(ask_ai, q2, stream=False): "business_logic",
-            pool.submit(ask_ai, q3, stream=False): "chains",
-        }
-        for future in _cf.as_completed(futures):
-            key = futures[future]
-            results[key] = future.result()
-
-    # Display results
-    labels = {
-        "follow_up": "🔍 Follow-up Tests",
-        "business_logic": "💰 Business Logic",
-        "chains": "🔗 Attack Chains & Priority",
-    }
-    full_output = f"# AI Analysis: {target}\nGenerated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-    for key in ["follow_up", "business_logic", "chains"]:
-        console.print(f"[bold yellow]{labels[key]}:[/bold yellow]")
-        console.print(results.get(key, ""))
-        console.print()
-        full_output += f"## {labels[key]}\n\n{results.get(key,'')}\n\n"
-
-    # Auto-test
-    if auto_test:
-        all_text = " ".join(results.values())
-        _auto_test_suggestions(all_text, target, web_targets, scan_dir)
-
-    # Save
-    ai_report.write_text(full_output)
-    console.print(f"[green][✓][/green] Saved → {ai_report}")
-
-    # Generate HackerOne reports for each finding
-    generate_h1_reports(scan_dir)
-
-    return full_output
-
-
-def _auto_test_suggestions(ai_response, target, web_targets, scan_dir):
-    """Extract curl commands from AI response and run them."""
-    # Find curl commands in AI response
-    curl_commands = re.findall(r'`(curl [^`]+)`', ai_response)
-    curl_commands += re.findall(r'```(?:bash|sh)?\n(curl [^\n]+)\n```', ai_response)
-
-    if not curl_commands:
-        console.print("[dim]No executable commands found in AI response[/dim]")
+    if not reportable:
+        console.print("[dim]No reportable findings — skipping AI report[/dim]")
         return
 
-    console.print(f"[cyan]Found {len(curl_commands)} commands to test:[/cyan]")
-    results = []
-    for i, cmd in enumerate(curl_commands[:5]):  # Max 5 auto-tests
-        # Replace placeholder domains with actual target
-        cmd = cmd.replace("example.com", target).replace("TARGET", target)
-        if web_targets:
-            cmd = cmd.replace("https://TARGET", web_targets[0])
-        console.print(f"\n[dim]Running: {cmd[:80]}...[/dim]")
-        try:
-            result = subprocess.run(
-                cmd, shell=True, capture_output=True, text=True, timeout=15
-            )
-            output = (result.stdout + result.stderr)[:500]
-            results.append({"cmd": cmd, "output": output, "returncode": result.returncode})
-            # Check for interesting output
-            interesting = any(x in output.lower() for x in
-                            ["root:", "admin", "token", "secret", "password", "error",
-                             "sql", "exception", "traceback", "internal"])
-            if interesting:
-                console.print(f"[bold red]  🎯 INTERESTING OUTPUT:[/bold red] {output[:200]}")
-            else:
-                console.print(f"[dim]  → {output[:100]}[/dim]")
-        except subprocess.TimeoutExpired:
-            console.print("[yellow]  → Timeout[/yellow]")
-        except Exception as e:
-            console.print(f"[red]  → Error: {e}[/red]")
+    findings_str = "\n".join(
+        f"- [{v['severity'].upper()}] {v['type']}: {v.get('url','')[:80]}"
+        + (f"\n  Detail: {v.get('detail','')[:100]}" if v.get('detail') else "")
+        for v in reportable[:15]
+    )
 
-    # Save auto-test results
-    if results:
-        with open(Path(scan_dir) / "ai_autotests.json", "w") as f:
-            json.dump(results, f, indent=2)
+    prompt = f"""Write a professional HackerOne bug bounty report for these findings on {target}:
 
+{findings_str}
+
+For each real vulnerability write:
+TITLE: (one line)
+SEVERITY: critical/high/medium
+DESCRIPTION: (2-3 sentences)
+STEPS TO REPRODUCE: (numbered, copy-paste ready curl commands)
+IMPACT: (one paragraph)
+REMEDIATION: (bullet points)
+
+Skip missing headers and informational findings. Only include exploitable vulnerabilities."""
+
+    console.print(f"\n[bold red]☠ APEX AI — Bug Bounty Report[/bold red]")
+    console.print(f"[dim]{len(reportable)} findings → generating report...\n[/dim]")
+
+    report_text = ask_ai(prompt, stream=True)
+
+    ai_report = Path(scan_dir) / "ai_report.md"
+    ai_report.write_text(f"# Bug Bounty Report: {target}\nGenerated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n{report_text}")
+    console.print(f"\n[green][✓][/green] Report saved → {ai_report}")
+    return report_text
 
 def ai_watch_and_continue(target, interval_hours=1):
     """Watch for new scan results and automatically run AI analysis."""
