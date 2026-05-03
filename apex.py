@@ -2959,26 +2959,7 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
     if "html" in report_formats:
         apex.report_html()
 
-    # AI continuation — runs inline after scan, streams output to terminal
-    if not dry_run:
-        try:
-            import requests as _r
-            _r.get("http://localhost:11434/api/tags", timeout=2)
-            # Import and run directly (not subprocess) so output is inline
-            sys.path.insert(0, str(Path(__file__).parent))
-            import apex_ai as _ai
-            _ai.ai_continue_scan(output_dir, auto_test=False)
-        except ImportError:
-            # apex_ai not importable — run as subprocess but capture output
-            try:
-                import subprocess as _sp
-                _sp.run([sys.executable,
-                         str(Path(__file__).parent / "apex-ai.py"),
-                         output_dir], timeout=300)
-            except Exception:
-                pass
-        except Exception:
-            pass  # Ollama not running — skip silently
+
 
 
 def interactive_menu():
