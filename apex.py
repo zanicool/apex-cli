@@ -2959,6 +2959,17 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
     if "html" in report_formats:
         apex.report_html()
 
+    # AI analysis — runs inline, streams to terminal
+    if not dry_run:
+        try:
+            import requests as _r
+            _r.get("http://localhost:11434/api/tags", timeout=2)
+            sys.path.insert(0, str(Path(__file__).parent))
+            import apex_ai as _ai
+            _ai.ai_continue_scan(output_dir, auto_test=False)
+        except Exception:
+            pass  # Ollama not running — skip silently
+
 
 
 
