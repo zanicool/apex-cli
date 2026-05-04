@@ -353,6 +353,9 @@ from scanners import (
     scan_wp_user_enum,
     # Safe exploitation engine
     llm_safe_exploit,
+    # Missing vuln types
+    scan_csv_formula_injection,
+    scan_unicode_normalization,
     # Batch 39 — Deep crawl + auto-auth
     crawl_deep,
     auto_register_account,
@@ -3257,6 +3260,18 @@ class ApexCLI:
         with self._vuln_lock:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
+    def phase_csv_formula_injection(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_csv_formula_injection(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_unicode_normalization(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_unicode_normalization(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
     # External tool phases
     def phase_katana_crawl(self):
         """Katana — ProjectDiscovery's headless crawler. Finds 3-5x more endpoints."""
@@ -4095,6 +4110,8 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("CI/CD Exposure", apex.phase_cicd_exposure),
         ("Jupyter Exposure", apex.phase_jupyter_exposure),
         ("WP User Enum", apex.phase_wp_user_enum),
+        ("CSV Formula Injection", apex.phase_csv_formula_injection),
+        ("Unicode Normalization", apex.phase_unicode_normalization),
         # External tools
         ("Katana Crawl", apex.phase_katana_crawl),
         ("GAU", apex.phase_gau),
