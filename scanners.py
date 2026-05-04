@@ -16392,6 +16392,9 @@ def scan_webhook_abuse(crawl_data, web_targets):
 def scan_s3_bucket_takeover(target, subdomains):
     """S3/cloud bucket takeover — find buckets that can be claimed."""
     findings = []
+    # Skip internal/local targets
+    if any(x in target for x in ["localhost", "127.0.0.1", "10.", "192.168.", "172."]):
+        return findings
     bucket_patterns = [
         f"{target}",
         f"{target.replace('.', '-')}",

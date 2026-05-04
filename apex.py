@@ -3834,7 +3834,7 @@ def report_sarif(vulnerabilities, output_dir, target):
     console.print(f"[green][✓][/green] SARIF report → {out}")
 
 
-def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, auth=None, resume_dir=None, scope=None, workers=0, output_dir="", severity_filter=None, nuclei_tags=None, recon_only=False, no_recon=False, sarif=False):
+def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, auth=None, resume_dir=None, scope=None, workers=0, output_dir="", severity_filter=None, nuclei_tags=None, recon_only=False, no_recon=False, sarif=False, original_target=""):
     # Auto-tune on first run
     try:
         from benchmark import get_settings, apply_settings
@@ -4300,11 +4300,14 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
 
     # --no-recon: skip recon, go straight to scanning
     if no_recon:
-        seq_phases = [(l, f) for l, f in seq_phases if l not in {"Recon", "Passive Recon", "Subdomain Brute-Force", "Subdomain Permutation"}]
-        # Add target directly as web target
+        seq_phases = [(l, f) for l, f in seq_phases if l not in {"Recon", "Passive Recon", "Subdomain Brute-Force", "Subdomain Permutation", "Probe"}]
         if not apex.web_targets:
-            apex.web_targets = [f"https://{target}"]
-        console.print("[dim]No-recon mode: scanning target directly[/dim]")
+            host = original_target or target
+            host = re.sub(r'^https?://', '', host).split("/")[0]  # clean
+            proto = "http" if any(x in host for x in ["localhost", "127.0.0.1"]) else "https"
+            apex.web_targets = [f"{proto}://{host}"]
+            apex.subdomains = [target]
+        console.print(f"[dim]No-recon mode: scanning {apex.web_targets[0]} directly[/dim]")
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -5017,6 +5020,7 @@ def main():
         _sc2._TIMEOUT_LONG = args.timeout + 5
         console.print(f"[dim]Timeout: {args.timeout}s[/dim]")
 
+    original_target = target  # Keep port info
     target = validate_target(target)
     console.print(f"[bold white]Target:[/bold white] {target}")
     mode = "deep" if args.deep else ("quick" if args.quick else "standard")
@@ -5088,7 +5092,8 @@ def main():
                 nuclei_tags=args.nuclei_tags,
                 recon_only=args.recon_only,
                 no_recon=args.no_recon,
-                sarif=args.sarif)
+                sarif=args.sarif,
+                original_target=original_target)
 
 
 if __name__ == "__main__":
