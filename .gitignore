@@ -7,3 +7,4 @@ build/
 .env
 /tmp/
 apex-auto.py
+scan_results/
