@@ -371,6 +371,8 @@ from scanners import (
     scan_subdomain_brute_deep,
     # Novel attack
     scan_api_cascade_privesc,
+    # Nuclei template gen
+    generate_all_nuclei_templates,
     # Batch 39 — Deep crawl + auto-auth
     crawl_deep,
     auto_register_account,
@@ -4548,6 +4550,12 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
                 with open(fname, "w") as f:
                     f.write(report)
             console.print(f"[green][✓][/green] {min(len(reportable), 10)} HackerOne reports → {h1_dir}/")
+
+    # Generate nuclei templates for reuse
+    if not dry_run and apex.vulnerabilities:
+        n_templates = generate_all_nuclei_templates(apex.vulnerabilities, scan_output_dir)
+        if n_templates:
+            console.print(f"[green][✓][/green] {n_templates} nuclei templates → {scan_output_dir}/nuclei_templates/")
 
 
 

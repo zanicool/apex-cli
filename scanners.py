@@ -18714,3 +18714,74 @@ def scan_api_cascade_privesc(crawl_data, web_targets):
                     except Exception:
                         continue
     return findings
+
+
+# ---------------------------------------------------------------------------
+# Todo #11: Subdomain monitoring daemon
+# Todo #12: Nuclei template generator from findings
+# ---------------------------------------------------------------------------
+
+def generate_nuclei_template(finding):
+    """Generate a nuclei YAML template from a scan finding. (#12)"""
+    ftype = finding.get("type", "unknown")
+    url = finding.get("url", "")
+    detail = finding.get("detail", "")
+    severity = finding.get("severity", "medium")
+    template_id = re.sub(r'[^a-z0-9-]', '-', ftype.lower())[:40]
+
+    parsed = urllib.parse.urlparse(url)
+    path = parsed.path or "/"
+    query = parsed.query
+
+    # Determine request method and matchers
+    if "sqli" in ftype.lower():
+        matcher = "word"
+        match_values = ["sql syntax", "mysql", "ORA-", "postgresql"]
+    elif "xss" in ftype.lower():
+        matcher = "word"
+        match_values = ["<script>", "onerror=", "alert("]
+    elif "ssrf" in ftype.lower():
+        matcher = "word"
+        match_values = ["ami-id", "instance-id", "meta-data"]
+    else:
+        matcher = "status"
+        match_values = ["200"]
+
+    template = f"""id: apex-{template_id}
+
+info:
+  name: {ftype}
+  author: apex-cli
+  severity: {severity}
+  description: |
+    {detail[:200]}
+  tags: apex,custom
+
+requests:
+  - method: GET
+    path:
+      - "{{{{BaseURL}}}}{path}{'?' + query if query else ''}"
+    matchers:
+      - type: {matcher}
+        {matcher}s:
+{chr(10).join(f'          - "{v}"' for v in match_values)}
+        condition: or
+"""
+    return template
+
+
+def generate_all_nuclei_templates(findings, output_dir):
+    """Generate nuclei templates for all findings."""
+    templates_dir = os.path.join(output_dir, "nuclei_templates")
+    os.makedirs(templates_dir, exist_ok=True)
+    generated = 0
+    for f in findings:
+        if f.get("severity") not in ("critical", "high"):
+            continue
+        template = generate_nuclei_template(f)
+        fname = re.sub(r'[^a-z0-9_]', '_', f["type"].lower())[:30]
+        path = os.path.join(templates_dir, f"{fname}_{generated}.yaml")
+        with open(path, "w") as fp:
+            fp.write(template)
+        generated += 1
+    return generated
