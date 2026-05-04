@@ -328,6 +328,19 @@ from scanners import (
     scan_s3_bucket_takeover,
     scan_input_length_overflow,
     scan_graphql_dos,
+    # Batch 40 — Todo #1-#10
+    scan_oauth2_full_exploit,
+    scan_graphql_batch_mutation,
+    scan_pdf_ssrf,
+    scan_markdown_xss,
+    scan_password_reset_prediction,
+    scan_api_key_scope,
+    # Batch 41 — Todo #6-#30
+    scan_cswsh,
+    scan_svg_xss_upload,
+    scan_idor_graphql_node,
+    scan_mass_assignment_patch,
+    scan_race_2fa,
     # Batch 39 — Deep crawl + auto-auth
     crawl_deep,
     auto_register_account,
@@ -3099,6 +3112,74 @@ class ApexCLI:
         with self._vuln_lock:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
+    # Todo #1-#10
+    def phase_oauth2_full_exploit(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_oauth2_full_exploit(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_graphql_batch_mutation(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_graphql_batch_mutation(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_pdf_ssrf(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_pdf_ssrf(self.crawl_data or {}, self.web_targets, self.oob)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_markdown_xss(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_markdown_xss(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_password_reset_prediction(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_password_reset_prediction(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_api_key_scope(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_api_key_scope(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # Batch 41
+    def phase_cswsh(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_cswsh(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_svg_xss_upload(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_svg_xss_upload(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_idor_graphql_node(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_idor_graphql_node(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_mass_assignment_patch(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_mass_assignment_patch(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_race_2fa(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_race_2fa(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
     # External tool phases
     def phase_katana_crawl(self):
         """Katana — ProjectDiscovery's headless crawler. Finds 3-5x more endpoints."""
@@ -3836,6 +3917,19 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("S3 Bucket Takeover", apex.phase_s3_bucket_takeover),
         ("Input Length Overflow", apex.phase_input_length_overflow),
         ("GraphQL DoS", apex.phase_graphql_dos),
+        # Todo #1-#10
+        ("OAuth2 Full Exploit", apex.phase_oauth2_full_exploit),
+        ("GraphQL Batch Mutation", apex.phase_graphql_batch_mutation),
+        ("PDF SSRF", apex.phase_pdf_ssrf),
+        ("Markdown XSS", apex.phase_markdown_xss),
+        ("Password Reset Prediction", apex.phase_password_reset_prediction),
+        ("API Key Scope Test", apex.phase_api_key_scope),
+        # Batch 41
+        ("CSWSH", apex.phase_cswsh),
+        ("SVG XSS Upload", apex.phase_svg_xss_upload),
+        ("IDOR GraphQL Node", apex.phase_idor_graphql_node),
+        ("Mass Assignment PATCH Deep", apex.phase_mass_assignment_patch),
+        ("Race 2FA", apex.phase_race_2fa),
         # External tools
         ("Katana Crawl", apex.phase_katana_crawl),
         ("GAU", apex.phase_gau),

