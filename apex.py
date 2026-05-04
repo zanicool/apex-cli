@@ -369,6 +369,8 @@ from scanners import (
     scan_jwks_spoofing,
     scan_request_smuggling_h2,
     scan_subdomain_brute_deep,
+    # Novel attack
+    scan_api_cascade_privesc,
     # Batch 39 — Deep crawl + auto-auth
     crawl_deep,
     auto_register_account,
@@ -3356,6 +3358,12 @@ class ApexCLI:
         with self._vuln_lock:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
+    def phase_api_cascade_privesc(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_api_cascade_privesc(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
     # External tool phases
     def phase_katana_crawl(self):
         """Katana — ProjectDiscovery's headless crawler. Finds 3-5x more endpoints."""
@@ -4240,6 +4248,7 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("JWKS Spoofing", apex.phase_jwks_spoofing),
         ("H2 Request Smuggling", apex.phase_request_smuggling_h2),
         ("Subdomain Brute Deep", apex.phase_subdomain_brute_deep),
+        ("API Cascade PrivEsc", apex.phase_api_cascade_privesc),
         # External tools
         ("Katana Crawl", apex.phase_katana_crawl),
         ("GAU", apex.phase_gau),
