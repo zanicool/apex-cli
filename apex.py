@@ -3503,7 +3503,38 @@ _SCAN_DRAGON = [
 _dragon_line = 0
 
 
+APEX_VERSION = "9.2"
+APEX_REPO = "zanicool/apex-cli"
+
+
+def _check_update():
+    """Check GitHub for newer version — non-blocking, silent on failure."""
+    try:
+        import requests as _r
+        r = _r.get(f"https://api.github.com/repos/{APEX_REPO}/commits/main",
+                   timeout=3, headers={"Accept": "application/vnd.github.v3+json"})
+        if r.status_code == 200:
+            latest_sha = r.json().get("sha", "")[:7]
+            latest_msg = r.json().get("commit", {}).get("message", "").split("\n")[0]
+            # Compare with local
+            local_sha = ""
+            try:
+                import subprocess
+                result = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                                        capture_output=True, text=True, timeout=3,
+                                        cwd=os.path.dirname(os.path.abspath(__file__)))
+                local_sha = result.stdout.strip()
+            except Exception:
+                pass
+            if local_sha and latest_sha and local_sha != latest_sha:
+                console.print(f"[bold yellow]⬆ Update available![/bold yellow] [dim]{local_sha} → {latest_sha}: {latest_msg[:50]}[/dim]")
+                console.print(f"[dim]  Run: cd {os.path.dirname(os.path.abspath(__file__))} && git pull[/dim]")
+    except Exception:
+        pass  # Silent — don't block scan startup
+
+
 def show_banner():
+    _check_update()
     console.print(SKULL_ASCII, justify="center")
     console.print(Panel.fit(
         "[bold white]Apex CLI v9.0[/bold white]\n"
