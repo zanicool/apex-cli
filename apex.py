@@ -373,6 +373,10 @@ from scanners import (
     scan_api_cascade_privesc,
     # Nuclei template gen
     generate_all_nuclei_templates,
+    # Needle-in-haystack
+    scan_null_byte_double_encode,
+    scan_hidden_api_paths,
+    scan_backup_files,
     # Batch 39 — Deep crawl + auto-auth
     crawl_deep,
     auto_register_account,
@@ -3366,6 +3370,24 @@ class ApexCLI:
         with self._vuln_lock:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
+    def phase_null_byte_double_encode(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_null_byte_double_encode(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_hidden_api_paths(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_hidden_api_paths(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_backup_files(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_backup_files(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
     # External tool phases
     def phase_katana_crawl(self):
         """Katana — ProjectDiscovery's headless crawler. Finds 3-5x more endpoints."""
@@ -4251,6 +4273,9 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("H2 Request Smuggling", apex.phase_request_smuggling_h2),
         ("Subdomain Brute Deep", apex.phase_subdomain_brute_deep),
         ("API Cascade PrivEsc", apex.phase_api_cascade_privesc),
+        ("Null Byte Double Encode", apex.phase_null_byte_double_encode),
+        ("Hidden API Paths", apex.phase_hidden_api_paths),
+        ("Backup Files", apex.phase_backup_files),
         # External tools
         ("Katana Crawl", apex.phase_katana_crawl),
         ("GAU", apex.phase_gau),

