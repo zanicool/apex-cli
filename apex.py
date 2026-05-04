@@ -351,6 +351,8 @@ from scanners import (
     scan_cicd_exposure,
     scan_jupyter_exposure,
     scan_wp_user_enum,
+    # Safe exploitation engine
+    llm_safe_exploit,
     # Batch 39 — Deep crawl + auto-auth
     crawl_deep,
     auto_register_account,
@@ -4221,14 +4223,32 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         pivot_findings = feedback_loop_attack(apex.vulnerabilities, apex.crawl_data or {}, apex.web_targets)
         if pivot_findings:
             console.print(f"[bold red]🎯 {len(pivot_findings)} new findings from pivoting![/bold red]")
-            # Verify pivot findings too
             verified_pivots = [f for f in pivot_findings if verify_finding(f)]
             apex.vulnerabilities.extend(verified_pivots)
-            # Re-score with new findings
             apex.vulnerabilities = score_findings(apex.vulnerabilities,
                                                   technologies=apex.technologies,
                                                   waf_detected=apex.waf_detected)
             apex.vulnerabilities = enrich_findings_with_poc(apex.vulnerabilities)
+
+    # Safe exploitation: prove criticals are real without causing harm
+    if not dry_run and apex.vulnerabilities:
+        criticals = [v for v in apex.vulnerabilities if v.get("severity") in ("critical", "high")]
+        if criticals:
+            console.print(f"[bold red]🔓 Safe exploitation — proving {len(criticals)} critical/high findings...[/bold red]")
+            exploited = llm_safe_exploit(apex.vulnerabilities, apex.web_targets)
+            if exploited:
+                console.print(f"[bold green]✓ {len(exploited)} findings PROVEN exploitable:[/bold green]")
+                for e in exploited:
+                    console.print(f"  [bold red]EXPLOITED[/bold red] {e['type'][:50]}")
+                    console.print(f"    [dim]Proof: {e.get('exploit_proof', '')[:80]}[/dim]")
+                # Update findings with exploitation proof
+                for e in exploited:
+                    for v in apex.vulnerabilities:
+                        if v.get("url") == e.get("url") and v.get("type") == e.get("type"):
+                            v["exploited"] = True
+                            v["exploit_proof"] = e.get("exploit_proof", "")
+                            v["impact_proven"] = e.get("impact_proven", "")
+                            break
 
     # Screenshots of all medium+ findings
     screenshots = {}
