@@ -1,10 +1,25 @@
+# Scan results
 scan_*/
+
+# Wordlists (too large for git — download via install.sh)
+wordlists/
+seclists/
+
+# Python
 __pycache__/
 *.pyc
-*.egg-info/
-dist/
-build/
-.env
-/tmp/
-apex-auto.py
-scan_results/
+*.pyo
+
+# Auto-scan results
+apex-auto-results/
+
+# OOB captures
+oob_captures.json
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

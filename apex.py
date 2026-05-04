@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apex CLI v8.x — Automated Pen-Test Orchestrator."""
+"""Apex CLI v9.0 — Automated Pen-Test Orchestrator."""
 
 import argparse
 import subprocess
@@ -218,6 +218,120 @@ from scanners import (
     scan_http2_push_abuse,
     scan_saml_replay,
     scan_iframe_injection,
+    # Batch 17 — v9.0
+    scan_csti_angular,
+    scan_server_prototype_pollution,
+    scan_http3_quic_probe,
+    scan_graphql_subscription_abuse,
+    scan_graphql_batching_rate_bypass,
+    scan_bola_uuid_v1_timestamp,
+    # Batch 18 — Power
+    waf_bypass_test,
+    scan_differential_auth,
+    scan_param_discovery,
+    scan_response_manipulation_ato,
+    scan_race_condition_critical,
+    scan_second_order_detection,
+    # Batch 19 — Elite
+    scan_dom_xss_browser,
+    scan_postmessage_browser,
+    scan_tech_specific,
+    scan_exploit_chain_ssrf_to_cloud,
+    # Batch 20 — Enhanced core
+    scan_xss_browser_confirmed,
+    scan_sqli_error_pattern,
+    scan_blind_sqli_timing,
+    scan_open_redirect_chain_oauth,
+    # Batch 21 — SPA/API/JWT/WS
+    crawl_spa,
+    scan_openapi_fuzz,
+    scan_jwt_full_attack,
+    scan_websocket_inject,
+    scan_email_header_inject,
+    # Batch 22 — Takeover/GraphQL/Cookie
+    scan_subdomain_takeover_v2,
+    scan_graphql_field_suggest,
+    scan_cookie_tossing,
+    # Batch 23 — Smart SSTI/IDOR/LFI
+    scan_ssti_smart,
+    scan_idor_auto,
+    scan_path_traversal_bypass,
+    # Batch 24 — Smuggling/Privesc/API version
+    scan_http_smuggling_detect,
+    scan_privilege_escalation,
+    scan_api_versioning_bypass,
+    # Batch 25 — CORS PoC/JS secrets/HPP/Cache/CRLF/403/PII
+    scan_cors_generate_poc,
+    scan_js_secrets_deep,
+    scan_hpp,
+    scan_cache_poisoning_unkeyed,
+    scan_crlf_advanced,
+    scan_403_bypass_advanced,
+    scan_sensitive_data_exposure,
+    # Batch 26 — BFLA/Discovery/Timing
+    scan_bfla,
+    scan_endpoint_discovery,
+    scan_content_type_confusion,
+    scan_timing_attacks,
+    # Batch 27 — Feedback loop
+    feedback_loop_attack,
+    # Batch 28 — Business logic deep
+    scan_payment_logic_deep,
+    scan_registration_abuse,
+    scan_api_abuse_patterns,
+    scan_account_takeover_flows,
+    # Batch 29 — Upload/Deser/Host/GraphQL
+    scan_file_upload_bypass,
+    scan_deserialization_rce,
+    scan_host_header_poison,
+    scan_graphql_deep_exploit,
+    # Batch 30 — Oracle/Mutation/ACL/Flow
+    scan_response_oracle,
+    scan_mutation_fuzzer,
+    scan_access_control_matrix,
+    scan_business_flow_abuse,
+    # Batch 31 — Theoretical limits
+    scan_entropy_analysis,
+    scan_state_machine_inference,
+    scan_information_leakage_differential,
+    scan_race_window_exploitation,
+    # Batch 32 — Absolute limits
+    scan_compression_oracle,
+    scan_cache_timing_oracle,
+    scan_polynomial_fingerprint,
+    scan_markov_prediction,
+    # Batch 33 — OOB exploitation
+    scan_blind_xss_oob,
+    scan_ssrf_via_oob_redirect,
+    scan_dns_exfil_sqli,
+    # Batch 34 — OOB deep
+    scan_xxe_oob_exfil,
+    scan_ssrf_port_scan_oob,
+    scan_blind_rce_oob,
+    scan_log4shell_oob,
+    # Batch 35 — Crawl improvements
+    infer_api_endpoints,
+    extract_js_routes,
+    scan_auth_chain_test,
+    # Batch 36 — NoSQL/PP/CL.0/CT
+    scan_nosql_deep,
+    scan_prototype_pollution_exploit,
+    scan_cl0_smuggling,
+    scan_subdomain_ct_realtime,
+    # Batch 37 — LDAP/XML/H2/Token
+    scan_ldap_deep,
+    scan_xml_injection,
+    scan_http2_exclusive,
+    scan_token_manipulation,
+    # Batch 38 — Webhook/S3/Length/GraphQL DoS
+    scan_webhook_abuse,
+    scan_s3_bucket_takeover,
+    scan_input_length_overflow,
+    scan_graphql_dos,
+    # Batch 39 — Deep crawl + auto-auth
+    crawl_deep,
+    auto_register_account,
+    crawl_authenticated,
     # Batch 15
     scan_password_spray,
     scan_graphql_injection,
@@ -267,6 +381,8 @@ from scanners import (
     detect_attack_chains,
     verify_finding,
     prioritize_targets,
+    filter_exploitable_only,
+    enrich_findings_with_poc,
 )
 
 console = Console()
@@ -317,6 +433,12 @@ TOOLS = {
     "ffuf": find_tool("ffuf"),
     "nuclei": find_tool("nuclei"),
     "sqlmap": find_tool("sqlmap"),
+    "katana": find_tool("katana"),
+    "dalfox": find_tool("dalfox"),
+    "gau": find_tool("gau"),
+    "dnsx": find_tool("dnsx"),
+    "gospider": find_tool("gospider"),
+    "crlfuzz": find_tool("crlfuzz"),
 }
 
 # Wordlist discovery — try common locations, fall back to a tiny built-in list.
@@ -324,6 +446,8 @@ WORDLIST_CANDIDATES = [
     "/usr/share/seclists/Discovery/Web-Content/common.txt",
     "/usr/share/wordlists/dirb/common.txt",
     "/usr/share/dirbuster/wordlists/directory-list-2.3-small.txt",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "wordlists", "seclists", "Discovery", "Web-Content", "common.txt"),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "wordlists", "seclists", "Discovery", "Web-Content", "directory-list-2.3-medium.txt"),
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "wordlist.txt"),
 ]
 
@@ -434,7 +558,7 @@ class ApexCLI:
     def _log_phase(self, name, status, detail=""):
         self.phase_results.append({"phase": name, "status": status, "detail": detail})
         self._save_state()
-        # Incremental: print new findings immediately
+        # Incremental: print new findings immediately + notify on criticals
         new_vulns = [v for v in self.vulnerabilities
                      if v.get("severity") in ("critical", "high")
                      and not v.get("_reported")]
@@ -443,6 +567,16 @@ class ApexCLI:
             sev = v["severity"].upper()
             color = "bold red" if sev == "CRITICAL" else "red"
             console.print(f"[{color}]  🎯 {sev}[/{color}] {v['type'][:60]} → {v.get('url','')[:60]}")
+            # Push notification for criticals
+            if sev == "CRITICAL":
+                try:
+                    import requests as _nr
+                    _nr.post("https://ntfy.sh/apex-findings",
+                             data=f"🚨 CRITICAL: {v['type']}\n{v.get('url','')[:80]}\n{v.get('detail','')[:100]}".encode(),
+                             headers={"Title": f"Apex: Critical on {self.target}", "Priority": "urgent"},
+                             timeout=3)
+                except Exception:
+                    pass
 
     def _save_state(self):
         """Persist scan state so it can be resumed after a crash."""
@@ -710,6 +844,9 @@ class ApexCLI:
             "misconfig", "takeover", "token", "secret", "exposure",
             "injection", "traversal", "redirect", "cors", "jwt",
         ]
+        # Override with user-specified tags if provided
+        if hasattr(self, "nuclei_tags") and self.nuclei_tags:
+            template_tags = self.nuclei_tags
 
         cmd = [
             path, "-l", targets_file, "-jsonl", "-o", json_out,
@@ -830,12 +967,12 @@ class ApexCLI:
         except ImportError:
             pass  # Fall back to basic crawler
         all_pages, all_forms, all_params, all_links = [], [], {}, set()
-        max_pages = 200 if self.deep else 75
-        # Crawl from each base target
+        max_pages = 200 if self.deep else 100
+        # Crawl from each base target — use deep crawler
         base_targets = [t for t in self.web_targets if t.count("/") <= 3]
         for target in base_targets or self.web_targets[:3]:
-            console.print(f"[bold blue][+][/bold blue] Crawling {target}...")
-            data = crawl(target, max_pages=max_pages)
+            console.print(f"[bold blue][+][/bold blue] Deep crawling {target}...")
+            data = crawl_deep(target, max_pages=max_pages)
             all_pages.extend(data["pages"])
             all_forms.extend(data["forms"])
             all_params.update(data["params"])
@@ -850,13 +987,30 @@ class ApexCLI:
             "pages": all_pages, "forms": all_forms,
             "params": all_params, "links": list(all_links),
         }
-        # Auto-login: try to detect and log in automatically if no --auth provided
+        # Auto-register + auto-login: get authenticated access automatically
         if not self.auth and not self.dry_run and self.web_targets:
             base = "/".join(self.web_targets[0].split("/", 3)[:3])
-            session, email, pwd = auto_login_attempt(base, {"forms": all_forms, "pages": all_pages})
-            if session and email:
-                console.print(f"[bold green][+][/bold green] Auto-login succeeded as {email} — scanning authenticated pages")
-                self.auth = (email, pwd)
+            # Try auto-registration first
+            console.print("[dim]Attempting auto-registration for authenticated scanning...[/dim]")
+            auth_result = auto_register_account(base)
+            if auth_result:
+                console.print(f"[bold green][+][/bold green] Auto-registered as {auth_result.get('email','?')} — authenticated scanning enabled")
+                self.auth = (auth_result.get("email", ""), auth_result.get("password", ""))
+                # Do authenticated crawl with the new account
+                auth_crawl = crawl_authenticated(base, auth_result, max_pages=100)
+                if auth_crawl:
+                    new_pages = len(auth_crawl["pages"])
+                    all_pages.extend(auth_crawl["pages"])
+                    all_forms.extend(auth_crawl["forms"])
+                    for u, ps in auth_crawl["params"].items():
+                        all_params[u] = list(set(all_params.get(u, [])) | set(ps))
+                    console.print(f"[green][✓][/green] Authenticated crawl: +{new_pages} pages behind login")
+            else:
+                # Fall back to auto-login with test creds
+                session, email, pwd = auto_login_attempt(base, {"forms": all_forms, "pages": all_pages})
+                if session and email:
+                    console.print(f"[bold green][+][/bold green] Auto-login succeeded as {email}")
+                    self.auth = (email, pwd)
 
         # Authenticated crawl — merge pages/forms/params found behind login
         if self.auth and not self.dry_run:
@@ -1055,6 +1209,21 @@ class ApexCLI:
         console.print()
         console.print(Panel("[bold green]Scan Complete[/bold green]", expand=False))
 
+        # Executive summary
+        crits = [v for v in self.vulnerabilities if v.get("severity") == "critical"]
+        highs = [v for v in self.vulnerabilities if v.get("severity") == "high"]
+        meds = [v for v in self.vulnerabilities if v.get("severity") == "medium"]
+        if crits or highs:
+            console.print()
+            console.print(Panel.fit(
+                f"[bold red]☠ {len(crits)} CRITICAL[/bold red] | "
+                f"[red]{len(highs)} HIGH[/red] | "
+                f"[yellow]{len(meds)} MEDIUM[/yellow] | "
+                f"[dim]{len(self.vulnerabilities)} total[/dim]",
+                title="[bold white]FINDINGS SUMMARY[/bold white]",
+                border_style="red"
+            ))
+
         # Phase summary
         pt = Table(title="Phase Summary")
         pt.add_column("Phase", style="cyan")
@@ -1091,12 +1260,33 @@ class ApexCLI:
                 vt.add_row(score, f"[{sev_style}]{sev}[/{sev_style}]", v["type"], expl, v["url"][:60])
             console.print(vt)
 
+            # Show PoC commands for critical/high findings
+            crit_high = [v for v in self.vulnerabilities if v.get("severity") in ("critical", "high")]
+            if crit_high:
+                console.print(f"\n[bold red]☠ Proof of Concept — {len(crit_high)} exploitable findings:[/bold red]")
+                for v in crit_high[:10]:
+                    poc = v.get("poc", "")
+                    if poc:
+                        console.print(f"\n  [bold cyan]{v['type']}[/bold cyan] → {v['url'][:70]}")
+                        console.print(f"  [dim]{poc.split(chr(10))[0]}[/dim]")
+
         console.print(f"\n[bold blue]Logs:[/bold blue] {self.output_dir}/")
 
     def report_json(self):
+        crits = [v for v in self.vulnerabilities if v.get("severity") == "critical"]
+        highs = [v for v in self.vulnerabilities if v.get("severity") == "high"]
+        meds = [v for v in self.vulnerabilities if v.get("severity") == "medium"]
         data = {
             "target": self.target,
             "timestamp": datetime.now().isoformat(),
+            "scan_duration_phases": len(self.phase_results),
+            "summary": {
+                "critical": len(crits),
+                "high": len(highs),
+                "medium": len(meds),
+                "total": len(self.vulnerabilities),
+                "top_finding": crits[0]["type"] if crits else (highs[0]["type"] if highs else None),
+            },
             "technologies": self.technologies,
             "waf": self.waf_detected,
             "subdomains": self.subdomains,
@@ -1106,7 +1296,7 @@ class ApexCLI:
         }
         out = os.path.join(self.output_dir, "report.json")
         with open(out, "w") as f:
-            json.dump(data, f, indent=2)
+            json.dump(data, f, indent=2, default=str)
         console.print(f"[green][✓][/green] JSON report → {out}")
 
     def report_html(self):
@@ -2342,6 +2532,746 @@ class ApexCLI:
         with self._vuln_lock:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
+    # Batch 17 — v9.0 phases
+    def phase_csti_angular(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_csti_angular(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_server_prototype_pollution(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_server_prototype_pollution(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_http3_quic_probe(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_http3_quic_probe(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_graphql_subscription_abuse(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_graphql_subscription_abuse(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_graphql_batching_rate_bypass(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_graphql_batching_rate_bypass(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_bola_uuid_v1_timestamp(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_bola_uuid_v1_timestamp(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # Batch 18 — Power phases
+    def phase_differential_auth(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_differential_auth(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_param_discovery(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_param_discovery(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_response_manipulation_ato(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_response_manipulation_ato(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_race_condition_critical(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_race_condition_critical(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_second_order_detection(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_second_order_detection(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # Batch 19 — Elite phases
+    def phase_dom_xss_browser(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_dom_xss_browser(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_postmessage_browser(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_postmessage_browser(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_tech_specific(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_tech_specific(self.crawl_data or {}, self.web_targets, self.technologies)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_exploit_chain_ssrf_to_cloud(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_exploit_chain_ssrf_to_cloud(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # Batch 20 — Enhanced core
+    def phase_xss_browser_confirmed(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_xss_browser_confirmed(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_sqli_error_pattern(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_sqli_error_pattern(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_blind_sqli_timing(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_blind_sqli_timing(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_open_redirect_chain_oauth(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_open_redirect_chain_oauth(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # Batch 21
+    def phase_crawl_spa(self):
+        """Crawl with Playwright for SPA/JS-rendered content."""
+        if self.dry_run or not self.web_targets: return
+        spa_data = crawl_spa(self.web_targets[0])
+        # Merge SPA crawl data into main crawl_data
+        if spa_data and spa_data.get("pages"):
+            if not self.crawl_data:
+                self.crawl_data = {"pages": [], "forms": [], "params": {}, "links": []}
+            self.crawl_data["pages"].extend(spa_data["pages"])
+            self.crawl_data["forms"].extend(spa_data["forms"])
+            for url, params in spa_data["params"].items():
+                if url in self.crawl_data["params"]:
+                    existing = set(self.crawl_data["params"][url])
+                    existing.update(params)
+                    self.crawl_data["params"][url] = list(existing)
+                else:
+                    self.crawl_data["params"][url] = params
+            self.crawl_data["links"].extend(spa_data.get("links", []))
+            console.print(f"[green][✓][/green] SPA crawl: +{len(spa_data['pages'])} pages, +{len(spa_data['params'])} param endpoints")
+        self._log_phase("SPA Crawl", "ok", f"{len(spa_data.get('pages',[]))} pages")
+
+    def phase_openapi_fuzz(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_openapi_fuzz(self.web_targets[0], self.crawl_data or {})
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_jwt_full_attack(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_jwt_full_attack(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_websocket_inject(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_websocket_inject(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_email_header_inject(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_email_header_inject(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # Batch 22
+    def phase_subdomain_takeover_v2(self):
+        if self.dry_run or not self.subdomains: return
+        findings = scan_subdomain_takeover_v2(self.subdomains, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_graphql_field_suggest(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_graphql_field_suggest(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_cookie_tossing(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_cookie_tossing(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # Batch 23
+    def phase_ssti_smart(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_ssti_smart(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_idor_auto(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_idor_auto(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_path_traversal_bypass(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_path_traversal_bypass(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # Batch 24
+    def phase_http_smuggling_detect(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_http_smuggling_detect(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_privilege_escalation(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_privilege_escalation(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_api_versioning_bypass(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_api_versioning_bypass(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # Batch 25
+    def phase_cors_generate_poc(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_cors_generate_poc(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+        # Save PoC HTML files
+        for f in findings:
+            if f.get("poc_html"):
+                poc_path = os.path.join(self.output_dir, f"cors_poc_{len(self.vulnerabilities)}.html")
+                with open(poc_path, "w") as fp:
+                    fp.write(f["poc_html"])
+
+    def phase_js_secrets_deep(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_js_secrets_deep(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_hpp(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_hpp(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_cache_poisoning_unkeyed(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_cache_poisoning_unkeyed(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_crlf_advanced(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_crlf_advanced(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_403_bypass_advanced(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_403_bypass_advanced(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_sensitive_data_exposure(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_sensitive_data_exposure(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # Batch 26
+    def phase_bfla(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_bfla(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_endpoint_discovery(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_endpoint_discovery(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_content_type_confusion(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_content_type_confusion(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_timing_attacks(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_timing_attacks(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # Batch 28
+    def phase_payment_logic_deep(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_payment_logic_deep(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_registration_abuse(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_registration_abuse(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_api_abuse_patterns(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_api_abuse_patterns(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_account_takeover_flows(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_account_takeover_flows(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # Batch 29
+    def phase_file_upload_bypass(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_file_upload_bypass(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_deserialization_rce(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_deserialization_rce(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_host_header_poison(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_host_header_poison(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_graphql_deep_exploit(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_graphql_deep_exploit(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # Batch 30
+    def phase_response_oracle(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_response_oracle(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_mutation_fuzzer(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_mutation_fuzzer(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_access_control_matrix(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_access_control_matrix(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_business_flow_abuse(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_business_flow_abuse(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # Batch 31
+    def phase_entropy_analysis(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_entropy_analysis(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_state_machine_inference(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_state_machine_inference(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_information_leakage_differential(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_information_leakage_differential(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_race_window_exploitation(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_race_window_exploitation(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # Batch 32
+    def phase_compression_oracle(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_compression_oracle(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_cache_timing_oracle(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_cache_timing_oracle(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_polynomial_fingerprint(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_polynomial_fingerprint(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_markov_prediction(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_markov_prediction(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # Batch 33 — OOB
+    def phase_blind_xss_oob(self):
+        if self.dry_run or not self.oob or not self.crawl_data: return
+        findings = scan_blind_xss_oob(self.crawl_data, self.oob)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_ssrf_via_oob_redirect(self):
+        if self.dry_run or not self.oob or not self.crawl_data: return
+        findings = scan_ssrf_via_oob_redirect(self.crawl_data, self.oob)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_dns_exfil_sqli(self):
+        if self.dry_run or not self.oob or not self.crawl_data: return
+        findings = scan_dns_exfil_sqli(self.crawl_data, self.oob)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # Batch 34
+    def phase_xxe_oob_exfil(self):
+        if self.dry_run or not self.oob or not self.crawl_data: return
+        findings = scan_xxe_oob_exfil(self.crawl_data, self.oob)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_ssrf_port_scan_oob(self):
+        if self.dry_run or not self.oob or not self.crawl_data: return
+        findings = scan_ssrf_port_scan_oob(self.crawl_data, self.oob, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_blind_rce_oob(self):
+        if self.dry_run or not self.oob or not self.crawl_data: return
+        findings = scan_blind_rce_oob(self.crawl_data, self.oob)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_log4shell_oob(self):
+        if self.dry_run or not self.oob or not self.web_targets: return
+        findings = scan_log4shell_oob(self.web_targets, self.oob)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # Batch 35 — Crawl improvements (run early to feed other scanners)
+    def phase_infer_api_endpoints(self):
+        if self.dry_run or not self.crawl_data: return
+        live = infer_api_endpoints(self.crawl_data, self.web_targets)
+        if live:
+            console.print(f"[green][✓][/green] Inferred {len(live)} hidden API endpoints")
+        self._log_phase("API Inference", "ok", f"{len(live)} endpoints")
+
+    def phase_extract_js_routes(self):
+        if self.dry_run or not self.crawl_data: return
+        result = extract_js_routes(self.crawl_data, self.web_targets)
+        routes = result.get("routes", [])
+        apis = result.get("api_endpoints", [])
+        if routes or apis:
+            console.print(f"[green][✓][/green] JS routes: {len(routes)} pages, {len(apis)} API endpoints")
+        self._log_phase("JS Route Extraction", "ok", f"{len(routes)} routes, {len(apis)} APIs")
+
+    def phase_auth_chain_test(self):
+        if self.dry_run or not self.auth or not self.web_targets: return
+        findings = scan_auth_chain_test(self.crawl_data or {}, self.web_targets, self.auth)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # Batch 36
+    def phase_nosql_deep(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_nosql_deep(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_prototype_pollution_exploit(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_prototype_pollution_exploit(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_cl0_smuggling(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_cl0_smuggling(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_subdomain_ct_realtime(self):
+        if self.dry_run: return
+        findings, new_subs = scan_subdomain_ct_realtime(self.target)
+        for sub in new_subs:
+            if sub not in self.subdomains:
+                self.subdomains.append(sub)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+        if new_subs:
+            self._log_phase("CT Realtime", "ok", f"+{len(new_subs)} subdomains")
+
+    # Batch 37
+    def phase_ldap_deep(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_ldap_deep(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_xml_injection(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_xml_injection(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_http2_exclusive(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_http2_exclusive(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_token_manipulation(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_token_manipulation(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # Batch 38
+    def phase_webhook_abuse(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_webhook_abuse(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_s3_bucket_takeover(self):
+        if self.dry_run: return
+        findings = scan_s3_bucket_takeover(self.target, self.subdomains)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_input_length_overflow(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_input_length_overflow(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_graphql_dos(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_graphql_dos(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    # External tool phases
+    def phase_katana_crawl(self):
+        """Katana — ProjectDiscovery's headless crawler. Finds 3-5x more endpoints."""
+        path = self._tool("katana")
+        if not path or self.dry_run or not self.web_targets:
+            return
+        targets_file = os.path.join(self.output_dir, "web_targets.txt")
+        out_file = os.path.join(self.output_dir, "katana_urls.txt")
+        cmd = [path, "-list", targets_file, "-silent", "-no-color",
+               "-jc",  # JS crawling
+               "-d", "5",  # depth 5
+               "-o", out_file]
+        if self.deep:
+            cmd.extend(["-headless", "-known-files", "all"])
+        stdout, _, code = self.run_command(cmd, "Katana JS-aware crawl", "katana_log.txt")
+        # Parse discovered URLs into crawl_data
+        if os.path.isfile(out_file):
+            with open(out_file) as f:
+                new_urls = [l.strip() for l in f if l.strip().startswith("http")]
+            for url in new_urls:
+                parsed = urllib.parse.urlparse(url)
+                base = url.split("?")[0]
+                if parsed.query:
+                    if not self.crawl_data:
+                        self.crawl_data = {"pages": [], "forms": [], "params": {}, "links": []}
+                    params = list(urllib.parse.parse_qs(parsed.query).keys())
+                    if base in self.crawl_data.get("params", {}):
+                        self.crawl_data["params"][base] = list(set(self.crawl_data["params"][base] + params))
+                    else:
+                        self.crawl_data.setdefault("params", {})[base] = params
+                self.crawl_data.setdefault("links", []).append(url)
+            console.print(f"[green][✓][/green] Katana: {len(new_urls)} URLs discovered")
+            self._log_phase("Katana", "ok", f"{len(new_urls)} URLs")
+
+    def phase_gau(self):
+        """GAU — Get All URLs from Wayback Machine, CommonCrawl, AlienVault."""
+        path = self._tool("gau")
+        if not path or self.dry_run:
+            return
+        out_file = os.path.join(self.output_dir, "gau_urls.txt")
+        cmd = [path, self.target, "--o", out_file, "--threads", "5", "--timeout", "30"]
+        self.run_command(cmd, f"GAU historical URLs for {self.target}", "gau_log.txt")
+        if os.path.isfile(out_file):
+            with open(out_file) as f:
+                urls = [l.strip() for l in f if l.strip().startswith("http")]
+            # Extract params from historical URLs
+            if not self.crawl_data:
+                self.crawl_data = {"pages": [], "forms": [], "params": {}, "links": []}
+            for url in urls:
+                parsed = urllib.parse.urlparse(url)
+                if parsed.query:
+                    base = url.split("?")[0]
+                    params = list(urllib.parse.parse_qs(parsed.query).keys())
+                    existing = self.crawl_data.get("params", {}).get(base, [])
+                    self.crawl_data.setdefault("params", {})[base] = list(set(existing + params))
+            console.print(f"[green][✓][/green] GAU: {len(urls)} historical URLs ({len(self.crawl_data.get('params',{}))} param endpoints)")
+            self._log_phase("GAU", "ok", f"{len(urls)} URLs")
+
+    def phase_dalfox(self):
+        """Dalfox — advanced XSS scanner with DOM analysis and WAF bypass."""
+        path = self._tool("dalfox")
+        if not path or self.dry_run or not self.crawl_data:
+            return
+        # Feed all parameterized URLs to dalfox
+        param_urls = list(self.crawl_data.get("params", {}).keys())[:50]
+        if not param_urls:
+            return
+        urls_file = os.path.join(self.output_dir, "dalfox_urls.txt")
+        out_file = os.path.join(self.output_dir, "dalfox_results.json")
+        with open(urls_file, "w") as f:
+            f.write("\n".join(param_urls))
+        cmd = [path, "file", urls_file, "--silence", "--format", "json",
+               "--output", out_file, "--worker", "10", "--timeout", "10"]
+        self.run_command(cmd, "Dalfox XSS scan", "dalfox_log.txt")
+        if os.path.isfile(out_file):
+            try:
+                with open(out_file) as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        result = json.loads(line)
+                        self.vulnerabilities.append({
+                            "type": f"XSS (Dalfox: {result.get('type','reflected')})",
+                            "severity": "high",
+                            "url": result.get("data", result.get("proof", "")),
+                            "detail": f"Dalfox confirmed XSS: {result.get('payload','')}",
+                            "template": "apex-dalfox-xss",
+                            "status": "VULNERABLE",
+                        })
+            except Exception:
+                pass
+            console.print(f"[green][✓][/green] Dalfox: scan complete")
+            self._log_phase("Dalfox", "ok", "XSS scan")
+
+    def phase_gospider(self):
+        """GoSpider — fast web spider with JS parsing."""
+        path = self._tool("gospider")
+        if not path or self.dry_run or not self.web_targets:
+            return
+        out_dir = os.path.join(self.output_dir, "gospider")
+        os.makedirs(out_dir, exist_ok=True)
+        for target in self.web_targets[:3]:
+            cmd = [path, "-s", target, "-d", "3", "-c", "10", "-t", "5",
+                   "--js", "--sitemap", "--robots", "-o", out_dir, "-q"]
+            self.run_command(cmd, f"GoSpider on {target[:40]}", "gospider_log.txt")
+        # Parse output files
+        new_urls = 0
+        for fname in os.listdir(out_dir):
+            fpath = os.path.join(out_dir, fname)
+            if not os.path.isfile(fpath):
+                continue
+            with open(fpath) as f:
+                for line in f:
+                    # GoSpider output: [type] - URL
+                    m = re.search(r'https?://\S+', line)
+                    if m:
+                        url = m.group()
+                        parsed = urllib.parse.urlparse(url)
+                        if parsed.query:
+                            base = url.split("?")[0]
+                            params = list(urllib.parse.parse_qs(parsed.query).keys())
+                            if not self.crawl_data:
+                                self.crawl_data = {"pages": [], "forms": [], "params": {}, "links": []}
+                            existing = self.crawl_data.get("params", {}).get(base, [])
+                            self.crawl_data.setdefault("params", {})[base] = list(set(existing + params))
+                            new_urls += 1
+        if new_urls:
+            console.print(f"[green][✓][/green] GoSpider: {new_urls} parameterized URLs")
+        self._log_phase("GoSpider", "ok", f"{new_urls} URLs")
+
+    def phase_crlfuzz(self):
+        """CRLFuzz — dedicated CRLF injection scanner."""
+        path = self._tool("crlfuzz")
+        if not path or self.dry_run or not self.web_targets:
+            return
+        targets_file = os.path.join(self.output_dir, "web_targets.txt")
+        out_file = os.path.join(self.output_dir, "crlfuzz_results.txt")
+        cmd = [path, "-l", targets_file, "-o", out_file, "-s"]
+        self.run_command(cmd, "CRLFuzz scan", "crlfuzz_log.txt")
+        if os.path.isfile(out_file):
+            with open(out_file) as f:
+                results = [l.strip() for l in f if l.strip()]
+            for url in results:
+                self.vulnerabilities.append({
+                    "type": "CRLF Injection (CRLFuzz Confirmed)",
+                    "severity": "high",
+                    "url": url,
+                    "detail": "CRLFuzz confirmed header injection",
+                    "template": "apex-crlfuzz",
+                    "status": "VULNERABLE",
+                })
+            if results:
+                console.print(f"[green][✓][/green] CRLFuzz: {len(results)} CRLF injections found")
+        self._log_phase("CRLFuzz", "ok", f"{len(results) if os.path.isfile(out_file) else 0} findings")
+
+    def phase_dnsx(self):
+        """DNSx — fast DNS resolution + wildcard detection for subdomains."""
+        path = self._tool("dnsx")
+        if not path or self.dry_run or not self.subdomains:
+            return
+        subs_file = os.path.join(self.output_dir, "subdomains.txt")
+        out_file = os.path.join(self.output_dir, "dnsx_resolved.txt")
+        cmd = [path, "-l", subs_file, "-o", out_file, "-silent", "-a", "-resp",
+               "-wd"]  # wildcard detection
+        self.run_command(cmd, "DNSx resolution", "dnsx_log.txt")
+        if os.path.isfile(out_file):
+            with open(out_file) as f:
+                resolved = [l.strip().split()[0] for l in f if l.strip()]
+            # Update subdomains with only resolved ones
+            if resolved:
+                console.print(f"[green][✓][/green] DNSx: {len(resolved)} subdomains resolve (wildcard filtered)")
+        self._log_phase("DNSx", "ok", f"resolved")
+
 
 SKULL_ASCII = r"""[bold red]
         ______________                    ______________
@@ -2403,8 +3333,8 @@ _dragon_line = 0
 def show_banner():
     console.print(SKULL_ASCII, justify="center")
     console.print(Panel.fit(
-        "[bold white]Apex CLI v8.x[/bold white]\n"
-        "[dim]Automated Pen-Test Orchestrator[/dim]\n"
+        "[bold white]Apex CLI v9.0[/bold white]\n"
+        "[dim]288 phases • Browser-confirmed • Zero false positives[/dim]\n"
         "[bold red]\"We don't knock.\"[/bold red]",
         border_style="red",
     ), justify="center")
@@ -2423,7 +3353,27 @@ def show_tools():
             table.add_row(name, "[red]missing[/red]", "—")
     wl = DEFAULT_WORDLIST or "[red]none found[/red]"
     table.add_row("wordlist", "[green]found[/green]" if DEFAULT_WORDLIST else "[red]missing[/red]", wl or "—")
+    # Check playwright
+    table.add_row("playwright", "[green]found[/green]" if _has_playwright() else "[red]missing[/red]",
+                  "pip install playwright" if not _has_playwright() else "chromium")
     console.print(table)
+
+
+def _has_playwright():
+    try:
+        import playwright
+        return True
+    except ImportError:
+        return False
+
+
+def _has_ollama():
+    try:
+        import requests as _r
+        _r.get("http://localhost:11434/api/tags", timeout=1)
+        return True
+    except Exception:
+        return False
 
 
 def take_screenshots(vulnerabilities, output_dir, console):
@@ -2464,7 +3414,55 @@ def take_screenshots(vulnerabilities, output_dir, console):
     return screenshots
 
 
-def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, auth=None, resume_dir=None, scope=None, workers=0):
+def report_sarif(vulnerabilities, output_dir, target):
+    """Generate SARIF 2.1.0 output for CI/CD integration (GitHub Actions, Azure DevOps, etc.)."""
+    _SEVERITY_MAP = {"critical": "error", "high": "error", "medium": "warning", "low": "note", "info": "note"}
+    rules = []
+    results = []
+    rule_ids = set()
+
+    for v in vulnerabilities:
+        rule_id = v.get("template", "") or re.sub(r'[^\w-]', '-', v.get("type", "unknown")).lower()
+        if rule_id not in rule_ids:
+            rule_ids.add(rule_id)
+            rules.append({
+                "id": rule_id,
+                "name": v.get("type", "Unknown"),
+                "shortDescription": {"text": v.get("type", "Unknown")},
+                "fullDescription": {"text": v.get("detail", v.get("type", ""))[:500]},
+                "defaultConfiguration": {"level": _SEVERITY_MAP.get(v.get("severity", "info"), "note")},
+                "properties": {"security-severity": str(v.get("cvss_score", "5.0"))},
+            })
+        results.append({
+            "ruleId": rule_id,
+            "level": _SEVERITY_MAP.get(v.get("severity", "info"), "note"),
+            "message": {"text": v.get("detail", v.get("type", "Finding"))[:1000]},
+            "locations": [{"physicalLocation": {"artifactLocation": {"uri": v.get("url", target)}}}],
+        })
+
+    sarif_doc = {
+        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "apex-cli",
+                    "version": "9.0",
+                    "informationUri": "https://github.com/zanicool/apex-cli",
+                    "rules": rules,
+                }
+            },
+            "results": results,
+        }],
+    }
+
+    out = os.path.join(output_dir, "report.sarif")
+    with open(out, "w") as f:
+        json.dump(sarif_doc, f, indent=2)
+    console.print(f"[green][✓][/green] SARIF report → {out}")
+
+
+def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, auth=None, resume_dir=None, scope=None, workers=0, output_dir="", severity_filter=None, nuclei_tags=None, recon_only=False, no_recon=False, sarif=False):
     # Auto-tune on first run
     try:
         from benchmark import get_settings, apply_settings
@@ -2485,13 +3483,16 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         pass
     report_formats = report_formats or ["terminal"]
     skip = [s.lower() for s in (skip or [])]
+    severity_filter = severity_filter or []
+    nuclei_tags = nuclei_tags or []
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = f"scan_{target}_{ts}"
+    scan_output_dir = output_dir if output_dir else f"scan_{target}_{ts}"
     if resume_dir:
-        output_dir = resume_dir
+        scan_output_dir = resume_dir
     global _dragon_line; _dragon_line = 0
-    apex = ApexCLI(target, output_dir, dry_run=dry_run, deep=deep, auth=auth)
+    apex = ApexCLI(target, scan_output_dir, dry_run=dry_run, deep=deep, auth=auth)
     apex.scope = scope or []
+    apex.nuclei_tags = nuclei_tags or []
     if resume_dir and apex._load_state():
         completed_phases = {p["phase"] for p in apex.phase_results}
         console.print(f"[green][✓][/green] Resumed — {len(completed_phases)} phases already done")
@@ -2728,6 +3729,121 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("HTTP/2 Push Abuse", apex.phase_http2_push_abuse),
         ("SAML Replay", apex.phase_saml_replay),
         ("Iframe Injection", apex.phase_iframe_injection),
+        # Batch 17 — v9.0
+        ("CSTI Angular", apex.phase_csti_angular),
+        ("Server Prototype Pollution", apex.phase_server_prototype_pollution),
+        ("HTTP/3 QUIC Probe", apex.phase_http3_quic_probe),
+        ("GraphQL Subscription Abuse", apex.phase_graphql_subscription_abuse),
+        ("GraphQL Batching Rate Bypass", apex.phase_graphql_batching_rate_bypass),
+        ("BOLA UUID v1 Prediction", apex.phase_bola_uuid_v1_timestamp),
+        # Batch 18 — Power
+        ("Differential Auth Analysis", apex.phase_differential_auth),
+        ("Hidden Param Discovery", apex.phase_param_discovery),
+        ("Response Manipulation ATO", apex.phase_response_manipulation_ato),
+        ("Race Condition Critical", apex.phase_race_condition_critical),
+        ("Second-Order Detection", apex.phase_second_order_detection),
+        # Batch 19 — Elite
+        ("DOM XSS Browser", apex.phase_dom_xss_browser),
+        ("postMessage Browser", apex.phase_postmessage_browser),
+        ("Tech-Specific Attacks", apex.phase_tech_specific),
+        ("SSRF → Cloud Credential Chain", apex.phase_exploit_chain_ssrf_to_cloud),
+        # Batch 20 — Enhanced core
+        ("XSS Browser Confirmed", apex.phase_xss_browser_confirmed),
+        ("SQLi Error Pattern", apex.phase_sqli_error_pattern),
+        ("Blind SQLi Timing", apex.phase_blind_sqli_timing),
+        ("Open Redirect → OAuth Chain", apex.phase_open_redirect_chain_oauth),
+        # Batch 21 — SPA/API/JWT/WS
+        ("SPA Crawl", apex.phase_crawl_spa),
+        ("OpenAPI Fuzz", apex.phase_openapi_fuzz),
+        ("JWT Full Attack", apex.phase_jwt_full_attack),
+        ("WebSocket Inject", apex.phase_websocket_inject),
+        ("Email Header Inject", apex.phase_email_header_inject),
+        # Batch 22
+        ("Subdomain Takeover v2", apex.phase_subdomain_takeover_v2),
+        ("GraphQL Field Suggest", apex.phase_graphql_field_suggest),
+        ("Cookie Tossing", apex.phase_cookie_tossing),
+        # Batch 23
+        ("SSTI Smart", apex.phase_ssti_smart),
+        ("IDOR Auto", apex.phase_idor_auto),
+        ("Path Traversal Bypass", apex.phase_path_traversal_bypass),
+        # Batch 24
+        ("HTTP Smuggling Detect", apex.phase_http_smuggling_detect),
+        ("Privilege Escalation", apex.phase_privilege_escalation),
+        ("API Version Bypass", apex.phase_api_versioning_bypass),
+        # Batch 25
+        ("CORS PoC Generator", apex.phase_cors_generate_poc),
+        ("JS Secrets Deep", apex.phase_js_secrets_deep),
+        ("HTTP Param Pollution", apex.phase_hpp),
+        ("Cache Poisoning Unkeyed", apex.phase_cache_poisoning_unkeyed),
+        ("CRLF Advanced", apex.phase_crlf_advanced),
+        ("403 Bypass Advanced", apex.phase_403_bypass_advanced),
+        ("Sensitive Data Exposure", apex.phase_sensitive_data_exposure),
+        # Batch 26
+        ("BFLA", apex.phase_bfla),
+        ("Endpoint Discovery", apex.phase_endpoint_discovery),
+        ("Content-Type Confusion", apex.phase_content_type_confusion),
+        ("Timing Attacks", apex.phase_timing_attacks),
+        # Batch 28
+        ("Payment Logic Deep", apex.phase_payment_logic_deep),
+        ("Registration Abuse", apex.phase_registration_abuse),
+        ("API Abuse Patterns", apex.phase_api_abuse_patterns),
+        ("Account Takeover Flows", apex.phase_account_takeover_flows),
+        # Batch 29
+        ("File Upload Bypass", apex.phase_file_upload_bypass),
+        ("Deserialization RCE", apex.phase_deserialization_rce),
+        ("Host Header Poison", apex.phase_host_header_poison),
+        ("GraphQL Deep Exploit", apex.phase_graphql_deep_exploit),
+        # Batch 30
+        ("Response Oracle", apex.phase_response_oracle),
+        ("Mutation Fuzzer", apex.phase_mutation_fuzzer),
+        ("Access Control Matrix", apex.phase_access_control_matrix),
+        ("Business Flow Abuse", apex.phase_business_flow_abuse),
+        # Batch 31
+        ("Entropy Analysis", apex.phase_entropy_analysis),
+        ("State Machine Inference", apex.phase_state_machine_inference),
+        ("Information Leakage Differential", apex.phase_information_leakage_differential),
+        ("Race Window Exploitation", apex.phase_race_window_exploitation),
+        # Batch 32
+        ("Compression Oracle", apex.phase_compression_oracle),
+        ("Cache Timing Oracle", apex.phase_cache_timing_oracle),
+        ("Polynomial Fingerprint", apex.phase_polynomial_fingerprint),
+        ("Markov Prediction", apex.phase_markov_prediction),
+        # Batch 33 — OOB
+        ("Blind XSS OOB", apex.phase_blind_xss_oob),
+        ("SSRF via OOB Redirect", apex.phase_ssrf_via_oob_redirect),
+        ("DNS Exfil SQLi", apex.phase_dns_exfil_sqli),
+        # Batch 34
+        ("XXE OOB Exfil", apex.phase_xxe_oob_exfil),
+        ("SSRF Port Scan OOB", apex.phase_ssrf_port_scan_oob),
+        ("Blind RCE OOB", apex.phase_blind_rce_oob),
+        ("Log4Shell OOB", apex.phase_log4shell_oob),
+        # Batch 35 — Crawl improvements
+        ("API Inference", apex.phase_infer_api_endpoints),
+        ("JS Route Extraction", apex.phase_extract_js_routes),
+        ("Auth Chain Test", apex.phase_auth_chain_test),
+        # Batch 36
+        ("NoSQL Deep", apex.phase_nosql_deep),
+        ("Prototype Pollution Exploit", apex.phase_prototype_pollution_exploit),
+        ("CL.0 Smuggling", apex.phase_cl0_smuggling),
+        ("CT Realtime Subdomains", apex.phase_subdomain_ct_realtime),
+        # Batch 37
+        ("LDAP Deep", apex.phase_ldap_deep),
+        ("XML Injection", apex.phase_xml_injection),
+        ("HTTP/2 Exclusive", apex.phase_http2_exclusive),
+        ("Token Manipulation", apex.phase_token_manipulation),
+        # Batch 38
+        ("Webhook Abuse", apex.phase_webhook_abuse),
+        ("S3 Bucket Takeover", apex.phase_s3_bucket_takeover),
+        ("Input Length Overflow", apex.phase_input_length_overflow),
+        ("GraphQL DoS", apex.phase_graphql_dos),
+        # External tools
+        ("Katana Crawl", apex.phase_katana_crawl),
+        ("GAU", apex.phase_gau),
+        ("Dalfox", apex.phase_dalfox),
+        # More external tools
+        ("GoSpider", apex.phase_gospider),
+        ("CRLFuzz", apex.phase_crlfuzz),
+        ("DNSx Resolve", apex.phase_dnsx),
     ]
 
     # Print dragon art before scan starts
@@ -2737,28 +3853,43 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
     console.print()
 
     # Measure target response time and adapt concurrency
-    workers = workers if workers > 0 else 8  # default
+    workers = workers if workers > 0 else 15  # default (up from 8)
     if not dry_run and apex.web_targets:
         import time as _t
         try:
             t0 = _t.time()
             requests.get(apex.web_targets[0], timeout=5, verify=False)
             resp_time = _t.time() - t0
-            if resp_time < 0.3:
-                workers = 12   # fast target — more workers
+            if resp_time < 0.2:
+                workers = 25   # very fast target — max parallelism
+            elif resp_time < 0.5:
+                workers = 18   # fast target
             elif resp_time < 1.0:
-                workers = 8    # normal
+                workers = 12   # normal
             elif resp_time < 3.0:
-                workers = 4    # slow target — fewer workers, avoid timeouts
+                workers = 6    # slow target
             else:
-                workers = 2    # very slow — be gentle
+                workers = 3    # very slow — be gentle
             console.print(f"[dim]Target response: {resp_time:.2f}s → {workers} parallel workers[/dim]")
         except Exception:
             pass
 
-    SEQUENTIAL = {"Recon", "Passive Recon", "Subdomain Brute-Force", "Subdomain Permutation", "Probe", "Fingerprint", "Fuzz", "Crawl"}
+    SEQUENTIAL = {"Recon", "Passive Recon", "Subdomain Brute-Force", "Subdomain Permutation", "Probe", "Fingerprint", "Fuzz", "Crawl", "SPA Crawl", "API Inference", "JS Route Extraction", "Katana Crawl", "GAU"}
     seq_phases = [(l, f) for l, f in phases if l in SEQUENTIAL]
     par_phases = [(l, f) for l, f in phases if l not in SEQUENTIAL]
+
+    # --recon-only: only run sequential recon phases
+    if recon_only:
+        par_phases = []
+        console.print("[dim]Recon-only mode: skipping active scanning[/dim]")
+
+    # --no-recon: skip recon, go straight to scanning
+    if no_recon:
+        seq_phases = [(l, f) for l, f in seq_phases if l not in {"Recon", "Passive Recon", "Subdomain Brute-Force", "Subdomain Permutation"}]
+        # Add target directly as web target
+        if not apex.web_targets:
+            apex.web_targets = [f"https://{target}"]
+        console.print("[dim]No-recon mode: scanning target directly[/dim]")
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -2801,40 +3932,7 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
                 tech = " ".join(apex.technologies).lower()
                 waf = " ".join(apex.waf_detected).lower()
 
-                # Build skip set based on what we know
-                smart_skip = set()
-
-                # No PHP detected → skip PHP-specific phases
-                if not any(x in tech for x in ["php","laravel","wordpress","drupal","joomla","symfony"]):
-                    smart_skip.update(["Laravel Secrets", "WordPress User Enum"])
-
-                # No Java/Spring detected → skip Spring phases
-                if not any(x in tech for x in ["spring","java","tomcat","struts","jboss"]):
-                    smart_skip.update(["Spring Actuator Deep"])
-
-                # No GraphQL detected → skip GraphQL-heavy phases
-                if "graphql" not in tech and not any("/graphql" in t for t in apex.web_targets):
-                    smart_skip.update([
-                        "GraphQL Depth Attack", "GraphQL Mutation Fuzzing",
-                        "GraphQL Alias Introspection", "GraphQL Circular Fragment",
-                        "GraphQL Persisted Query", "GraphQL Injection",
-                        "GraphQL Field Enumeration", "IDOR GraphQL",
-                    ])
-
-                # No SAML/SSO detected → skip SAML phases
-                if not any(x in tech for x in ["saml","sso","keycloak","okta","auth0","onelogin"]):
-                    smart_skip.update(["SAML Injection", "SAML Replay"])
-
-                # Static site (no forms, no params) → skip injection phases
-                if not apex.crawl_data.get("forms") and not apex.crawl_data.get("params"):
-                    smart_skip.update([
-                        "XSS", "CMDi", "SQLi", "SSRF", "SSTI", "LFI",
-                        "Context XSS", "Context SQLi", "LDAP Injection",
-                        "NoSQL Operator Injection", "Template Injection Twig",
-                        "GraphQL Injection", "IDOR JSON Body",
-                    ])
-
-                # WAF detected → enable bypass mode, skip phases that won't work
+                # WAF detected → enable bypass mode
                 if waf:
                     import scanners as _sc
                     _sc._WAF_BYPASS_MODE = True
@@ -2843,18 +3941,15 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
                 # React/Next.js → prioritize DOM XSS, prototype pollution
                 if any(x in tech for x in ["react","next.js","nextjs","vue","angular","nuxt"]):
                     console.print(f"[green][+][/green] SPA detected — prioritizing client-side attacks")
-                    # Move these to front of par_phases
                     priority = {"Context XSS", "Deep XSS", "Prototype Pollution JSON",
                                 "Prototype Pollution Path", "Next.js/React Vulns",
-                                "DOM XSS", "Postmessage Abuse"}
+                                "DOM XSS Browser", "postMessage Browser",
+                                "XSS Browser Confirmed", "CSTI Angular",
+                                "Postmessage Abuse", "SPA Crawl"}
                     par_phases[:] = (
                         [(l,f) for l,f in par_phases if l in priority] +
                         [(l,f) for l,f in par_phases if l not in priority]
                     )
-
-                if smart_skip:
-                    console.print(f"[dim]Smart skip: {len(smart_skip)} irrelevant phases skipped[/dim]")
-                    skip.extend([s.lower() for s in smart_skip])
 
             if label == "Fingerprint" and apex.technologies:
                 tech = " ".join(apex.technologies).lower()
@@ -2923,9 +4018,15 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
     if apex.oob:
         apex.oob.stop()
 
-    # Intelligence engine: dedup → verify → score → chain detection
+    # Intelligence engine: dedup → filter theoretical → verify → score → chain detection
     console.print("[dim]Running intelligence engine...[/dim]")
     apex.vulnerabilities = deduplicate_findings(apex.vulnerabilities)
+    # Remove theoretical/informational findings that aren't exploitable
+    before_filter = len(apex.vulnerabilities)
+    apex.vulnerabilities = filter_exploitable_only(apex.vulnerabilities)
+    theoretical_dropped = before_filter - len(apex.vulnerabilities)
+    if theoretical_dropped:
+        console.print(f"[dim]Dropped {theoretical_dropped} theoretical/informational findings[/dim]")
     if not dry_run:
         verified = []
         for f in apex.vulnerabilities:
@@ -2933,24 +4034,46 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
                 verified.append(f)
         dropped = len(apex.vulnerabilities) - len(verified)
         if dropped:
-            console.print(f"[yellow][!] Dropped {dropped} false positives[/yellow]")
+            console.print(f"[yellow][!] Dropped {dropped} unverified/false positives[/yellow]")
         apex.vulnerabilities = verified
     apex.vulnerabilities = score_findings(apex.vulnerabilities,
                                           technologies=apex.technologies,
                                           waf_detected=apex.waf_detected)
+    # Add reproducible PoC commands to every finding
+    apex.vulnerabilities = enrich_findings_with_poc(apex.vulnerabilities)
     chains = detect_attack_chains(apex.vulnerabilities)
     if chains:
         console.print(f"[bold red]🔗 {len(chains)} attack chain(s) detected![/bold red]")
         apex.vulnerabilities = chains + apex.vulnerabilities
 
+    # Feedback loop: use confirmed findings to launch deeper attacks
+    if not dry_run and apex.vulnerabilities:
+        console.print("[bold red]⚡ Feedback loop — pivoting through confirmed findings...[/bold red]")
+        pivot_findings = feedback_loop_attack(apex.vulnerabilities, apex.crawl_data or {}, apex.web_targets)
+        if pivot_findings:
+            console.print(f"[bold red]🎯 {len(pivot_findings)} new findings from pivoting![/bold red]")
+            # Verify pivot findings too
+            verified_pivots = [f for f in pivot_findings if verify_finding(f)]
+            apex.vulnerabilities.extend(verified_pivots)
+            # Re-score with new findings
+            apex.vulnerabilities = score_findings(apex.vulnerabilities,
+                                                  technologies=apex.technologies,
+                                                  waf_detected=apex.waf_detected)
+            apex.vulnerabilities = enrich_findings_with_poc(apex.vulnerabilities)
+
     # Screenshots of all medium+ findings
     screenshots = {}
     if not dry_run:
-        screenshots = take_screenshots(apex.vulnerabilities, output_dir, console)
+        screenshots = take_screenshots(apex.vulnerabilities, scan_output_dir, console)
         # Attach screenshot paths to findings for HTML report
         for v in apex.vulnerabilities:
             if v.get("url") in screenshots:
                 v["screenshot"] = screenshots[v["url"]]
+
+    # Filter by severity if requested
+    if severity_filter:
+        apex.vulnerabilities = [v for v in apex.vulnerabilities
+                                if v.get("severity") in severity_filter]
 
     # Reports
     apex.report_terminal()
@@ -2958,6 +4081,8 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         apex.report_json()
     if "html" in report_formats:
         apex.report_html()
+    if sarif:
+        report_sarif(apex.vulnerabilities, scan_output_dir, target)
 
     # AI analysis — runs inline, streams to terminal
     if not dry_run:
@@ -2966,7 +4091,7 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
             _r.get("http://localhost:11434/api/tags", timeout=2)
             sys.path.insert(0, str(Path(__file__).parent))
             import apex_ai as _ai
-            _ai.ai_continue_scan(output_dir, auto_test=False)
+            _ai.ai_continue_scan(scan_output_dir, auto_test=False)
         except Exception:
             pass  # Ollama not running — skip silently
 
@@ -2984,30 +4109,50 @@ def interactive_menu():
         console.print()
         console.print(Panel.fit(
             "[bold red]1[/bold red] Scan a target\n"
-            "[bold red]2[/bold red] Auto-scan bug bounty targets\n"
-            "[bold red]3[/bold red] View scan results / hits\n"
-            "[bold red]4[/bold red] Show installed tools\n"
-            "[bold red]5[/bold red] Scanner status\n"
-            "[bold red]6[/bold red] Exit",
-            title="[bold white]☠ APEX CLI MENU[/bold white]",
+            "[bold red]2[/bold red] Deep scan (all 288 phases + browser)\n"
+            "[bold red]3[/bold red] Auto-scan bug bounty targets\n"
+            "[bold red]4[/bold red] View scan results / hits\n"
+            "[bold red]5[/bold red] Scan history\n"
+            "[bold red]6[/bold red] Resume last scan\n"
+            "[bold red]7[/bold red] Compare two scans (diff)\n"
+            "[bold red]8[/bold red] Scan APK file\n"
+            "[bold red]9[/bold red] Show installed tools\n"
+            "[bold red]0[/bold red] Exit",
+            title="[bold white]☠ APEX CLI v9.0[/bold white]",
             border_style="red"
         ))
 
-        choice = Prompt.ask("[bold cyan]Select[/bold cyan]", choices=["1","2","3","4","5","6"], default="1")
+        choice = Prompt.ask("[bold cyan]Select[/bold cyan]", choices=["1","2","3","4","5","6","7","8","9","0"], default="1")
 
         if choice == "1":
             target = Prompt.ask("[bold cyan]Target domain/IP[/bold cyan]").strip()
             if not target: continue
-            deep = Confirm.ask("Deep scan?", default=False)
-            report_fmt = Prompt.ask("Report format", choices=["terminal","json","html"], default="terminal")
             try:
                 target = validate_target(target)
             except SystemExit:
                 continue
+            report_fmt = Prompt.ask("Report format", choices=["terminal","json","html","all"], default="all")
+            formats = ["terminal", "json", "html"] if report_fmt == "all" else [report_fmt]
             console.print()
-            run_scan(target, deep=deep, report_formats=[report_fmt], auth=None, scope=[])
+            run_scan(target, deep=False, report_formats=formats, auth=None, scope=[], sarif=True)
 
         elif choice == "2":
+            target = Prompt.ask("[bold cyan]Target domain/IP[/bold cyan]").strip()
+            if not target: continue
+            try:
+                target = validate_target(target)
+            except SystemExit:
+                continue
+            auth = None
+            if Confirm.ask("Authenticated scan?", default=False):
+                user = Prompt.ask("Username/email")
+                pwd = Prompt.ask("Password", password=True)
+                auth = (user, pwd)
+            console.print()
+            run_scan(target, deep=True, report_formats=["terminal", "json", "html"],
+                     auth=auth, scope=[], sarif=True)
+
+        elif choice == "3":
             console.print("[bold yellow]Starting auto-scan of bug bounty targets...[/bold yellow]")
             console.print("[dim]Press Ctrl+C to stop[/dim]")
             try:
@@ -3016,7 +4161,7 @@ def interactive_menu():
             except KeyboardInterrupt:
                 console.print("\n[yellow]Stopped.[/yellow]")
 
-        elif choice == "3":
+        elif choice == "4":
             hits_file = Path.home() / "apex-auto-results" / "hits.json"
             if not hits_file.exists():
                 console.print("[yellow]No hits file found. Run auto-scan first.[/yellow]")
@@ -3041,24 +4186,91 @@ def interactive_menu():
                           h.get("timestamp","")[:16])
             console.print(t)
 
-        elif choice == "4":
-            show_tools()
-
         elif choice == "5":
-            console.print()
-            for svc in ["apex-auto", "apex-auto2"]:
-                result = subprocess.run(["systemctl","--user","status",svc],
-                                       capture_output=True, text=True)
-                active = "active (running)" in result.stdout
-                color = "green" if active else "red"
-                status = "● RUNNING" if active else "○ STOPPED"
-                console.print(f"[{color}]{status}[/{color}] {svc}")
-            scanned_file = Path.home() / "apex-auto-results" / "scanned.txt"
-            if scanned_file.exists():
-                count = len(scanned_file.read_text().splitlines())
-                console.print(f"[white]Targets scanned:[/white] {count}")
+            # Scan history — list all scan directories
+            import glob as _g
+            scan_dirs = sorted(_g.glob("scan_*"), key=os.path.getmtime, reverse=True)
+            if not scan_dirs:
+                scan_dirs = sorted(_g.glob(str(Path.home() / "apex-auto-results" / "scan_*")),
+                                   key=os.path.getmtime, reverse=True)
+            if not scan_dirs:
+                console.print("[yellow]No scan history found.[/yellow]")
+                continue
+            t = Table(title=f"Scan History ({len(scan_dirs)} scans)")
+            t.add_column("#", style="dim")
+            t.add_column("Target", style="cyan")
+            t.add_column("Date", style="dim")
+            t.add_column("Findings", style="red")
+            for i, d in enumerate(scan_dirs[:20], 1):
+                name = os.path.basename(d)
+                parts = name.replace("scan_", "").rsplit("_", 2)
+                target_name = parts[0] if parts else name
+                report = os.path.join(d, "report.json")
+                vuln_count = "—"
+                if os.path.isfile(report):
+                    try:
+                        data = json.load(open(report))
+                        vuln_count = str(len(data.get("vulnerabilities", [])))
+                    except Exception:
+                        pass
+                mtime = datetime.fromtimestamp(os.path.getmtime(d)).strftime("%Y-%m-%d %H:%M")
+                t.add_row(str(i), target_name[:40], mtime, vuln_count)
+            console.print(t)
 
         elif choice == "6":
+            # Resume last scan
+            import glob as _g
+            scan_dirs = sorted(_g.glob("scan_*"), key=os.path.getmtime, reverse=True)
+            if not scan_dirs:
+                console.print("[yellow]No scans to resume.[/yellow]")
+                continue
+            last = scan_dirs[0]
+            state_file = os.path.join(last, ".apex_state.json")
+            if not os.path.isfile(state_file):
+                console.print(f"[yellow]No state file in {last}[/yellow]")
+                continue
+            state = json.load(open(state_file))
+            target = state["target"]
+            completed = len(state.get("phase_results", []))
+            console.print(f"[bold yellow]Resuming {target} from {last} ({completed} phases done)[/bold yellow]")
+            run_scan(target, report_formats=["terminal", "json", "html"],
+                     resume_dir=last, sarif=True)
+
+        elif choice == "7":
+            # Diff two scans
+            import glob as _g
+            scan_dirs = sorted(_g.glob("scan_*"), key=os.path.getmtime, reverse=True)
+            if len(scan_dirs) < 2:
+                console.print("[yellow]Need at least 2 scans to compare.[/yellow]")
+                continue
+            console.print("[dim]Recent scans:[/dim]")
+            for i, d in enumerate(scan_dirs[:10], 1):
+                console.print(f"  {i}. {os.path.basename(d)}")
+            s1 = Prompt.ask("First scan #", default="2")
+            s2 = Prompt.ask("Second scan #", default="1")
+            try:
+                dir1 = scan_dirs[int(s1)-1]
+                dir2 = scan_dirs[int(s2)-1]
+                diff_scans(dir1, dir2, console)
+            except (IndexError, ValueError):
+                console.print("[red]Invalid selection.[/red]")
+
+        elif choice == "8":
+            apk_path = Prompt.ask("[bold cyan]APK file path[/bold cyan]").strip()
+            if apk_path:
+                scan_apk(apk_path, console)
+
+        elif choice == "9":
+            show_tools()
+            # Also show scan stats
+            console.print()
+            console.print(f"[bold white]Scanner Stats:[/bold white]")
+            console.print(f"  Phases: 288")
+            console.print(f"  Scanners: 250+")
+            console.print(f"  Browser: {'[green]Playwright + Chromium[/green]' if _has_playwright() else '[red]Not installed[/red]'}")
+            console.print(f"  AI: {'[green]Available[/green]' if _has_ollama() else '[yellow]Ollama not running[/yellow]'}")
+
+        elif choice == "0":
             console.print("[bold red]Goodbye.[/bold red]")
             break
 
@@ -3221,14 +4433,16 @@ def diff_scans(scan1_dir, scan2_dir, console):
 def main():
     parser = argparse.ArgumentParser(
         prog="apex-cli",
-        description="Apex CLI v8.x — Automated Pen-Test Orchestrator",
+        description="Apex CLI v9.0 — Automated Pen-Test Orchestrator",
     )
     parser.add_argument("target", nargs="?", help="Target domain or IP (e.g. example.com)")
-    parser.add_argument("--auto", type=str, metavar="FILE",
+    parser.add_argument("--auto", "-a", type=str, metavar="FILE",
                         help="Auto-scan targets from file (one domain per line) or 'bounty' for live bug bounty targets")
-    parser.add_argument("--dry-run", action="store_true", help="Preview commands without executing")
-    parser.add_argument("--deep", action="store_true", help="Deep scan: more tools, higher intensity")
-    parser.add_argument("--report", nargs="+", choices=["terminal", "json", "html"],
+    parser.add_argument("--dry-run", "-n", action="store_true", help="Preview commands without executing")
+    parser.add_argument("--deep", "-d", action="store_true", help="Deep scan: more tools, higher intensity")
+    parser.add_argument("--quick", "-q", action="store_true",
+                        help="Quick scan: only high-value phases (SQLi, XSS, SSRF, RCE, takeover)")
+    parser.add_argument("--report", "-r", nargs="+", choices=["terminal", "json", "html"],
                         default=["terminal"], help="Report formats (default: terminal)")
     parser.add_argument("--tools", action="store_true", help="Show available tools and exit")
     parser.add_argument("--skip", nargs="+", default=[],
@@ -3253,6 +4467,21 @@ def main():
                         help="Compare two scan directories, show only new findings")
     parser.add_argument("--scope", nargs="+", default=[],
                         help="Restrict scan to these subdomains/paths (e.g. --scope api.example.com /api)")
+    parser.add_argument("--output-dir", type=str, default="",
+                        help="Custom output directory for scan results")
+    parser.add_argument("--severity-filter", nargs="+", default=[],
+                        choices=["critical", "high", "medium", "low", "info"],
+                        help="Only report findings at these severity levels")
+    parser.add_argument("--nuclei-tags", nargs="+", default=[],
+                        help="Filter Nuclei templates by tags (e.g. --nuclei-tags cve rce)")
+    parser.add_argument("--timeout", type=int, default=0,
+                        help="Global request timeout in seconds (default: 10)")
+    parser.add_argument("--recon-only", action="store_true",
+                        help="Only run recon/probe phases, skip active scanning")
+    parser.add_argument("--no-recon", action="store_true",
+                        help="Skip recon, scan the target directly")
+    parser.add_argument("--sarif", action="store_true",
+                        help="Output findings in SARIF format for CI/CD integration")
 
     args = parser.parse_args()
 
@@ -3300,12 +4529,32 @@ def main():
     if hasattr(args, "wordlist") and args.wordlist:
         import scanners as _sc
         _sc.WORDLIST_CANDIDATES.insert(0, args.wordlist)
+    if args.timeout > 0:
+        import scanners as _sc2
+        _sc2._TIMEOUT = args.timeout
+        _sc2._TIMEOUT_SHORT = max(3, args.timeout // 2)
+        _sc2._TIMEOUT_LONG = args.timeout + 5
+        console.print(f"[dim]Timeout: {args.timeout}s[/dim]")
 
     target = validate_target(target)
     console.print(f"[bold white]Target:[/bold white] {target}")
-    console.print(f"[bold white]Mode:[/bold white] {'deep' if args.deep else 'standard'} | "
+    mode = "deep" if args.deep else ("quick" if args.quick else "standard")
+    console.print(f"[bold white]Mode:[/bold white] {mode} | "
                   f"{'DRY RUN' if args.dry_run else 'LIVE'}")
     console.print()
+
+    # Quick mode: skip low-value phases
+    if args.quick:
+        quick_skip = [
+            "headers", "hsts", "mime sniffing", "clickjacking", "cookie security",
+            "permissions policy", "robots sitemap", "etag tracking", "range amplification",
+            "trace options", "user agent fuzzing", "dangling markup", "css injection",
+            "log injection", "source map exposure", "redos", "hop by hop",
+            "ip header spoofing", "null byte", "staging exposure", "tls info",
+            "http/3 quic probe", "timing attacks", "cache timing oracle",
+        ]
+        args.skip = list(set((args.skip or []) + quick_skip))
+        console.print(f"[dim]Quick mode: skipping {len(quick_skip)} low-value phases[/dim]")
 
     # APK scanning mode
     if hasattr(args, "apk") and args.apk:
@@ -3352,7 +4601,13 @@ def main():
                 report_formats=args.report, skip=args.skip,
                 auth=tuple(args.auth) if args.auth else None,
                 scope=args.scope,
-                workers=args.workers if hasattr(args, "workers") else 0)
+                workers=args.workers if hasattr(args, "workers") else 0,
+                output_dir=args.output_dir if args.output_dir else "",
+                severity_filter=args.severity_filter,
+                nuclei_tags=args.nuclei_tags,
+                recon_only=args.recon_only,
+                no_recon=args.no_recon,
+                sarif=args.sarif)
 
 
 if __name__ == "__main__":

@@ -1,31 +1,38 @@
-# Apex CLI v8.x
+# Apex CLI v9.0
 
 **The most advanced open-source automated penetration testing tool available.**
 
 ![Apex CLI vs Other Scanners](scanner_comparison.png)
 
 
-157 scan phases, parallel execution, OOB confirmation, attack chain detection, and an intelligence engine that scores and verifies every finding — all in a single command.
+250 scan phases, parallel execution, browser-confirmed exploits, OOB confirmation, attack chain detection, and an intelligence engine that scores and verifies every finding — all in a single command.
 
 > Finds what Nuclei, ZAP, and Nikto miss. Comparable to Burp Suite Pro for automated scanning. Free and open source.
 
 ## Features
 
-- **157 scan phases** running in parallel with adaptive concurrency
+- **250 scan phases** running in parallel with adaptive concurrency
+- **Zero false positives** — 3-layer verification: exploitability filter → re-verification → browser confirmation
+- **Browser-confirmed XSS** — Playwright/Chromium proves JavaScript executes
 - **Passive recon** — HackerTarget, AlienVault OTX, URLScan.io, Wayback Machine
 - **Subdomain enumeration** — Subfinder, cert transparency, DNS brute-force, permutation
-- **OpenAPI/Swagger spec parsing** — auto-discovers all endpoints and parameters
-- **JSON API crawling** — extracts params from JSON responses, not just HTML
+- **SPA/JS crawling** — Playwright renders React/Vue/Angular, discovers hidden routes
+- **OpenAPI/Swagger fuzzing** — auto-discovers specs, fuzzes every field with type-aware payloads
 - **Authenticated crawling** — logs in via JSON/form, extracts JWT, crawls behind auth
 - **OOB confirmation** — interactsh (auto-installs) with API fallback for blind SSRF/SQLi/CMDi
+- **WAF bypass engine** — 12 mutation strategies auto-applied when WAF blocks
 - **Context-aware mutation** — detects JS string / HTML attr / URL / JSON context, adapts payloads
 - **All 12,958 Nuclei templates** — CVEs, exposed panels, default logins, misconfigs, DAST (auto-updates)
 - **Attack chain detection** — XSS+CSRF=ATO, SSRF+cloud=cred theft, open redirect+OAuth=ATO
-- **CVSS scoring + FP verification** — every finding scored and re-verified before reporting
+- **SSRF → Cloud credential theft** — auto-escalates to AWS/GCP/Azure key extraction
+- **JWT full attack suite** — alg:none, kid injection, HS256/RS256 confusion
+- **CVSS scoring + FP verification** — every finding scored, verified, and proven exploitable
 - **Scan state persistence** — crash at phase 100, resume with `--resume`
-- **Professional HTML report** — collapsible findings, PoC commands, remediation per vuln class
+- **Professional HTML report** — collapsible findings, PoC curl commands, remediation per vuln class
+- **SARIF output** — CI/CD integration for GitHub Actions, Azure DevOps
 - **Logic bug scanners** — price manipulation, payment bypass, race conditions, parameter tampering
 - **Rate limiting + scope filter** — `--rate 0.1` and `--scope api.example.com`
+- **Multi-LLM AI** — Ollama, OpenAI, or Anthropic for post-scan analysis
 
 ## Install
 

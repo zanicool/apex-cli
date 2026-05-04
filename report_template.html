@@ -162,10 +162,11 @@ td{padding:.6rem 1rem;border-top:1px solid var(--border);font-size:.85rem;word-b
         'apex-ssti': 'curl -sk "' ~ v.url ~ '" | grep -o "49"  # {{7*7}} = 49',
         'apex-redirect-oauth': 'curl -sk -L "' ~ v.url ~ '" -I | grep Location',
       } %}
-      {% set poc_cmd = poc.get(v.template, 'curl -sk "' ~ v.url ~ '"') %}
+      {% set poc_cmd = v.poc if v.poc else poc.get(v.template, 'curl -sk "' ~ v.url ~ '"') %}
       <div class="poc-box">
         <h4>Proof of Concept</h4>
         <pre>{{ poc_cmd }}</pre>
+        {% if v.exploitability %}<p style="color:var(--accent);margin-top:0.5rem;font-size:0.85rem;">Exploitability: <strong>{{ v.exploitability }}</strong></p>{% endif %}
       </div>
       {% if v.screenshot %}
       <div class="poc-box">

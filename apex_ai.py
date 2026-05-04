@@ -9,9 +9,16 @@ from rich.table import Table
 import requests
 
 console = Console()
-OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL = "llama3.1:8b"  # Use best available model
-AI_WORKERS = 3  # parallel queries — set by benchmark.py
+
+# --- Multi-backend LLM configuration ---
+AI_BACKEND = os.environ.get("APEX_AI_BACKEND", "ollama")  # ollama | openai | anthropic
+OLLAMA_URL = os.environ.get("APEX_OLLAMA_URL", "http://localhost:11434/api/generate")
+OPENAI_URL = os.environ.get("APEX_OPENAI_URL", "https://api.openai.com/v1/chat/completions")
+ANTHROPIC_URL = os.environ.get("APEX_ANTHROPIC_URL", "https://api.anthropic.com/v1/messages")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+MODEL = os.environ.get("APEX_AI_MODEL", "llama3.1:8b")
+AI_WORKERS = 3
 RESULTS_DIR = Path.home() / "apex-auto-results"
 
 SYSTEM_PROMPT = """You are an elite bug bounty hunter with 10 years experience. You think like a human attacker, not a scanner.
@@ -31,7 +38,18 @@ Rules:
 
 
 def ask_ai(prompt, stream=True):
-    """Query local Ollama — stream output for real-time display."""
+    """Query LLM backend — supports Ollama, OpenAI API, and Anthropic."""
+    backend = AI_BACKEND.lower()
+    if backend == "openai":
+        return _ask_openai(prompt, stream)
+    elif backend == "anthropic":
+        return _ask_anthropic(prompt, stream)
+    else:
+        return _ask_ollama(prompt, stream)
+
+
+def _ask_ollama(prompt, stream=True):
+    """Query local Ollama."""
     try:
         if stream:
             r = requests.post(OLLAMA_URL, json={
@@ -56,7 +74,87 @@ def ask_ai(prompt, stream=True):
             }, timeout=180)
             return r.json().get("response", "")
     except Exception as e:
-        return f"[AI unavailable: {e}]"
+        return f"[AI unavailable (Ollama): {e}]"
+
+
+def _ask_openai(prompt, stream=True):
+    """Query OpenAI-compatible API (works with OpenAI, Together, Groq, etc.)."""
+    if not OPENAI_API_KEY:
+        return "[AI unavailable: OPENAI_API_KEY not set]"
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
+    body = {
+        "model": MODEL if "/" in MODEL or "gpt" in MODEL else "gpt-4o-mini",
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.4,
+        "max_tokens": 3000,
+        "stream": stream,
+    }
+    try:
+        if stream:
+            r = requests.post(OPENAI_URL, json=body, headers=headers, stream=True, timeout=180)
+            result = ""
+            for line in r.iter_lines():
+                if line:
+                    line = line.decode("utf-8").removeprefix("data: ")
+                    if line == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(line)["choices"][0]["delta"].get("content", "")
+                        print(chunk, end="", flush=True)
+                        result += chunk
+                    except Exception:
+                        pass
+            print()
+            return result
+        else:
+            r = requests.post(OPENAI_URL, json=body, headers=headers, timeout=180)
+            return r.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        return f"[AI unavailable (OpenAI): {e}]"
+
+
+def _ask_anthropic(prompt, stream=True):
+    """Query Anthropic Claude API."""
+    if not ANTHROPIC_API_KEY:
+        return "[AI unavailable: ANTHROPIC_API_KEY not set]"
+    headers = {
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "model": MODEL if "claude" in MODEL else "claude-sonnet-4-20250514",
+        "max_tokens": 3000,
+        "system": SYSTEM_PROMPT,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": stream,
+    }
+    try:
+        if stream:
+            r = requests.post(ANTHROPIC_URL, json=body, headers=headers, stream=True, timeout=180)
+            result = ""
+            for line in r.iter_lines():
+                if line:
+                    line = line.decode("utf-8").removeprefix("data: ")
+                    try:
+                        event = json.loads(line)
+                        if event.get("type") == "content_block_delta":
+                            chunk = event["delta"].get("text", "")
+                            print(chunk, end="", flush=True)
+                            result += chunk
+                    except Exception:
+                        pass
+            print()
+            return result
+        else:
+            r = requests.post(ANTHROPIC_URL, json=body, headers=headers, timeout=180)
+            data = r.json()
+            return data["content"][0]["text"] if data.get("content") else ""
+    except Exception as e:
+        return f"[AI unavailable (Anthropic): {e}]"
 
 
 def load_scan(scan_dir):

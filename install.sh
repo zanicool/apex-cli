@@ -151,6 +151,12 @@ if command -v go &>/dev/null || [ -x /usr/local/go/bin/go ]; then
     install_go_tool assetfinder       "github.com/tomnomnom/assetfinder@latest"
     install_go_tool interactsh-client "github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest"
     install_go_tool amass             "github.com/owasp-amass/amass/v4/...@latest"
+    install_go_tool katana            "github.com/projectdiscovery/katana/cmd/katana@latest"
+    install_go_tool dalfox            "github.com/hahwul/dalfox/v2@latest"
+    install_go_tool gau               "github.com/lc/gau/v2/cmd/gau@latest"
+    install_go_tool dnsx              "github.com/projectdiscovery/dnsx/cmd/dnsx@latest"
+    install_go_tool gospider          "github.com/jaeles-project/gospider@latest"
+    install_go_tool crlfuzz           "github.com/dwisiswant0/crlfuzz/cmd/crlfuzz@latest"
 
     # Update nuclei templates
     if command -v nuclei &>/dev/null || [ -f "$REAL_HOME/go/bin/nuclei" ]; then
