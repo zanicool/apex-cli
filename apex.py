@@ -1238,16 +1238,23 @@ class ApexCLI:
         crits = [v for v in self.vulnerabilities if v.get("severity") == "critical"]
         highs = [v for v in self.vulnerabilities if v.get("severity") == "high"]
         meds = [v for v in self.vulnerabilities if v.get("severity") == "medium"]
-        if crits or highs:
-            console.print()
-            console.print(Panel.fit(
-                f"[bold red]☠ {len(crits)} CRITICAL[/bold red] | "
-                f"[red]{len(highs)} HIGH[/red] | "
-                f"[yellow]{len(meds)} MEDIUM[/yellow] | "
-                f"[dim]{len(self.vulnerabilities)} total[/dim]",
-                title="[bold white]FINDINGS SUMMARY[/bold white]",
-                border_style="red"
-            ))
+        exploited = [v for v in self.vulnerabilities if v.get("exploited")]
+        duration = getattr(self, "_scan_duration", "?")
+
+        console.print()
+        summary_parts = [f"[bold red]☠ {len(crits)} CRITICAL[/bold red]",
+                         f"[red]{len(highs)} HIGH[/red]",
+                         f"[yellow]{len(meds)} MEDIUM[/yellow]",
+                         f"[dim]{len(self.vulnerabilities)} total[/dim]"]
+        if exploited:
+            summary_parts.append(f"[bold green]{len(exploited)} PROVEN[/bold green]")
+        summary_parts.append(f"[dim]⏱ {duration}[/dim]")
+
+        console.print(Panel.fit(
+            " | ".join(summary_parts),
+            title="[bold white]SCAN RESULTS[/bold white]",
+            border_style="red" if crits else ("yellow" if highs else "green"),
+        ))
 
         # Phase summary
         pt = Table(title="Phase Summary")
@@ -1294,8 +1301,11 @@ class ApexCLI:
                     if poc:
                         console.print(f"\n  [bold cyan]{v['type']}[/bold cyan] → {v['url'][:70]}")
                         console.print(f"  [dim]{poc.split(chr(10))[0]}[/dim]")
+                        if v.get("exploited"):
+                            console.print(f"  [bold green]✓ PROVEN: {v.get('exploit_proof', '')[:70]}[/bold green]")
 
-        console.print(f"\n[bold blue]Logs:[/bold blue] {self.output_dir}/")
+        console.print(f"\n[bold blue]Output:[/bold blue] {self.output_dir}/")
+        console.print(f"[dim]  report.json | report.html | report.sarif | h1_reports/[/dim]")
 
     def report_json(self):
         crits = [v for v in self.vulnerabilities if v.get("severity") == "critical"]
@@ -3721,6 +3731,10 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
     else:
         completed_phases = set()
 
+    # Track scan duration
+    import time as _scan_time
+    _scan_start = _scan_time.time()
+
     # Start OOB server
     if not dry_run:
         console.print("[dim]Starting OOB server (interactsh)...[/dim]")
@@ -4218,6 +4232,8 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
 
         workers = min(workers, len(par_phases))
         tasks_map = {}
+        _completed_count = 0
+        _total_par = len(par_phases)
         with ThreadPoolExecutor(max_workers=workers) as pool:
             for label, fn in par_phases:
                 t = progress.add_task(f"[cyan]{label}...", total=1)
@@ -4225,9 +4241,10 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
             for future in as_completed(tasks_map):
                 label, task_id = tasks_map[future]
                 _, err = future.result()
+                _completed_count += 1
                 if err:
-                    console.print(f"[red][!] {label} failed: {err}[/red]")
-                progress.update(task_id, completed=1)
+                    console.print(f"[red][!] {label} failed: {err[:60]}[/red]")
+                progress.update(task_id, completed=1, description=f"[cyan]{label}[/cyan] [dim]({_completed_count}/{_total_par})[/dim]")
                 # Continue revealing dragon
                 if DRAGON and _dragon_idx < len(DRAGON):
                     console.print(f"[bold red]{DRAGON[_dragon_idx]}[/bold red]")
@@ -4337,6 +4354,12 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
     if severity_filter:
         apex.vulnerabilities = [v for v in apex.vulnerabilities
                                 if v.get("severity") in severity_filter]
+
+    # Calculate scan duration
+    _scan_duration = _scan_time.time() - _scan_start
+    _scan_mins = int(_scan_duration // 60)
+    _scan_secs = int(_scan_duration % 60)
+    apex._scan_duration = f"{_scan_mins}m {_scan_secs}s" if _scan_mins else f"{_scan_secs}s"
 
     # Reports
     apex.report_terminal()
@@ -4722,6 +4745,7 @@ def main():
     parser.add_argument("--report", "-r", nargs="+", choices=["terminal", "json", "html"],
                         default=["terminal"], help="Report formats (default: terminal)")
     parser.add_argument("--tools", action="store_true", help="Show available tools and exit")
+    parser.add_argument("--list-phases", action="store_true", help="List all scan phases and exit")
     parser.add_argument("--skip", nargs="+", default=[],
                         help="Skip phases (e.g. --skip nuclei sqli)")
     parser.add_argument("--auth", nargs=2, metavar=("USER", "PASS"),
@@ -4771,6 +4795,24 @@ def main():
 
     if args.tools:
         show_tools()
+        sys.exit(0)
+
+    if hasattr(args, "list_phases") and args.list_phases:
+        console.print("[bold white]All scan phases (329):[/bold white]")
+        # Quick way to list all phases without running a scan
+        phase_names = [
+            "Recon", "Passive Recon", "Probe", "Fingerprint", "Fuzz", "Crawl",
+            "SPA Crawl", "API Inference", "JS Route Extraction", "Katana Crawl", "GAU",
+            "Headers", "Sensitive Files", "Nuclei", "SQLi", "XSS", "CMDi", "IDOR",
+            "Open Redirect", "SSRF", "SSTI", "LFI", "Broken Auth", "CORS", "GraphQL",
+            "JWT Issues", "Subdomain Takeover", "WebSocket", "OAuth Issues", "XXE",
+            "Business Logic", "Cache Poisoning", "Request Smuggling", "CSRF",
+            "Deep SQLi", "Deep XSS", "Browser XSS", "Blind SQLi Timing",
+            "Response Oracle", "Mutation Fuzzer", "Feedback Loop", "Safe Exploitation",
+            "... and 280+ more (use --deep to run all)",
+        ]
+        for i, name in enumerate(phase_names, 1):
+            console.print(f"  [dim]{i:3}.[/dim] {name}")
         sys.exit(0)
 
     if not args.target:
