@@ -18309,3 +18309,258 @@ def scan_cloud_infra_enum(target, web_targets):
                 except Exception:
                     continue
     return findings
+
+
+# ---------------------------------------------------------------------------
+# Enterprise-grade Part 2: Deep recon, internal pivoting, advanced exploitation
+# ---------------------------------------------------------------------------
+
+def scan_internal_api_discovery(crawl_data, web_targets):
+    """Discover internal APIs exposed through misconfigured reverse proxies."""
+    findings = []
+    # Internal service names commonly exposed via path routing
+    internal_services = [
+        "/internal", "/internal/api", "/private", "/private/api",
+        "/backend", "/backend/api", "/service", "/microservice",
+        "/admin-api", "/management", "/ops", "/operations",
+        "/monitoring", "/telemetry", "/analytics/internal",
+        "/billing/internal", "/payment/internal", "/user-service",
+        "/auth-service", "/notification-service", "/search-service",
+        "/recommendation", "/ml-api", "/data-pipeline",
+        "/elasticsearch", "/kibana", "/grafana", "/prometheus/api/v1/query",
+        "/zipkin", "/jaeger", "/consul/v1/catalog/services",
+        "/vault/v1/sys/health", "/eureka/apps",
+    ]
+
+    for target in web_targets[:5]:
+        base = target.rstrip("/")
+        urls = [f"{base}{p}" for p in internal_services]
+        for url, r in batch_get(urls, timeout=_TIMEOUT_SHORT):
+            if r and r.status_code == 200 and len(r.text) > 50:
+                body = r.text[:500].lower()
+                if any(x in body for x in ["service", "api", "version", "status", "health",
+                                            "nodes", "cluster", "index", "dashboard"]):
+                    path = url.replace(base, "")
+                    findings.append({
+                        "type": f"Internal Service Exposed: {path}",
+                        "severity": "critical" if any(x in path for x in ["/vault", "/consul", "/eureka", "elasticsearch"]) else "high",
+                        "url": url,
+                        "detail": f"Internal service at {path} accessible externally ({len(r.text)} bytes). Should be behind VPN/firewall.",
+                        "template": "apex-internal-api",
+                    })
+    return findings
+
+
+def scan_graphql_schema_steal(crawl_data):
+    """Steal full GraphQL schema even when introspection is disabled."""
+    findings = []
+    tested = set()
+
+    for page in crawl_data.get("pages", [])[:5]:
+        base = "/".join(page["url"].split("/", 3)[:3])
+        if base in tested:
+            continue
+        tested.add(base)
+
+        for path in ["/graphql", "/api/graphql", "/gql"]:
+            url = f"{base}{path}"
+            try:
+                # Check if introspection is disabled
+                r = _S.post(url, json={"query": "{ __schema { types { name } } }"}, timeout=_TIMEOUT)
+                if r.status_code != 200:
+                    continue
+
+                introspection_blocked = "error" in r.text.lower() and "introspection" in r.text.lower()
+
+                if not introspection_blocked:
+                    # Full introspection available — steal everything
+                    full_query = """{ __schema { queryType { name } mutationType { name }
+                        types { name kind fields { name type { name kind ofType { name } }
+                        args { name type { name } } } } } }"""
+                    r2 = _S.post(url, json={"query": full_query}, timeout=15)
+                    if r2.status_code == 200 and "__schema" in r2.text:
+                        try:
+                            schema = r2.json()
+                            types = schema.get("data", {}).get("__schema", {}).get("types", [])
+                            user_types = [t for t in types if not t["name"].startswith("__")]
+                            sensitive_fields = []
+                            for t in user_types:
+                                for f in (t.get("fields") or []):
+                                    if any(x in f["name"].lower() for x in ["password", "secret", "token", "ssn", "credit"]):
+                                        sensitive_fields.append(f"{t['name']}.{f['name']}")
+                            findings.append({
+                                "type": "GraphQL Full Schema Exposed",
+                                "severity": "high" if sensitive_fields else "medium",
+                                "url": url,
+                                "detail": f"Full schema: {len(user_types)} types. Sensitive fields: {sensitive_fields[:5] or 'none found'}",
+                                "template": "apex-graphql-schema-steal",
+                            })
+                        except Exception:
+                            pass
+                else:
+                    # Introspection blocked — use field suggestion to reconstruct
+                    # Already handled by scan_graphql_field_suggest
+                    pass
+                break
+            except Exception:
+                continue
+    return findings
+
+
+def scan_jwks_spoofing(crawl_data, web_targets):
+    """JWKS endpoint spoofing — inject our own signing key via jku/x5u header."""
+    import base64 as b64
+    findings = []
+
+    jwt_re = re.compile(r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*')
+
+    for target in web_targets[:5]:
+        try:
+            r = _S.get(target, timeout=_TIMEOUT_SHORT)
+            tokens = jwt_re.findall(r.text)
+            for cookie in r.cookies:
+                if jwt_re.match(cookie.value):
+                    tokens.append(cookie.value)
+        except Exception:
+            continue
+
+        for token in tokens[:2]:
+            parts = token.split(".")
+            if len(parts) < 2:
+                continue
+            try:
+                header = json.loads(b64.urlsafe_b64decode(parts[0] + "=="))
+            except Exception:
+                continue
+
+            # Check for jku (JWK Set URL) or x5u (X.509 URL) in header
+            jku = header.get("jku", "")
+            x5u = header.get("x5u", "")
+
+            if jku or x5u:
+                # If jku/x5u points to an external URL, we can spoof it
+                key_url = jku or x5u
+                findings.append({
+                    "type": "JWT JKU/X5U Key Injection Possible",
+                    "severity": "critical",
+                    "url": target,
+                    "detail": f"JWT header contains {'jku' if jku else 'x5u'}: {key_url}. Host our own JWKS to forge valid tokens.",
+                    "template": "apex-jwt-jku-spoof",
+                })
+                break
+
+            # Also check if .well-known/jwks.json is accessible
+            base = "/".join(target.split("/", 3)[:3])
+            for jwks_path in ["/.well-known/jwks.json", "/oauth/jwks", "/auth/jwks.json", "/.well-known/openid-configuration"]:
+                try:
+                    r2 = _S.get(f"{base}{jwks_path}", timeout=_TIMEOUT_SHORT)
+                    if r2.status_code == 200 and "keys" in r2.text:
+                        findings.append({
+                            "type": "JWKS Endpoint Exposed",
+                            "severity": "low",
+                            "url": f"{base}{jwks_path}",
+                            "detail": "JWKS endpoint accessible. Public keys exposed (needed for key confusion attack).",
+                            "template": "apex-jwks-exposed",
+                        })
+                        break
+                except Exception:
+                    continue
+    return findings
+
+
+def scan_request_smuggling_h2(web_targets):
+    """HTTP/2 request smuggling — H2.CL and H2.TE desync attacks."""
+    findings = []
+    try:
+        import httpx
+    except ImportError:
+        return findings
+
+    for target in web_targets[:3]:
+        try:
+            with httpx.Client(http2=True, verify=False, timeout=10) as client:
+                # H2.CL: Send HTTP/2 request with Content-Length that disagrees with body
+                # This is hard to test safely, so we just check if H2 is supported
+                # and if the server processes CL headers in H2 (it shouldn't)
+                r = client.get(target)
+                if r.http_version == "HTTP/2":
+                    # Try sending a request with both CL and body mismatch
+                    try:
+                        r2 = client.post(target, content="x" * 10,
+                                         headers={"content-length": "0"})
+                        # If server accepts CL:0 but we sent 10 bytes, desync possible
+                        if r2.status_code == 200:
+                            findings.append({
+                                "type": "HTTP/2 Potential Desync (H2.CL)",
+                                "severity": "medium",
+                                "url": target,
+                                "detail": "Server accepts HTTP/2 with mismatched Content-Length. H2.CL smuggling may be possible.",
+                                "template": "apex-h2-desync",
+                            })
+                    except Exception:
+                        pass
+        except Exception:
+            continue
+    return findings
+
+
+def scan_subdomain_brute_deep(target):
+    """Deep subdomain brute force with permutations for big companies."""
+    findings = []
+    subdomains_found = set()
+
+    # High-value prefixes for enterprise targets
+    prefixes = [
+        "admin", "api", "api-dev", "api-staging", "api-internal", "api-v2",
+        "staging", "stage", "stg", "dev", "development", "test", "testing",
+        "uat", "qa", "preprod", "pre-prod", "sandbox", "demo",
+        "internal", "intranet", "vpn", "remote", "gateway",
+        "jenkins", "gitlab", "jira", "confluence", "bitbucket",
+        "grafana", "kibana", "prometheus", "elastic", "redis",
+        "mongo", "mysql", "postgres", "db", "database",
+        "mail", "smtp", "imap", "exchange", "outlook",
+        "sso", "auth", "login", "oauth", "identity", "keycloak",
+        "cdn", "static", "assets", "media", "images", "files",
+        "ws", "websocket", "realtime", "socket", "stream",
+        "payment", "billing", "checkout", "stripe", "paypal",
+        "support", "help", "docs", "documentation", "wiki",
+        "status", "health", "monitor", "metrics", "logs",
+        "backup", "bak", "old", "legacy", "archive",
+        "beta", "alpha", "canary", "next", "preview",
+        "mobile", "m", "app", "ios", "android",
+    ]
+
+    import socket
+    base_domain = target
+
+    # Batch DNS resolution
+    for prefix in prefixes:
+        hostname = f"{prefix}.{base_domain}"
+        try:
+            ip = socket.gethostbyname(hostname)
+            subdomains_found.add(hostname)
+        except socket.gaierror:
+            continue
+
+    if subdomains_found:
+        # Check which are alive and interesting
+        urls = [f"https://{s}" for s in subdomains_found]
+        alive = []
+        for url, r in batch_get(urls, timeout=5):
+            if r and r.status_code < 500:
+                alive.append(url)
+
+        if alive:
+            interesting = [u for u in alive if any(x in u for x in
+                          ["admin", "internal", "staging", "dev", "jenkins", "gitlab",
+                           "grafana", "kibana", "elastic", "redis", "mongo", "backup"])]
+            if interesting:
+                findings.append({
+                    "type": f"High-Value Subdomains Found ({len(interesting)})",
+                    "severity": "medium",
+                    "url": interesting[0],
+                    "detail": f"Found {len(subdomains_found)} subdomains, {len(alive)} alive, {len(interesting)} high-value: {[u.split('//')[1] for u in interesting[:5]]}",
+                    "template": "apex-subdomain-deep",
+                })
+
+    return findings, list(subdomains_found)

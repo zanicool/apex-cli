@@ -363,6 +363,12 @@ from scanners import (
     scan_sso_chain_attack,
     scan_api_gateway_exploit,
     scan_cloud_infra_enum,
+    # Enterprise part 2
+    scan_internal_api_discovery,
+    scan_graphql_schema_steal,
+    scan_jwks_spoofing,
+    scan_request_smuggling_h2,
+    scan_subdomain_brute_deep,
     # Batch 39 — Deep crawl + auto-auth
     crawl_deep,
     auto_register_account,
@@ -3316,6 +3322,40 @@ class ApexCLI:
         with self._vuln_lock:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
+    # Enterprise part 2
+    def phase_internal_api_discovery(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_internal_api_discovery(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_graphql_schema_steal(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_graphql_schema_steal(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_jwks_spoofing(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_jwks_spoofing(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_request_smuggling_h2(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_request_smuggling_h2(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_subdomain_brute_deep(self):
+        if self.dry_run: return
+        findings, new_subs = scan_subdomain_brute_deep(self.target)
+        for sub in new_subs:
+            if sub not in self.subdomains:
+                self.subdomains.append(sub)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
     # External tool phases
     def phase_katana_crawl(self):
         """Katana — ProjectDiscovery's headless crawler. Finds 3-5x more endpoints."""
@@ -4194,6 +4234,12 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("SSO Chain Attack", apex.phase_sso_chain_attack),
         ("API Gateway Exploit", apex.phase_api_gateway_exploit),
         ("Cloud Infra Enum", apex.phase_cloud_infra_enum),
+        # Enterprise part 2
+        ("Internal API Discovery", apex.phase_internal_api_discovery),
+        ("GraphQL Schema Steal", apex.phase_graphql_schema_steal),
+        ("JWKS Spoofing", apex.phase_jwks_spoofing),
+        ("H2 Request Smuggling", apex.phase_request_smuggling_h2),
+        ("Subdomain Brute Deep", apex.phase_subdomain_brute_deep),
         # External tools
         ("Katana Crawl", apex.phase_katana_crawl),
         ("GAU", apex.phase_gau),
