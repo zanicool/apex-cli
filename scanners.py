@@ -17376,3 +17376,212 @@ def scan_race_2fa(crawl_data, web_targets):
             except Exception:
                 continue
     return findings
+
+
+# ---------------------------------------------------------------------------
+# Batch 42 — Todo items #50, #51, #76, #83, #84, #85, #86, #89, #90, #96
+# ---------------------------------------------------------------------------
+
+def scan_git_exposure(web_targets):
+    """Git repository exposure — download .git and extract secrets. (#50)"""
+    findings = []
+    git_paths = ["/.git/config", "/.git/HEAD", "/.git/index", "/.git/logs/HEAD"]
+    for target in web_targets[:8]:
+        base = target.rstrip("/")
+        urls = [f"{base}{p}" for p in git_paths]
+        for url, r in batch_get(urls, timeout=5):
+            if r and r.status_code == 200:
+                if "[core]" in r.text or "ref:" in r.text or b"DIRC" in r.content[:4]:
+                    findings.append({
+                        "type": "Git Repository Exposed",
+                        "severity": "critical",
+                        "url": url,
+                        "detail": "Full .git directory accessible. Source code, secrets, and commit history downloadable.",
+                        "template": "apex-git-exposed",
+                    })
+                    break
+    return findings
+
+
+def scan_env_leak(web_targets):
+    """Environment variable leakage via error pages and debug endpoints. (#51)"""
+    findings = []
+    env_paths = ["/.env", "/env", "/.env.local", "/.env.production", "/.env.backup",
+                 "/api/env", "/debug/env", "/config/env", "/server-info"]
+    for target in web_targets[:5]:
+        base = target.rstrip("/")
+        urls = [f"{base}{p}" for p in env_paths]
+        for url, r in batch_get(urls, timeout=5):
+            if r and r.status_code == 200 and len(r.text) > 20:
+                if any(x in r.text for x in ["DB_PASSWORD", "SECRET_KEY", "API_KEY",
+                                              "AWS_", "DATABASE_URL", "REDIS_URL",
+                                              "MAIL_PASSWORD", "JWT_SECRET"]):
+                    findings.append({
+                        "type": "Environment Variables Exposed",
+                        "severity": "critical",
+                        "url": url,
+                        "detail": f"Env file with secrets accessible. Contains database credentials, API keys.",
+                        "template": "apex-env-leak",
+                    })
+                    break
+    return findings
+
+
+def scan_firebase_misconfig_deep(web_targets):
+    """Firebase database rule misconfiguration — read/write without auth. (#76)"""
+    findings = []
+    for target in web_targets[:5]:
+        # Extract Firebase project from page source
+        try:
+            r = _S.get(target, timeout=_TIMEOUT_SHORT)
+            fb_match = re.search(r'https://([a-z0-9-]+)\.firebaseio\.com', r.text)
+            if not fb_match:
+                fb_match = re.search(r'"projectId":\s*"([^"]+)"', r.text)
+            if not fb_match:
+                continue
+            project = fb_match.group(1)
+            fb_url = f"https://{project}.firebaseio.com/.json"
+            r2 = requests.get(fb_url, timeout=5)
+            if r2.status_code == 200 and r2.text != "null":
+                findings.append({
+                    "type": "Firebase Database — Public Read Access",
+                    "severity": "critical",
+                    "url": fb_url,
+                    "detail": f"Firebase project '{project}' allows unauthenticated read. All data exposed.",
+                    "template": "apex-firebase-public",
+                })
+        except Exception:
+            continue
+    return findings
+
+
+def scan_terraform_state(web_targets):
+    """Terraform state file exposure — contains all infrastructure secrets. (#83)"""
+    findings = []
+    tf_paths = ["/terraform.tfstate", "/.terraform/terraform.tfstate",
+                "/tfstate", "/state.tf", "/terraform.tfstate.backup"]
+    for target in web_targets[:5]:
+        base = target.rstrip("/")
+        urls = [f"{base}{p}" for p in tf_paths]
+        for url, r in batch_get(urls, timeout=5):
+            if r and r.status_code == 200:
+                if '"terraform_version"' in r.text or '"resources"' in r.text:
+                    findings.append({
+                        "type": "Terraform State File Exposed",
+                        "severity": "critical",
+                        "url": url,
+                        "detail": "Terraform state contains all infrastructure secrets (DB passwords, API keys, private keys).",
+                        "template": "apex-terraform-state",
+                    })
+                    break
+    return findings
+
+
+def scan_docker_registry(web_targets):
+    """Docker registry API exploitation — pull images without auth. (#84)"""
+    findings = []
+    for target in web_targets[:5]:
+        base = target.rstrip("/")
+        try:
+            r = _S.get(f"{base}/v2/_catalog", timeout=_TIMEOUT_SHORT)
+            if r.status_code == 200 and "repositories" in r.text:
+                repos = r.json().get("repositories", [])
+                findings.append({
+                    "type": "Docker Registry — Unauthenticated Access",
+                    "severity": "critical",
+                    "url": f"{base}/v2/_catalog",
+                    "detail": f"Docker registry exposes {len(repos)} repositories: {repos[:5]}. Pull any image.",
+                    "template": "apex-docker-registry",
+                })
+        except Exception:
+            continue
+    return findings
+
+
+def scan_k8s_dashboard(web_targets):
+    """Kubernetes dashboard exposure. (#85)"""
+    findings = []
+    k8s_paths = ["/api/v1/namespaces", "/api/v1/pods", "/api/v1/secrets",
+                 "/dashboard/", "/kubernetes-dashboard/"]
+    for target in web_targets[:5]:
+        base = target.rstrip("/")
+        urls = [f"{base}{p}" for p in k8s_paths]
+        for url, r in batch_get(urls, timeout=5):
+            if r and r.status_code == 200:
+                if "apiVersion" in r.text or "kubernetes" in r.text.lower():
+                    findings.append({
+                        "type": "Kubernetes API/Dashboard Exposed",
+                        "severity": "critical",
+                        "url": url,
+                        "detail": "K8s API accessible without auth. Can read secrets, deploy pods, escalate privileges.",
+                        "template": "apex-k8s-exposed",
+                    })
+                    break
+    return findings
+
+
+def scan_cicd_exposure(web_targets):
+    """Jenkins/GitLab CI exposure. (#86)"""
+    findings = []
+    ci_paths = ["/jenkins/", "/ci/", "/-/jobs", "/job/", "/script",
+                "/jenkins/script", "/manage", "/configureSecurity"]
+    for target in web_targets[:5]:
+        base = target.rstrip("/")
+        urls = [f"{base}{p}" for p in ci_paths]
+        for url, r in batch_get(urls, timeout=5):
+            if r and r.status_code == 200:
+                if any(x in r.text.lower() for x in ["jenkins", "gitlab", "pipeline", "build queue"]):
+                    findings.append({
+                        "type": "CI/CD Interface Exposed",
+                        "severity": "high",
+                        "url": url,
+                        "detail": "CI/CD interface accessible. May allow code execution via build pipelines.",
+                        "template": "apex-cicd-exposed",
+                    })
+                    break
+    return findings
+
+
+def scan_jupyter_exposure(web_targets):
+    """Jupyter notebook exposure — RCE via code execution. (#89)"""
+    findings = []
+    for target in web_targets[:5]:
+        base = target.rstrip("/")
+        for path in ["/api/kernels", "/api/sessions", "/tree", "/lab"]:
+            try:
+                r = _S.get(f"{base}{path}", timeout=_TIMEOUT_SHORT)
+                if r.status_code == 200 and any(x in r.text.lower() for x in ["kernel", "notebook", "jupyter"]):
+                    findings.append({
+                        "type": "Jupyter Notebook Exposed — RCE",
+                        "severity": "critical",
+                        "url": f"{base}{path}",
+                        "detail": "Jupyter notebook accessible without auth. Execute arbitrary code on server.",
+                        "template": "apex-jupyter-exposed",
+                    })
+                    break
+            except Exception:
+                continue
+    return findings
+
+
+def scan_wp_user_enum(web_targets):
+    """WordPress REST API user enumeration. (#96)"""
+    findings = []
+    for target in web_targets[:5]:
+        base = target.rstrip("/")
+        try:
+            r = _S.get(f"{base}/wp-json/wp/v2/users", timeout=_TIMEOUT_SHORT)
+            if r.status_code == 200:
+                users = r.json()
+                if isinstance(users, list) and users:
+                    usernames = [u.get("slug", u.get("name", "?")) for u in users[:10]]
+                    findings.append({
+                        "type": "WordPress User Enumeration",
+                        "severity": "medium",
+                        "url": f"{base}/wp-json/wp/v2/users",
+                        "detail": f"WordPress exposes {len(users)} users: {usernames[:5]}",
+                        "template": "apex-wp-users",
+                    })
+        except Exception:
+            continue
+    return findings

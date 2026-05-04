@@ -341,6 +341,16 @@ from scanners import (
     scan_idor_graphql_node,
     scan_mass_assignment_patch,
     scan_race_2fa,
+    # Batch 42 — Todo #50-#96
+    scan_git_exposure,
+    scan_env_leak,
+    scan_firebase_misconfig_deep,
+    scan_terraform_state,
+    scan_docker_registry,
+    scan_k8s_dashboard,
+    scan_cicd_exposure,
+    scan_jupyter_exposure,
+    scan_wp_user_enum,
     # Batch 39 — Deep crawl + auto-auth
     crawl_deep,
     auto_register_account,
@@ -3180,6 +3190,61 @@ class ApexCLI:
         with self._vuln_lock:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
+    # Batch 42
+    def phase_git_exposure(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_git_exposure(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_env_leak(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_env_leak(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_firebase_misconfig_deep(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_firebase_misconfig_deep(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_terraform_state(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_terraform_state(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_docker_registry(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_docker_registry(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_k8s_dashboard(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_k8s_dashboard(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_cicd_exposure(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_cicd_exposure(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_jupyter_exposure(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_jupyter_exposure(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_wp_user_enum(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_wp_user_enum(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
     # External tool phases
     def phase_katana_crawl(self):
         """Katana — ProjectDiscovery's headless crawler. Finds 3-5x more endpoints."""
@@ -3930,6 +3995,16 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("IDOR GraphQL Node", apex.phase_idor_graphql_node),
         ("Mass Assignment PATCH Deep", apex.phase_mass_assignment_patch),
         ("Race 2FA", apex.phase_race_2fa),
+        # Batch 42
+        ("Git Exposure", apex.phase_git_exposure),
+        ("Env Leak", apex.phase_env_leak),
+        ("Firebase Misconfig Deep", apex.phase_firebase_misconfig_deep),
+        ("Terraform State", apex.phase_terraform_state),
+        ("Docker Registry", apex.phase_docker_registry),
+        ("K8s Dashboard", apex.phase_k8s_dashboard),
+        ("CI/CD Exposure", apex.phase_cicd_exposure),
+        ("Jupyter Exposure", apex.phase_jupyter_exposure),
+        ("WP User Enum", apex.phase_wp_user_enum),
         # External tools
         ("Katana Crawl", apex.phase_katana_crawl),
         ("GAU", apex.phase_gau),
