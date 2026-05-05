@@ -19132,3 +19132,121 @@ def scan_predictable_resource_ids(crawl_data, web_targets):
                     })
                     break
     return findings
+
+
+# ---------------------------------------------------------------------------
+# Grain-of-rice Part 2: Authenticated IDOR, body parameter manipulation, 
+# review/comment forgery
+# ---------------------------------------------------------------------------
+
+def scan_idor_authenticated(crawl_data, web_targets, auth_data=None):
+    """IDOR on authenticated endpoints — access other users' resources with your token.
+    This is the #1 most common critical bug on HackerOne that scanners miss
+    because it requires authentication first."""
+    findings = []
+
+    # Get a session token
+    session_headers = {}
+    for target in web_targets[:3]:
+        base = target.rstrip("/")
+        if auth_data:
+            if isinstance(auth_data, dict) and auth_data.get("token"):
+                session_headers = {"Authorization": f"Bearer {auth_data['token']}"}
+                break
+        # Try auto-login
+        for path in ["/rest/user/login", "/api/login", "/api/auth/login"]:
+            try:
+                r = _S.post(f"{base}{path}",
+                            json={"email": "test@test.com", "password": "test1234"},
+                            timeout=_TIMEOUT_SHORT)
+                if r.status_code == 200:
+                    try:
+                        token = r.json().get("authentication", {}).get("token") or r.json().get("token")
+                        if token:
+                            session_headers = {"Authorization": f"Bearer {token}"}
+                            break
+                    except Exception:
+                        pass
+            except Exception:
+                continue
+        if session_headers:
+            break
+
+    if not session_headers:
+        return findings
+
+    # Test IDOR on common resource patterns
+    for target in web_targets[:3]:
+        base = target.rstrip("/")
+        idor_patterns = [
+            "/rest/basket/{}", "/api/basket/{}", "/api/Users/{}",
+            "/api/Orders/{}", "/api/Cards/{}", "/api/Addresss/{}",
+            "/api/users/{}", "/api/orders/{}", "/api/accounts/{}",
+            "/api/profile/{}", "/api/settings/{}",
+        ]
+
+        for pattern in idor_patterns:
+            # Try IDs 1-5
+            accessible = 0
+            for test_id in range(1, 6):
+                url = f"{base}{pattern.format(test_id)}"
+                try:
+                    r = _S.get(url, headers=session_headers, timeout=_TIMEOUT_SHORT)
+                    if r.status_code == 200 and len(r.text) > 20:
+                        try:
+                            data = r.json()
+                            if data.get("data") or data.get("status") == "success":
+                                accessible += 1
+                        except Exception:
+                            if len(r.text) > 50:
+                                accessible += 1
+                except Exception:
+                    continue
+
+            if accessible >= 3:
+                findings.append({
+                    "type": f"Authenticated IDOR: {pattern.split('{')[0]}",
+                    "severity": "critical",
+                    "url": f"{base}{pattern.format(1)}",
+                    "detail": f"With auth token, accessed {accessible}/5 other users' resources. No ownership check.",
+                    "template": "apex-idor-auth",
+                })
+                break  # One IDOR per target is enough
+    return findings
+
+
+def scan_body_param_idor(crawl_data, web_targets):
+    """IDOR via POST/PUT body parameters — change UserId/author in request body."""
+    findings = []
+
+    for target in web_targets[:3]:
+        base = target.rstrip("/")
+        # Endpoints that accept user-controlled IDs in body
+        body_idor_tests = [
+            ("/api/Feedbacks", {"UserId": 1, "comment": "test", "rating": 5}),
+            ("/api/Orders", {"userId": 1, "orderItems": []}),
+            ("/api/Reviews", {"author": "admin@target.com", "message": "test"}),
+        ]
+
+        for path, body in body_idor_tests:
+            url = f"{base}{path}"
+            try:
+                r = _S.post(url, json=body, timeout=_TIMEOUT)
+                if r.status_code in (200, 201):
+                    try:
+                        data = r.json()
+                        resp_data = data.get("data", data)
+                        # Check if our injected UserId was accepted
+                        if resp_data.get("UserId") == 1 or resp_data.get("userId") == 1:
+                            findings.append({
+                                "type": f"IDOR via Body Parameter (UserId)",
+                                "severity": "critical",
+                                "url": url,
+                                "detail": "Can submit data as another user by changing UserId in POST body. Impersonation possible.",
+                                "template": "apex-idor-body-param",
+                            })
+                    except Exception:
+                        pass
+            except Exception:
+                continue
+    return findings
