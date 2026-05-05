@@ -18889,7 +18889,6 @@ def scan_hidden_api_paths(crawl_data, web_targets):
 def scan_backup_files(web_targets):
     """Find backup/old files that contain source code or secrets."""
     findings = []
-    # Common backup patterns
     backup_suffixes = [".bak", ".old", ".orig", ".save", ".swp", "~",
                        ".backup", ".tmp", ".dist", ".sample"]
     important_files = ["config", "database", "settings", "application",
@@ -18898,16 +18897,30 @@ def scan_backup_files(web_targets):
 
     for target in web_targets[:3]:
         base = target.rstrip("/")
+
+        # Get baseline (soft-404 detection)
+        try:
+            baseline = _S.get(f"{base}/apex_nonexistent_file_xyz123.bak", timeout=_TIMEOUT_SHORT)
+            baseline_size = len(baseline.content)
+            baseline_hash = hash(baseline.text[:500])
+        except Exception:
+            baseline_size = 0
+            baseline_hash = 0
+
         urls = []
         for f in important_files:
             for suffix in backup_suffixes[:4]:
                 urls.append(f"{base}/{f}{suffix}")
-                urls.append(f"{base}/{f}.{suffix.lstrip('.')}")
 
-        for url, r in batch_get(urls[:30], timeout=_TIMEOUT_SHORT):
+        for url, r in batch_get(urls[:20], timeout=_TIMEOUT_SHORT):
             if r and r.status_code == 200 and len(r.text) > 50:
+                # Soft-404 check: skip if same as baseline
+                if abs(len(r.content) - baseline_size) < 50:
+                    continue
+                if hash(r.text[:500]) == baseline_hash:
+                    continue
                 body = r.text[:200].lower()
-                if "not found" in body or "404" in body:
+                if "not found" in body or "404" in body or "<!doctype html>" in body:
                     continue
                 if any(x in r.text for x in ["password", "secret", "key", "database",
                                               "DB_", "API_", "TOKEN", "<?php"]):
