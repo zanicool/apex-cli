@@ -384,6 +384,10 @@ from scanners import (
     # Grain-of-rice Part 2
     scan_idor_authenticated,
     scan_body_param_idor,
+    # Grain-of-rice Part 3
+    scan_captcha_answer_leak,
+    scan_ssrf_profile_image,
+    scan_source_code_exposure,
     # Batch 39 — Deep crawl + auto-auth
     crawl_deep,
     auto_register_account,
@@ -3425,6 +3429,24 @@ class ApexCLI:
         with self._vuln_lock:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
+    def phase_captcha_answer_leak(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_captcha_answer_leak(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_ssrf_profile_image(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_ssrf_profile_image(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_source_code_exposure(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_source_code_exposure(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
     # External tool phases
     def phase_katana_crawl(self):
         """Katana — ProjectDiscovery's headless crawler. Finds 3-5x more endpoints."""
@@ -4318,6 +4340,9 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("Predictable Resource IDs", apex.phase_predictable_resource_ids),
         ("IDOR Authenticated", apex.phase_idor_authenticated),
         ("Body Param IDOR", apex.phase_body_param_idor),
+        ("Captcha Answer Leak", apex.phase_captcha_answer_leak),
+        ("SSRF Profile Image", apex.phase_ssrf_profile_image),
+        ("Source Code Exposure", apex.phase_source_code_exposure),
         # External tools
         ("Katana Crawl", apex.phase_katana_crawl),
         ("GAU", apex.phase_gau),

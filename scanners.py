@@ -19250,3 +19250,117 @@ def scan_body_param_idor(crawl_data, web_targets):
             except Exception:
                 continue
     return findings
+
+
+# ---------------------------------------------------------------------------
+# Grain-of-rice Part 3: Captcha answer leak, profile image SSRF, code exposure
+# ---------------------------------------------------------------------------
+
+def scan_captcha_answer_leak(web_targets):
+    """Captcha answer leaked in API response — bypass any captcha instantly."""
+    findings = []
+    captcha_paths = ["/rest/captcha", "/rest/captcha/", "/api/captcha",
+                     "/captcha", "/api/getCaptcha", "/captcha/generate"]
+
+    for target in web_targets[:5]:
+        base = target.rstrip("/")
+        for path in captcha_paths:
+            try:
+                r = _S.get(f"{base}{path}", timeout=_TIMEOUT_SHORT)
+                if r.status_code == 200:
+                    try:
+                        data = r.json()
+                        # Check if answer/solution is in the response
+                        answer_fields = ["answer", "solution", "result", "expected",
+                                         "correctAnswer", "captchaAnswer"]
+                        for field in answer_fields:
+                            if field in data or field.lower() in str(data).lower():
+                                findings.append({
+                                    "type": "Captcha Answer Leaked in Response",
+                                    "severity": "high",
+                                    "url": f"{base}{path}",
+                                    "detail": f"Captcha API returns the answer in response body. Any captcha bypassed instantly.",
+                                    "template": "apex-captcha-leak",
+                                })
+                                break
+                    except Exception:
+                        pass
+            except Exception:
+                continue
+    return findings
+
+
+def scan_ssrf_profile_image(crawl_data, web_targets):
+    """SSRF via profile image/avatar URL — fetch arbitrary URLs server-side."""
+    findings = []
+    image_url_paths = ["/profile/image/url", "/api/user/avatar/url",
+                       "/api/profile/picture", "/api/avatar",
+                       "/user/photo/url", "/api/users/me/photo"]
+
+    for target in web_targets[:3]:
+        base = target.rstrip("/")
+        for path in image_url_paths:
+            url = f"{base}{path}"
+            try:
+                # Try without auth first
+                r = _S.post(url, json={"imageUrl": "http://169.254.169.254/latest/meta-data/"},
+                            timeout=_TIMEOUT)
+                if r.status_code in (200, 302):
+                    findings.append({
+                        "type": "SSRF via Profile Image URL",
+                        "severity": "critical",
+                        "url": url,
+                        "detail": "Profile image URL endpoint fetches arbitrary URLs server-side. Internal network accessible.",
+                        "template": "apex-ssrf-profile-image",
+                    })
+                    break
+                # Try with different field names
+                for field in ["imageUrl", "url", "avatarUrl", "photoUrl", "picture"]:
+                    r2 = _S.post(url, json={field: "http://169.254.169.254/"},
+                                 timeout=_TIMEOUT_SHORT)
+                    if r2.status_code in (200, 302):
+                        findings.append({
+                            "type": f"SSRF via Profile Image ({field})",
+                            "severity": "critical",
+                            "url": url,
+                            "detail": f"Field '{field}' accepts arbitrary URLs. Server fetches them.",
+                            "template": "apex-ssrf-profile-image",
+                        })
+                        break
+            except Exception:
+                continue
+    return findings
+
+
+def scan_source_code_exposure(web_targets):
+    """Find exposed source code, snippets, and debug endpoints."""
+    findings = []
+    code_paths = ["/snippets", "/api/snippets", "/source", "/src",
+                  "/debug/source", "/__source", "/api/code",
+                  "/rest/admin/application-configuration"]
+
+    for target in web_targets[:5]:
+        base = target.rstrip("/")
+        urls = [f"{base}{p}" for p in code_paths]
+        for url, r in batch_get(urls, timeout=_TIMEOUT_SHORT):
+            if r and r.status_code == 200 and len(r.text) > 500:
+                # Check if it contains actual code
+                code_indicators = ["function", "const ", "var ", "import ", "require(",
+                                   "class ", "def ", "module.exports", "=>", "async "]
+                if any(x in r.text for x in code_indicators):
+                    findings.append({
+                        "type": "Source Code Exposed",
+                        "severity": "high",
+                        "url": url,
+                        "detail": f"Application source code accessible ({len(r.text)} bytes). Contains business logic and potential secrets.",
+                        "template": "apex-source-code-exposed",
+                    })
+                elif "config" in url.lower() and len(r.text) > 1000:
+                    findings.append({
+                        "type": "Application Configuration Exposed",
+                        "severity": "critical",
+                        "url": url,
+                        "detail": f"Full application config exposed ({len(r.text)} bytes). Contains internal settings, secrets, OAuth config.",
+                        "template": "apex-config-exposed",
+                    })
+    return findings
