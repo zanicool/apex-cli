@@ -12,13 +12,18 @@ import requests
 from bs4 import BeautifulSoup
 
 requests.packages.urllib3.disable_warnings()
-_TIMEOUT = 10       # default request timeout
-_TIMEOUT_SHORT = 5  # quick probes
-_TIMEOUT_LONG = 15  # external APIs (Wayback, crt.sh)
+_TIMEOUT = 7        # default request timeout (was 10 — 3s faster per timeout)
+_TIMEOUT_SHORT = 3  # quick probes (was 5)
+_TIMEOUT_LONG = 12  # external APIs (was 15)
 _RATE_DELAY = 0.0  # seconds between requests per thread, set via set_rate_limit()
 
 import threading as _tl_threading
 _thread_local = _tl_threading.local()
+
+# Response cache — avoid hitting the same URL twice (free speedup, no detection loss)
+_RESPONSE_CACHE = {}
+_RESPONSE_CACHE_LOCK = _tl_threading.Lock()
+_CACHE_MAX = 5000  # max cached responses
 
 _USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -41,7 +46,7 @@ def _get_session():
         })
         s.verify = False
         # Connection pooling — reuse TCP connections aggressively
-        adapter = HTTPAdapter(pool_connections=20, pool_maxsize=50, max_retries=1)
+        adapter = HTTPAdapter(pool_connections=50, pool_maxsize=100, max_retries=1)
         s.mount("http://", adapter)
         s.mount("https://", adapter)
         if _PROXY:
@@ -133,7 +138,7 @@ _BACKOFF_UNTIL = 0.0  # timestamp until which we should back off
 # --- High-performance batch request engine ---
 from concurrent.futures import ThreadPoolExecutor as _TPE, as_completed as _as_completed
 
-_BATCH_POOL = _TPE(max_workers=50)  # shared pool for intra-scanner parallelism
+_BATCH_POOL = _TPE(max_workers=100)  # shared pool for intra-scanner parallelism (12 cores, 32GB RAM)
 
 
 def batch_get(urls, timeout=None, headers=None, max_workers=50):

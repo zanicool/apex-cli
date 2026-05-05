@@ -4360,7 +4360,7 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
     console.print()
 
     # Measure target response time and adapt concurrency
-    workers = workers if workers > 0 else 15  # default (up from 8)
+    workers = workers if workers > 0 else 25  # default (12 cores)
     if not dry_run and apex.web_targets:
         import time as _t
         try:
@@ -4368,15 +4368,15 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
             requests.get(apex.web_targets[0], timeout=5, verify=False)
             resp_time = _t.time() - t0
             if resp_time < 0.2:
-                workers = 25   # very fast target — max parallelism
+                workers = 50   # very fast target — max parallelism
             elif resp_time < 0.5:
-                workers = 18   # fast target
+                workers = 35   # fast target
             elif resp_time < 1.0:
-                workers = 12   # normal
+                workers = 25   # normal
             elif resp_time < 3.0:
-                workers = 6    # slow target
+                workers = 12   # slow target
             else:
-                workers = 3    # very slow — be gentle
+                workers = 6    # very slow — be gentle
             console.print(f"[dim]Target response: {resp_time:.2f}s → {workers} parallel workers[/dim]")
         except Exception:
             pass
