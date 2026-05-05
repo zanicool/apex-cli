@@ -377,6 +377,10 @@ from scanners import (
     scan_null_byte_double_encode,
     scan_hidden_api_paths,
     scan_backup_files,
+    # Grain-of-rice-in-desert
+    scan_jwt_rs256_hs256_confusion,
+    scan_log_credential_leak,
+    scan_predictable_resource_ids,
     # Batch 39 — Deep crawl + auto-auth
     crawl_deep,
     auto_register_account,
@@ -3388,6 +3392,24 @@ class ApexCLI:
         with self._vuln_lock:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
+    def phase_jwt_rs256_hs256_confusion(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_jwt_rs256_hs256_confusion(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_log_credential_leak(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_log_credential_leak(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_predictable_resource_ids(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_predictable_resource_ids(self.crawl_data or {}, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
     # External tool phases
     def phase_katana_crawl(self):
         """Katana — ProjectDiscovery's headless crawler. Finds 3-5x more endpoints."""
@@ -4276,6 +4298,9 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("Null Byte Double Encode", apex.phase_null_byte_double_encode),
         ("Hidden API Paths", apex.phase_hidden_api_paths),
         ("Backup Files", apex.phase_backup_files),
+        ("JWT RS256 HS256 Confusion", apex.phase_jwt_rs256_hs256_confusion),
+        ("Log Credential Leak", apex.phase_log_credential_leak),
+        ("Predictable Resource IDs", apex.phase_predictable_resource_ids),
         # External tools
         ("Katana Crawl", apex.phase_katana_crawl),
         ("GAU", apex.phase_gau),
