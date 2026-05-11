@@ -76,6 +76,31 @@ func Run(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, oob
 		{"JS Secrets", scanJSSecrets},
 		{"Source Maps", scanSourceMaps},
 		{"Dependency Confusion", scanDependencyConfusion},
+		// Web common
+		{"CSRF", scanCSRF},
+		{"Clickjacking", scanClickjacking},
+		{"CRLF Injection", scanCRLF},
+		{"Security Headers", scanHeaders},
+		{"Cookie Security", scanCookieSecurity},
+		{"Info Disclosure", scanInfoDisclosure},
+		// Exploits
+		{"File Upload", scanFileUpload},
+		{"RFI", scanRFI},
+		{"Deserialization", scanDeserialization},
+		{"Spring4Shell", scanSpring4Shell},
+		{"Shellshock", scanShellshock},
+		{"SSRF Variants", scanSSRFVariants},
+		{"HTTP Verb Tampering", scanHTTPVerbTampering},
+		{"403 Bypass", scan403Bypass},
+		// Web advanced
+		{"CORS Advanced", scanCORSAdvanced},
+		{"Open Redirect Advanced", scanOpenRedirectAdvanced},
+		{"HPP", scanHPP},
+		{"JSONP", scanJSONP},
+		{"CSP Bypass", scanCSPBypass},
+		{"DOM XSS", scanDOMXSS},
+		{"postMessage", scanPostMessage},
+		{"SSI Injection", scanSSI},
 	}
 
 	var wg sync.WaitGroup
