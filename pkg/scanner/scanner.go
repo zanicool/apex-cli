@@ -30,6 +30,7 @@ func Run(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, oob
 		name string
 		fn   func(*engine.Config, *engine.HTTPClient, *crawler.Result, *oob.Client) []Finding
 	}{
+		// Core injection
 		{"SQLi", scanSQLi},
 		{"XSS", scanXSS},
 		{"SSRF", scanSSRF},
@@ -41,10 +42,44 @@ func Run(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, oob
 		{"Host Header", scanHostHeader},
 		{"CORS", scanCORS},
 		{"Prototype Pollution", scanPrototypePollution},
+		// Advanced injection
+		{"NoSQL Injection", scanNoSQL},
+		{"XXE", scanXXE},
+		{"LDAP Injection", scanLDAP},
+		{"XPath Injection", scanXPath},
+		{"EL Injection", scanELInjection},
+		{"PHP Object Injection", scanPHPObjectInjection},
+		// Logic bugs
+		{"Race Condition", scanRaceCondition},
+		{"Price Manipulation", scanPriceManipulation},
+		{"Payment Bypass", scanPaymentBypass},
+		{"Mass Assignment", scanMassAssignment},
+		{"Forced Browsing", scanForcedBrowsing},
+		{"IDOR UUID", scanIDORUUID},
+		// Infrastructure
+		{"Subdomain Takeover", scanSubdomainTakeover},
+		{"S3 Buckets", scanS3Buckets},
+		{"DNS Zone Transfer", wrapNoHTTP(scanDNSZoneTransfer)},
+		{"VHost Fuzzing", scanVHostFuzzing},
+		// Modern web
+		{"GraphQL", scanGraphQL},
+		{"HTTP Smuggling", wrapNoHTTP2(scanHTTPSmuggling)},
+		{"Cache Poisoning", scanCachePoisoning},
+		{"WebSocket", scanWebSocket},
+		{"H2C Smuggling", scanH2CSmuggling},
+		// OOB confirmed
+		{"Blind SSRF OOB", scanBlindSSRF},
+		{"Blind CMDi OOB", scanBlindCMDi},
+		{"Blind SQLi OOB", scanBlindSQLiOOB},
+		{"Log4Shell OOB", scanLog4Shell},
+		// Passive
+		{"JS Secrets", scanJSSecrets},
+		{"Source Maps", scanSourceMaps},
+		{"Dependency Confusion", scanDependencyConfusion},
 	}
 
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, 5) // 5 scanner types in parallel
+	sem := make(chan struct{}, 8) // 8 scanner types in parallel
 
 	for _, s := range scanners {
 		if cfg.Skip != "" && strings.Contains(cfg.Skip, strings.ToLower(s.name)) {
@@ -67,6 +102,15 @@ func Run(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, oob
 	}
 	wg.Wait()
 	return findings
+}
+
+// Wrappers for scanners with different signatures
+func wrapNoHTTP(fn func(*engine.Config, *engine.HTTPClient, *crawler.Result, *oob.Client) []Finding) func(*engine.Config, *engine.HTTPClient, *crawler.Result, *oob.Client) []Finding {
+	return fn
+}
+
+func wrapNoHTTP2(fn func(*engine.Config, *engine.HTTPClient, *crawler.Result, *oob.Client) []Finding) func(*engine.Config, *engine.HTTPClient, *crawler.Result, *oob.Client) []Finding {
+	return fn
 }
 
 // --- SQLi Scanner ---
