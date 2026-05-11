@@ -61,11 +61,9 @@ def _ask_ollama(prompt, stream=True):
                 if line:
                     try:
                         chunk = json.loads(line).get("response", "")
-                        print(chunk, end="", flush=True)
                         result += chunk
                     except Exception:
                         pass
-            print()
             return result
         else:
             r = requests.post(OLLAMA_URL, json={

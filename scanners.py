@@ -5095,7 +5095,7 @@ class OOBServer:
         """Use interactsh REST API directly — no binary needed."""
         import secrets, base64, json as _j
         # Try multiple public interactsh servers
-        servers = ["http://localhost:9877", "http://10.0.0.72:9877",
+        servers = ["http://localhost:9877", "http://roz:1234@jarvis.local:9877",
                    "https://oast.pro", "https://oast.fun", "https://oast.live",
                    "https://oast.site", "https://oast.online"]
         for server in servers:
@@ -5132,7 +5132,7 @@ class OOBServer:
             return None
         try:
             # Local server uses uid-based polling
-            if "localhost" in self._api_server or "10.0.0" in self._api_server:
+            if "localhost" in self._api_server or "jarvis.local" in self._api_server:
                 r = requests.get(f"{self._api_server}/poll",
                                 params={"uid": identifier}, timeout=3)
                 if r.status_code == 200:
@@ -5210,7 +5210,7 @@ _OOB_ACTIVE = False
 def oob_start():
     """Start OOB server — tries local server first, then interactsh."""
     # Check local OOB server first (fastest, most reliable)
-    for local_url in ["http://localhost:9877", "http://10.0.0.72:9877"]:
+    for local_url in ["http://localhost:9877", "http://roz:1234@jarvis.local:9877"]:
         try:
             r = requests.get(f"{local_url}/oob_health_check", timeout=2)
             if r.status_code == 200:
@@ -5242,7 +5242,7 @@ def scan_blind_ssrf_oob(crawl_data, oob=None):
                 continue
             uid = oob.unique_id()
             # Local server: use path-based URL; remote: use subdomain
-            if oob.domain and ("localhost" in oob.domain or "10.0.0" in oob.domain):
+            if oob.domain and ("localhost" in oob.domain or "jarvis.local" in oob.domain):
                 payload = f"{oob.domain}/{uid}"
             else:
                 payload = f"http://{uid}.{oob.domain}/"
@@ -5265,7 +5265,7 @@ def scan_blind_ssrf_oob(crawl_data, oob=None):
             if inp.get("name","").lower() not in fetch_params: continue
             uid = oob.unique_id()
             # Local server: use path-based URL; remote: use subdomain
-            if oob.domain and ("localhost" in oob.domain or "10.0.0" in oob.domain):
+            if oob.domain and ("localhost" in oob.domain or "jarvis.local" in oob.domain):
                 payload = f"{oob.domain}/{uid}"
             else:
                 payload = f"http://{uid}.{oob.domain}/"

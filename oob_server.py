@@ -32,12 +32,14 @@ from datetime import datetime
 
 # Configuration
 OOB_DOMAIN = os.environ.get("OOB_DOMAIN", socket.gethostname())
-OOB_BIND = os.environ.get("OOB_BIND", "127.0.0.1")  # Bind to localhost by default
+OOB_BIND = os.environ.get("OOB_BIND", "0.0.0.0")  # Bind to all interfaces
 HTTP_PORT = int(os.environ.get("OOB_HTTP_PORT", "9877"))
 DNS_PORT = int(os.environ.get("OOB_DNS_PORT", "5353"))
 SMTP_PORT = int(os.environ.get("OOB_SMTP_PORT", "2525"))
 FTP_PORT = int(os.environ.get("OOB_FTP_PORT", "2121"))
 NOTIFY_URL = os.environ.get("OOB_NOTIFY_URL", "")  # ntfy.sh/your-topic or webhook
+OOB_USER = os.environ.get("OOB_USER", "roz")
+OOB_PASS = os.environ.get("OOB_PASS", "1234")
 
 # Storage limits
 MAX_UIDS = int(os.environ.get("OOB_MAX_UIDS", "10000"))
@@ -140,6 +142,18 @@ SSRF_REDIRECTOR = """<!DOCTYPE html>
 
 
 class OOBHandler(http.server.BaseHTTPRequestHandler):
+    def _check_auth(self):
+        auth = self.headers.get("Authorization", "")
+        if auth.startswith("Basic "):
+            try:
+                creds = base64.b64decode(auth[6:]).decode()
+                user, pw = creds.split(":", 1)
+                if user == OOB_USER and pw == OOB_PASS:
+                    return True
+            except Exception:
+                pass
+        return False
+
     def _capture(self):
         """Capture full request details."""
         content_length = int(self.headers.get("Content-Length", 0))
@@ -174,7 +188,19 @@ class OOBHandler(http.server.BaseHTTPRequestHandler):
         path_parts = parsed.path.strip("/").split("/")
 
         # --- API endpoints ---
+        if parsed.path == "/oob_health_check":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"OK")
+            return
+
         if parsed.path == "/poll":
+            if not self._check_auth():
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="OOB"')
+                self.end_headers()
+                return
             uid = parse_qs(parsed.query).get("uid", [""])[0]
             with lock:
                 data = callbacks.get(uid, [])
@@ -186,6 +212,11 @@ class OOBHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/list":
+            if not self._check_auth():
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="OOB"')
+                self.end_headers()
+                return
             with lock:
                 summary = {uid: len(hits) for uid, hits in callbacks.items()}
             self.send_response(200)
@@ -195,6 +226,11 @@ class OOBHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/dns":
+            if not self._check_auth():
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="OOB"')
+                self.end_headers()
+                return
             with lock:
                 data = dict(dns_queries)
             self.send_response(200)
