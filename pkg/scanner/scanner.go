@@ -145,6 +145,10 @@ func Run(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, oob
 		{"Dangling Markup", scanDanglingMarkup},
 		{"ETag Tracking", scanEtagTracking},
 		{"Mutation Fuzzer", scanMutationFuzzer},
+		// Browser-confirmed (requires Chrome/Chromium)
+		{"XSS Browser-Confirmed", scanBrowserXSS},
+		{"DOM XSS Browser", scanBrowserDOMXSS},
+		{"postMessage Browser", scanBrowserPostMessage},
 	}
 
 	var wg sync.WaitGroup
