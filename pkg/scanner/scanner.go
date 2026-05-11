@@ -169,6 +169,12 @@ func Run(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, oob
 		{"Content Discovery", scanContentDiscovery},
 		{"Permission Boundary", scanPermissionBoundary},
 		{"Reflection Map", scanReflectionMap},
+		// Autonomous (self-escalating exploitation engine)
+		{"OSINT URL Seeding", scanWaybackSeed},
+		{"Auto Escalation", scanAutoEscalate},
+		{"Blind XSS Callback", scanBlindXSSCallback},
+		{"API Schema Inference", scanAPISchemaInference},
+		{"Header Deep Analysis", scanHeaderAnalysis},
 	}
 
 	var wg sync.WaitGroup
