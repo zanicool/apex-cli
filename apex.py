@@ -335,6 +335,16 @@ from scanners import (
     scan_exploitable_libs,
     scan_wordpress_plugins,
     scan_upload_contamination,
+    # Batch 41 — Elite: GraphQL introspection, BOLA, smuggling v2, race conditions, mass assignment
+    scan_graphql_introspection_targeted,
+    scan_js_token_extraction,
+    scan_bola_idor_automated,
+    scan_prototype_pollution_dom,
+    scan_http_request_smuggling_v2,
+    scan_race_condition_limit_bypass,
+    scan_host_header_poisoning,
+    scan_mass_assignment,
+    scan_websocket_injection,
     # Batch 39 — Deep crawl + auto-auth
     crawl_deep,
     auto_register_account,
@@ -3389,6 +3399,62 @@ class ApexCLI:
         with self._vuln_lock:
             self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
 
+    # -- Batch 41: Elite scanners ------------------------------------------
+
+    def phase_graphql_introspection_targeted(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_graphql_introspection_targeted(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_js_token_extraction(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_js_token_extraction(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_bola_idor_automated(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_bola_idor_automated(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_prototype_pollution_dom(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_prototype_pollution_dom(self.crawl_data, self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_http_smuggling_v2(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_http_request_smuggling_v2(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_race_condition(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_race_condition_limit_bypass(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_host_header_poisoning(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_host_header_poisoning(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_mass_assignment(self):
+        if self.dry_run or not self.crawl_data: return
+        findings = scan_mass_assignment(self.crawl_data)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
+    def phase_websocket_injection(self):
+        if self.dry_run or not self.web_targets: return
+        findings = scan_websocket_injection(self.web_targets)
+        with self._vuln_lock:
+            self.vulnerabilities.extend({**f, "status": "VULNERABLE"} for f in findings)
+
     # External tool phases
     def phase_katana_crawl(self):
         """Katana — ProjectDiscovery's headless crawler. Finds 3-5x more endpoints."""
@@ -4135,6 +4201,16 @@ def run_scan(target, dry_run=False, deep=False, report_formats=None, skip=None, 
         ("Exploitable Libraries", apex.phase_exploitable_libs),
         ("WordPress Plugins", apex.phase_wordpress_plugins),
         ("Upload Contamination", apex.phase_upload_contamination),
+        # Batch 41 — Elite
+        ("GraphQL Introspection + Mutations", apex.phase_graphql_introspection_targeted),
+        ("JS Token/Secret Extraction", apex.phase_js_token_extraction),
+        ("BOLA/IDOR Automated", apex.phase_bola_idor_automated),
+        ("Prototype Pollution DOM", apex.phase_prototype_pollution_dom),
+        ("HTTP Request Smuggling v2", apex.phase_http_smuggling_v2),
+        ("Race Condition Bypass", apex.phase_race_condition),
+        ("Host Header Poisoning", apex.phase_host_header_poisoning),
+        ("Mass Assignment", apex.phase_mass_assignment),
+        ("WebSocket Injection", apex.phase_websocket_injection),
         # External tools
         ("Katana Crawl", apex.phase_katana_crawl),
         ("GAU", apex.phase_gau),
