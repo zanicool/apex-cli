@@ -149,6 +149,11 @@ func Run(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, oob
 		{"XSS Browser-Confirmed", scanBrowserXSS},
 		{"DOM XSS Browser", scanBrowserDOMXSS},
 		{"postMessage Browser", scanBrowserPostMessage},
+		// Power upgrades (2x finding rate)
+		{"JS Endpoint Discovery", scanJSEndpoints},
+		{"Authenticated Scan", scanAuthenticated},
+		{"Param Brute-Force", scanParamBruteforce},
+		{"Differential Analysis", scanDifferential},
 	}
 
 	var wg sync.WaitGroup

