@@ -21,15 +21,16 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeEl
 
 console = Console()
 
-NTFY_TOPIC = "apex-a3219f8742dd"  # Subscribe to this in the ntfy app
+NTFY_TOPIC = os.environ.get("APEX_NTFY_TOPIC", "")  # Set via env var, e.g. APEX_NTFY_TOPIC=your-topic
 
 def notify(title, msg, priority="urgent", tags="rotating_light"):
     """Send push notification via ntfy.sh + email via Gmail SMTP."""
-    try:
-        requests.post(f"https://ntfy.sh/{NTFY_TOPIC}", data=msg.encode(),
-                      headers={"Title": title, "Priority": priority, "Tags": tags}, timeout=10)
-    except Exception:
-        pass
+    if NTFY_TOPIC:
+        try:
+            requests.post(f"https://ntfy.sh/{NTFY_TOPIC}", data=msg.encode(),
+                          headers={"Title": title, "Priority": priority, "Tags": tags}, timeout=10)
+        except Exception:
+            pass
     try:
         import smtplib
         from email.mime.text import MIMEText
@@ -46,8 +47,15 @@ def notify(title, msg, priority="urgent", tags="rotating_light"):
         pass
 
 RESULTS_DIR = os.path.expanduser("~/apex-auto-results")
-SCANNED_FILE = os.path.join(RESULTS_DIR, "scanned.txt")
+SCANNED_FILE = os.path.join(RESULTS_DIR, "scanned.json")  # JSON with timestamps
 HITS_FILE = os.path.join(RESULTS_DIR, "hits.json")
+COOLDOWN_HOURS = int(os.environ.get("APEX_COOLDOWN_HOURS", "72"))  # Don't rescan within 72h
+
+# Honeypot/test target indicators
+HONEYPOT_INDICATORS = [
+    "login-test", "honeypot", "canary", "trap", "decoy",
+    "test-env", "sandbox", "demo.", "example.",
+]
 
 # ---------------------------------------------------------------------------
 # Target sources
@@ -129,15 +137,57 @@ def fetch_bounty_targets():
 
 
 def load_scanned():
+    """Load scanned targets with timestamps. Returns dict of target -> timestamp."""
     if os.path.isfile(SCANNED_FILE):
-        with open(SCANNED_FILE) as f:
-            return set(l.strip() for l in f)
-    return set()
+        try:
+            with open(SCANNED_FILE) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    # Migrate from old format (plain text)
+    old_file = os.path.join(RESULTS_DIR, "scanned.txt")
+    if os.path.isfile(old_file):
+        data = {}
+        with open(old_file) as f:
+            for line in f:
+                t = line.strip()
+                if t:
+                    data[t] = "2020-01-01T00:00:00"  # old entries get expired timestamp
+        return data
+    return {}
+
+
+def _save_scanned(data):
+    with open(SCANNED_FILE, "w") as f:
+        json.dump(data, f, indent=1)
 
 
 def mark_scanned(target):
-    with open(SCANNED_FILE, "a") as f:
-        f.write(target + "\n")
+    data = load_scanned()
+    data[target] = datetime.now().isoformat()
+    _save_scanned(data)
+
+
+def is_on_cooldown(target, scanned_data):
+    """Check if target was scanned within COOLDOWN_HOURS."""
+    ts = scanned_data.get(target)
+    if not ts:
+        return False
+    try:
+        last_scan = datetime.fromisoformat(ts)
+        hours_since = (datetime.now() - last_scan).total_seconds() / 3600
+        return hours_since < COOLDOWN_HOURS
+    except (ValueError, TypeError):
+        return False
+
+
+def is_honeypot(target):
+    """Detect likely honeypot/test/staging targets that produce false positives."""
+    t = target.lower()
+    if any(ind in t for ind in HONEYPOT_INDICATORS):
+        return True
+    # Targets with excessive vuln counts in previous scans
+    return False
 
 
 def save_hit(target, vulns):
@@ -156,6 +206,16 @@ def save_hit(target, vulns):
 # ---------------------------------------------------------------------------
 # Auto-scan engine
 # ---------------------------------------------------------------------------
+
+def _cleanup_empty_scan_dir(path):
+    """Remove scan directory if it's empty or only has minimal state files."""
+    import shutil
+    if not os.path.isdir(path):
+        return
+    total_size = sum(f.stat().st_size for f in Path(path).rglob("*") if f.is_file())
+    if total_size < 8192:  # Less than 8KB = basically empty
+        shutil.rmtree(path, ignore_errors=True)
+
 
 def auto_scan(target, skip=None):
     """Run full scan using the complete run_scan engine."""
@@ -189,16 +249,23 @@ def auto_scan(target, skip=None):
                   output_dir=output_dir)
     except Exception as e:
         console.print(f"[red]Scan error: {e}[/red]")
+        # Clean up empty/failed scan directory
+        _cleanup_empty_scan_dir(output_dir)
         return [], [], []
 
     # Read results
     report_path = os.path.join(output_dir, "report.json")
     if not os.path.isfile(report_path):
+        _cleanup_empty_scan_dir(output_dir)
         return [], [], []
 
     data = json.load(open(report_path))
     vulns = [v for v in data.get("vulnerabilities", [])
              if v.get("severity") in ("critical", "high", "medium")]
+    # Honeypot detection: if >200 vulns, likely a test/honeypot environment
+    if len(vulns) > 200:
+        console.print(f"[yellow][!] {len(vulns)} vulns — likely honeypot/test env, discarding[/yellow]")
+        return [], data.get("technologies", []), data.get("waf", [])
     return vulns, data.get("technologies", []), data.get("waf", [])
 
 
@@ -212,7 +279,9 @@ def prioritize_targets(targets, scanned):
 
     scored = []
     for t in targets:
-        if t in scanned:
+        if is_on_cooldown(t, scanned):
+            continue
+        if is_honeypot(t):
             continue
         score = 50  # base
         # Boost newer/smaller TLDs
@@ -236,6 +305,15 @@ def prioritize_targets(targets, scanned):
 def run_auto(source="bounty", target_file=None, max_targets=0, skip=None):
     """Main auto-scan loop."""
     os.makedirs(RESULTS_DIR, exist_ok=True)
+
+    # Cleanup: remove empty/minimal scan directories from previous runs
+    for d in Path(RESULTS_DIR).iterdir():
+        if d.is_dir() and d.name.startswith("scan_"):
+            total_size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+            if total_size < 8192:
+                import shutil
+                shutil.rmtree(d, ignore_errors=True)
+
     show_banner()
     console.print(Panel("[bold red]⚡ AUTO-SCAN MODE[/bold red]\n[dim]Private — not for distribution[/dim]",
                         border_style="red"), justify="center")

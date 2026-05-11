@@ -32,17 +32,83 @@ from datetime import datetime
 
 # Configuration
 OOB_DOMAIN = os.environ.get("OOB_DOMAIN", socket.gethostname())
+OOB_BIND = os.environ.get("OOB_BIND", "127.0.0.1")  # Bind to localhost by default
 HTTP_PORT = int(os.environ.get("OOB_HTTP_PORT", "9877"))
 DNS_PORT = int(os.environ.get("OOB_DNS_PORT", "5353"))
 SMTP_PORT = int(os.environ.get("OOB_SMTP_PORT", "2525"))
 FTP_PORT = int(os.environ.get("OOB_FTP_PORT", "2121"))
 NOTIFY_URL = os.environ.get("OOB_NOTIFY_URL", "")  # ntfy.sh/your-topic or webhook
 
+# Storage limits
+MAX_UIDS = int(os.environ.get("OOB_MAX_UIDS", "10000"))
+MAX_HITS_PER_UID = int(os.environ.get("OOB_MAX_HITS", "100"))
+TTL_SECONDS = int(os.environ.get("OOB_TTL", "3600"))  # 1 hour default
+MAX_EXFIL_SIZE = int(os.environ.get("OOB_MAX_EXFIL", "1048576"))  # 1MB per uid
+
 # Storage
 callbacks = {}  # uid -> [hit_data]
 dns_queries = {}  # uid -> [query_data]
 exfil_data = {}  # uid -> reassembled data
+_uid_timestamps = {}  # uid -> last_access_time
 lock = threading.Lock()
+
+
+def _evict_expired():
+    """Remove entries older than TTL. Must be called with lock held."""
+    now = time.time()
+    expired = [uid for uid, ts in _uid_timestamps.items() if now - ts > TTL_SECONDS]
+    for uid in expired:
+        callbacks.pop(uid, None)
+        dns_queries.pop(uid, None)
+        exfil_data.pop(uid, None)
+        del _uid_timestamps[uid]
+
+
+def _enforce_limits():
+    """Evict oldest UIDs if over MAX_UIDS. Must be called with lock held."""
+    _evict_expired()
+    total = len(_uid_timestamps)
+    if total > MAX_UIDS:
+        # Remove oldest entries
+        sorted_uids = sorted(_uid_timestamps, key=_uid_timestamps.get)
+        for uid in sorted_uids[:total - MAX_UIDS]:
+            callbacks.pop(uid, None)
+            dns_queries.pop(uid, None)
+            exfil_data.pop(uid, None)
+            del _uid_timestamps[uid]
+
+
+def _store_callback(uid, hit):
+    """Store a callback hit with limits enforced."""
+    with lock:
+        _uid_timestamps[uid] = time.time()
+        if uid not in callbacks:
+            _enforce_limits()
+            callbacks[uid] = []
+        if len(callbacks[uid]) < MAX_HITS_PER_UID:
+            callbacks[uid].append(hit)
+
+
+def _store_dns(uid, entry):
+    """Store a DNS query with limits enforced."""
+    with lock:
+        _uid_timestamps[uid] = time.time()
+        if uid not in dns_queries:
+            _enforce_limits()
+            dns_queries[uid] = []
+        if len(dns_queries[uid]) < MAX_HITS_PER_UID:
+            dns_queries[uid].append(entry)
+
+
+def _store_exfil(uid, data):
+    """Store exfil data with size limit."""
+    with lock:
+        _uid_timestamps[uid] = time.time()
+        if uid not in exfil_data:
+            _enforce_limits()
+            exfil_data[uid] = ""
+        if len(exfil_data[uid]) < MAX_EXFIL_SIZE:
+            exfil_data[uid] += data[:MAX_EXFIL_SIZE - len(exfil_data[uid])]
 
 # ---------------------------------------------------------------------------
 # HTTP Server — captures full requests, serves payloads, hosts exploits
@@ -98,10 +164,7 @@ class OOBHandler(http.server.BaseHTTPRequestHandler):
         uid = uid.split("?")[0][:32]
 
         if uid and uid not in ("poll", "list", "payload", "redirect", "exfil", "favicon.ico"):
-            with lock:
-                if uid not in callbacks:
-                    callbacks[uid] = []
-                callbacks[uid].append(hit)
+            _store_callback(uid, hit)
             _log_hit("HTTP", uid, hit)
             _notify(uid, hit)
         return uid, hit
@@ -186,8 +249,7 @@ setTimeout(function(){
                     decoded = base64.b64decode(data_param).decode("utf-8", errors="replace")
                 except Exception:
                     decoded = data_param
-                with lock:
-                    exfil_data[uid] = exfil_data.get(uid, "") + decoded
+                _store_exfil(uid, decoded)
                 _log_hit("EXFIL", uid, {"data": decoded[:200]})
 
             self.send_response(200)
@@ -211,8 +273,7 @@ setTimeout(function(){
         # Handle exfil POST
         parts = self.path.strip("/").split("/")
         if parts[0] == "exfil" and len(parts) > 1:
-            with lock:
-                exfil_data[parts[1]] = exfil_data.get(parts[1], "") + hit["body"][:10000]
+            _store_exfil(parts[1], hit["body"][:10000])
             _log_hit("EXFIL-POST", parts[1], {"size": len(hit["body"])})
 
         self.send_response(200)
@@ -242,7 +303,7 @@ def dns_server():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        sock.bind(("0.0.0.0", DNS_PORT))
+        sock.bind((OOB_BIND, DNS_PORT))
     except PermissionError:
         print(f"[!] DNS port {DNS_PORT} requires root. Skipping DNS server.", flush=True)
         return
@@ -278,28 +339,22 @@ def dns_server():
             if len(labels) >= 3 and labels[-2] == "dns":
                 uid = labels[-3] if len(labels) >= 4 else labels[0]
                 exfil_part = ".".join(labels[:-3]) if len(labels) > 3 else labels[0]
-                with lock:
-                    if uid not in dns_queries:
-                        dns_queries[uid] = []
-                    dns_queries[uid].append({
-                        "time": time.time(),
-                        "domain": domain,
-                        "data": exfil_part,
-                        "ip": addr[0],
-                        "type": qtype,
-                    })
+                _store_dns(uid, {
+                    "time": time.time(),
+                    "domain": domain,
+                    "data": exfil_part,
+                    "ip": addr[0],
+                    "type": qtype,
+                })
                 _log_hit("DNS-EXFIL", uid, {"domain": domain, "data": exfil_part})
             else:
                 # Regular DNS callback
-                with lock:
-                    if uid not in dns_queries:
-                        dns_queries[uid] = []
-                    dns_queries[uid].append({
-                        "time": time.time(),
-                        "domain": domain,
-                        "ip": addr[0],
-                        "type": qtype,
-                    })
+                _store_dns(uid, {
+                    "time": time.time(),
+                    "domain": domain,
+                    "ip": addr[0],
+                    "type": qtype,
+                })
                 _log_hit("DNS", uid, {"domain": domain})
 
             # DNS Rebinding: alternate between real IP and 127.0.0.1
@@ -340,7 +395,7 @@ def smtp_server():
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        sock.bind(("0.0.0.0", SMTP_PORT))
+        sock.bind((OOB_BIND, SMTP_PORT))
     except OSError as e:
         print(f"[!] SMTP server failed: {e}", flush=True)
         return
@@ -389,10 +444,9 @@ def _handle_smtp(conn, addr):
 
         if email_data:
             uid = f"smtp_{int(time.time())}"
-            with lock:
-                callbacks[uid] = [{"type": "smtp", "from": addr[0],
-                                   "data": "".join(email_data)[:5000],
-                                   "time": time.time()}]
+            _store_callback(uid, {"type": "smtp", "from": addr[0],
+                                  "data": "".join(email_data)[:5000],
+                                  "time": time.time()})
             _log_hit("SMTP", uid, {"from": addr[0], "size": len("".join(email_data))})
     except Exception:
         pass
@@ -409,7 +463,7 @@ def ftp_server():
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        sock.bind(("0.0.0.0", FTP_PORT))
+        sock.bind((OOB_BIND, FTP_PORT))
     except OSError as e:
         print(f"[!] FTP server failed: {e}", flush=True)
         return
@@ -442,10 +496,9 @@ def _handle_ftp(conn, addr):
                 password = line[5:].strip()
                 conn.sendall(b"230 Login successful\r\n")
                 uid = f"ftp_{int(time.time())}"
-                with lock:
-                    callbacks[uid] = [{"type": "ftp", "ip": addr[0],
-                                       "username": username, "password": password,
-                                       "time": time.time()}]
+                _store_callback(uid, {"type": "ftp", "ip": addr[0],
+                                      "username": username, "password": password,
+                                      "time": time.time()})
                 _log_hit("FTP", uid, {"user": username, "pass": password, "ip": addr[0]})
             elif line.upper().startswith("QUIT"):
                 conn.sendall(b"221 Bye\r\n")
@@ -507,13 +560,13 @@ if __name__ == "__main__":
 ║       APEX OOB SERVER v2                     ║
 ║       Full Exploitation Platform             ║
 ╠══════════════════════════════════════════════╣\033[0m
-  HTTP Callbacks:  http://0.0.0.0:{HTTP_PORT}/<uid>
-  Blind XSS:      http://0.0.0.0:{HTTP_PORT}/payload/<uid>
-  SSRF Redirect:   http://0.0.0.0:{HTTP_PORT}/redirect?url=<target>
-  DNS Rebinding:   http://0.0.0.0:{HTTP_PORT}/rebind
-  DNS Callbacks:   udp://0.0.0.0:{DNS_PORT}
-  SMTP Capture:    tcp://0.0.0.0:{SMTP_PORT}
-  FTP Capture:     tcp://0.0.0.0:{FTP_PORT}
+  HTTP Callbacks:  http://{OOB_BIND}:{HTTP_PORT}/<uid>
+  Blind XSS:      http://{OOB_BIND}:{HTTP_PORT}/payload/<uid>
+  SSRF Redirect:   http://{OOB_BIND}:{HTTP_PORT}/redirect?url=<target>
+  DNS Rebinding:   http://{OOB_BIND}:{HTTP_PORT}/rebind
+  DNS Callbacks:   udp://{OOB_BIND}:{DNS_PORT}
+  SMTP Capture:    tcp://{OOB_BIND}:{SMTP_PORT}
+  FTP Capture:     tcp://{OOB_BIND}:{FTP_PORT}
   
   Poll hits:       GET /poll?uid=<uid>
   List all:        GET /list
@@ -527,7 +580,7 @@ if __name__ == "__main__":
     threading.Thread(target=ftp_server, daemon=True).start()
 
     # HTTP server (main thread)
-    server = http.server.HTTPServer(("0.0.0.0", HTTP_PORT), OOBHandler)
+    server = http.server.HTTPServer((OOB_BIND, HTTP_PORT), OOBHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
