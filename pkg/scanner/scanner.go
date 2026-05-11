@@ -122,6 +122,29 @@ func Run(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, oob
 		{"Wayback Secrets", scanWaybackSecrets},
 		{"Tech-Specific", scanTechSpecific},
 		{"IP Header Spoofing", scanIPHeaderSpoofing},
+		// Remaining
+		{"DNS Rebinding", scanDNSRebinding},
+		{"Subdomain Permutation", scanSubdomainPermutation},
+		{"Staging Exposure", scanStagingExposure},
+		{"Open Ports", scanOpenPorts},
+		{"SSRF → Cloud Creds", scanExploitChainSSRFCloud},
+		{"Second Order Injection", scanSecondOrderInjection},
+		{"Open Redirect OAuth Chain", scanOpenRedirectOAuthChain},
+		{"Billion Laughs", scanBillionLaughs},
+		{"TRACE/OPTIONS", scanTraceOptions},
+		{"HTTP/2 Rapid Reset", scanHTTP2RapidReset},
+		{"XS-Leaks", scanXSLeaks},
+		{"Cookie Tossing", scanCookieTossing},
+		{"Param Discovery", scanParamDiscovery},
+		// Advanced auth
+		{"Token Race Condition", scanTokenRaceCondition},
+		{"Workflow Bypass", scanWorkflowBypass},
+		{"Account Pre-Hijacking", scanAccountPrehijacking},
+		{"Server Timing Oracle", scanServerTimingOracle},
+		{"Compression Oracle", scanCompressionOracle},
+		{"Dangling Markup", scanDanglingMarkup},
+		{"ETag Tracking", scanEtagTracking},
+		{"Mutation Fuzzer", scanMutationFuzzer},
 	}
 
 	var wg sync.WaitGroup
