@@ -216,11 +216,13 @@ func (h *HTTPClient) BatchRequest(items []RequestItem, workers int) <-chan *Resp
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			var body *strings.Reader
+			var req *http.Request
+			var err error
 			if it.Body != "" {
-				body = strings.NewReader(it.Body)
+				req, err = http.NewRequest(it.Method, it.URL, strings.NewReader(it.Body))
+			} else {
+				req, err = http.NewRequest(it.Method, it.URL, nil)
 			}
-			req, err := http.NewRequest(it.Method, it.URL, body)
 			if err != nil {
 				ch <- &Response{URL: it.URL, Err: err}
 				return

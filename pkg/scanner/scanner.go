@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/zanicool/apex-cli/pkg/crawler"
 	"github.com/zanicool/apex-cli/pkg/engine"
@@ -158,6 +159,10 @@ func Run(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, oob
 
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 8) // 8 scanner types in parallel
+	scanTimeout := 60 * time.Second
+	if cfg.Deep {
+		scanTimeout = 180 * time.Second
+	}
 
 	for _, s := range scanners {
 		if cfg.Skip != "" && strings.Contains(cfg.Skip, strings.ToLower(s.name)) {
@@ -169,12 +174,23 @@ func Run(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, oob
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			fmt.Printf("    [→] %s\n", name)
-			results := fn(cfg, http, crawl, oobClient)
-			mu.Lock()
-			findings = append(findings, results...)
-			mu.Unlock()
-			if len(results) > 0 {
-				fmt.Printf("    [!] %s: %d findings\n", name, len(results))
+
+			// Per-scanner timeout
+			done := make(chan []Finding, 1)
+			go func() {
+				done <- fn(cfg, http, crawl, oobClient)
+			}()
+
+			select {
+			case results := <-done:
+				mu.Lock()
+				findings = append(findings, results...)
+				mu.Unlock()
+				if len(results) > 0 {
+					fmt.Printf("    [!] %s: %d findings\n", name, len(results))
+				}
+			case <-time.After(scanTimeout):
+				fmt.Printf("    [⏱] %s: timeout\n", name)
 			}
 		}(s.name, s.fn)
 	}
