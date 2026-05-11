@@ -103,6 +103,23 @@ func main() {
 
 	// Phase 4: Scan
 	fmt.Println("\n[Phase 4] Scan — 302 injection/logic/auth scanners")
+
+	// Detect WAFs first
+	wafs := scanner.DetectWAF(http, reconResult.LiveTargets)
+	if len(wafs) > 0 {
+		fmt.Printf("  ⚠ WAF detected: %v — adapting payloads\n", wafs)
+	}
+
+	// Filter wildcard targets
+	var realTargets []string
+	for _, t := range reconResult.LiveTargets {
+		if !scanner.IsWildcard(http, t) {
+			realTargets = append(realTargets, t)
+		} else {
+			fmt.Printf("  ⚠ Wildcard: %s — skipped\n", t)
+		}
+	}
+
 	findings := scanner.Run(cfg, http, crawlResult, oobClient)
 	fmt.Printf("  → %d findings\n", len(findings))
 

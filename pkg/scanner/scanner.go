@@ -155,6 +155,9 @@ func Run(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, oob
 		{"Authenticated Scan", scanAuthenticated},
 		{"Param Brute-Force", scanParamBruteforce},
 		{"Differential Analysis", scanDifferential},
+		// Smart detection (fewer false positives, more true positives)
+		{"SQLi Boolean Blind", scanSQLiBlindBoolean},
+		{"XSS Context-Aware", scanXSSContextAware},
 	}
 
 	var wg sync.WaitGroup
@@ -195,6 +198,9 @@ func Run(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, oob
 		}(s.name, s.fn)
 	}
 	wg.Wait()
+
+	// Smart deduplication — remove duplicate findings for same endpoint
+	findings = DeduplicateFindings(findings)
 	return findings
 }
 
