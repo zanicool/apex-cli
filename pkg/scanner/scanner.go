@@ -101,6 +101,27 @@ func Run(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, oob
 		{"DOM XSS", scanDOMXSS},
 		{"postMessage", scanPostMessage},
 		{"SSI Injection", scanSSI},
+		// Extra
+		{"SAML", scanSAML},
+		{"Web Cache Deception", scanWebCacheDeception},
+		{"Timing Attacks", scanTimingAttacks},
+		{"Account Takeover", scanAccountTakeover},
+		{"Email Injection", scanEmailInjection},
+		{"ReDoS", scanReDoS},
+		{"Null Byte", scanNullByte},
+		{"Range Amplification", scanRangeAmplification},
+		{"Hop-by-Hop", scanHopByHop},
+		{"Method Override", scanMethodOverride},
+		{"XSLT Injection", scanXSLT},
+		{"Log Injection", scanLogInjection},
+		// Recon/API
+		{"API Version Bypass", scanAPIVersionBypass},
+		{"Rate Limit Bypass", scanRateLimitBypass},
+		{"Cloud Metadata", scanCloudMetadata},
+		{"Firebase Misconfig", scanFirebaseMisconfig},
+		{"Wayback Secrets", scanWaybackSecrets},
+		{"Tech-Specific", scanTechSpecific},
+		{"IP Header Spoofing", scanIPHeaderSpoofing},
 	}
 
 	var wg sync.WaitGroup
