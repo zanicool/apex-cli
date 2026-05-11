@@ -164,6 +164,11 @@ func Run(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, oob
 		{"Exploit Chains", scanExploitChains},
 		{"Scope Expansion", scanScopeExpansion},
 		{"Anomaly Detection", scanAnomalyDetection},
+		// Godly (features no other scanner has)
+		{"Multi-Step Exploit", scanMultiStepExploit},
+		{"Content Discovery", scanContentDiscovery},
+		{"Permission Boundary", scanPermissionBoundary},
+		{"Reflection Map", scanReflectionMap},
 	}
 
 	var wg sync.WaitGroup

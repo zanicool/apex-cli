@@ -116,6 +116,13 @@ func writeTerminal(report Report) {
 			if f.Detail != "" {
 				fmt.Printf("       Detail: %s\n", truncate(f.Detail, 100))
 			}
+			// Generate PoC for critical/high findings
+			if f.Severity == "critical" || f.Severity == "high" {
+				poc := scanner.GeneratePoC(f)
+				if poc != "" {
+					fmt.Printf("       PoC: %s\n", truncate(poc, 120))
+				}
+			}
 			fmt.Println()
 		}
 	}
