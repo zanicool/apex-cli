@@ -158,6 +158,12 @@ func Run(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, oob
 		// Smart detection (fewer false positives, more true positives)
 		{"SQLi Boolean Blind", scanSQLiBlindBoolean},
 		{"XSS Context-Aware", scanXSSContextAware},
+		// Elite (what separates the best from the rest)
+		{"Param Value Enumeration", scanParamValueEnum},
+		{"Error Harvest", scanErrorHarvest},
+		{"Exploit Chains", scanExploitChains},
+		{"Scope Expansion", scanScopeExpansion},
+		{"Anomaly Detection", scanAnomalyDetection},
 	}
 
 	var wg sync.WaitGroup

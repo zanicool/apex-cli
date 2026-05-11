@@ -158,6 +158,11 @@ func probeLive(cfg *engine.Config, httpClient *engine.HTTPClient, subdomains []s
 				if resp.Err == nil && resp.StatusCode > 0 && resp.StatusCode < 500 {
 					mu.Lock()
 					live = append(live, target)
+					// Also add redirect targets
+					loc := resp.Headers.Get("Location")
+					if loc != "" && strings.HasPrefix(loc, "http") {
+						live = append(live, loc)
+					}
 					mu.Unlock()
 				}
 			}(scheme + sub)
