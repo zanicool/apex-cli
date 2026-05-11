@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zanicool/apex-cli/apex-go/pkg/engine"
+	"github.com/zanicool/apex-cli/pkg/engine"
 )
 
 type Result struct {

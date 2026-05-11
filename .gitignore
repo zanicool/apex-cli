@@ -1,26 +1,15 @@
-# Scan results
+# Binary
+/apex-cli
+
+# Scan output
 scan_*/
 
-# Wordlists (too large for git — download via install.sh)
-wordlists/
-seclists/
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-
-# Auto-scan results
-apex-auto-results/
-
-# OOB captures
-oob_captures.json
-
-# IDE
-.vscode/
-.idea/
+# Python legacy cache
+python-legacy/__pycache__/
 
 # OS
 .DS_Store
-Thumbs.db
-apex-go/apex-go
+__pycache__/
+wordlists/seclists
+wordlists/best-dns-wordlist.txt
+wordlists/2m-subdomains.txt

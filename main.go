@@ -6,12 +6,12 @@ import (
 	"os"
 	"time"
 
-	"github.com/zanicool/apex-cli/apex-go/pkg/crawler"
-	"github.com/zanicool/apex-cli/apex-go/pkg/engine"
-	"github.com/zanicool/apex-cli/apex-go/pkg/oob"
-	"github.com/zanicool/apex-cli/apex-go/pkg/recon"
-	"github.com/zanicool/apex-cli/apex-go/pkg/reporter"
-	"github.com/zanicool/apex-cli/apex-go/pkg/scanner"
+	"github.com/zanicool/apex-cli/pkg/crawler"
+	"github.com/zanicool/apex-cli/pkg/engine"
+	"github.com/zanicool/apex-cli/pkg/oob"
+	"github.com/zanicool/apex-cli/pkg/recon"
+	"github.com/zanicool/apex-cli/pkg/reporter"
+	"github.com/zanicool/apex-cli/pkg/scanner"
 )
 
 var (
@@ -45,7 +45,7 @@ func main() {
 
 	if flag.NArg() < 1 {
 		fmt.Printf(banner, version)
-		fmt.Println("Usage: apex-go [flags] <target>")
+		fmt.Println("Usage: apex-cli [flags] <target>")
 		fmt.Println("\nFlags:")
 		flag.PrintDefaults()
 		os.Exit(0)

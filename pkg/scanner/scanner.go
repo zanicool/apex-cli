@@ -6,9 +6,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/zanicool/apex-cli/apex-go/pkg/crawler"
-	"github.com/zanicool/apex-cli/apex-go/pkg/engine"
-	"github.com/zanicool/apex-cli/apex-go/pkg/oob"
+	"github.com/zanicool/apex-cli/pkg/crawler"
+	"github.com/zanicool/apex-cli/pkg/engine"
+	"github.com/zanicool/apex-cli/pkg/oob"
 )
 
 type Finding struct {

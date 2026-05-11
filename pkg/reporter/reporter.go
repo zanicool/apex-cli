@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zanicool/apex-cli/apex-go/pkg/crawler"
-	"github.com/zanicool/apex-cli/apex-go/pkg/engine"
-	"github.com/zanicool/apex-cli/apex-go/pkg/recon"
-	"github.com/zanicool/apex-cli/apex-go/pkg/scanner"
+	"github.com/zanicool/apex-cli/pkg/crawler"
+	"github.com/zanicool/apex-cli/pkg/engine"
+	"github.com/zanicool/apex-cli/pkg/recon"
+	"github.com/zanicool/apex-cli/pkg/scanner"
 )
 
 type Report struct {
