@@ -530,6 +530,12 @@ func scanSSTI(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result
 					sem <- struct{}{}
 					defer func() { <-sem }()
 
+					// Get baseline first to avoid false positives
+					baseResp := http.Get(baseURL)
+					if baseResp.Err == nil && strings.Contains(baseResp.Body, pl.detect) {
+						return // Detection string already in baseline = false positive
+					}
+
 					testURL := injectParam(baseURL, param, pl.payload)
 					resp := http.Get(testURL)
 					if resp.Err != nil {

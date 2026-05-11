@@ -216,8 +216,13 @@ func scanELInjection(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler
 	}
 
 	for u, params := range crawl.Params {
+		// Baseline check
+		baseResp := http.Get(u)
 		for _, p := range params {
 			for _, pl := range elPayloads {
+				if baseResp.Err == nil && strings.Contains(baseResp.Body, pl.detect) {
+					continue // Already in baseline = false positive
+				}
 				testURL := injectParam(u, p, pl.payload)
 				resp := http.Get(testURL)
 				if resp.Err == nil && strings.Contains(resp.Body, pl.detect) {

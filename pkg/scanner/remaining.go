@@ -77,7 +77,7 @@ func scanOpenPorts(cfg *engine.Config, _ *engine.HTTPClient, crawl *crawler.Resu
 	var mu sync.Mutex
 	sem := make(chan struct{}, 50)
 	var wg sync.WaitGroup
-	ports := []int{21, 22, 23, 25, 53, 110, 143, 445, 993, 995, 3306, 5432, 6379, 8080, 8443, 9200, 27017, 11211}
+	ports := []int{21, 22, 23, 25, 110, 143, 445, 993, 995, 3306, 5432, 6379, 8080, 8443, 9200, 27017, 11211}
 	for _, port := range ports {
 		wg.Add(1)
 		go func(p int) {
@@ -85,11 +85,19 @@ func scanOpenPorts(cfg *engine.Config, _ *engine.HTTPClient, crawl *crawler.Resu
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			addr := fmt.Sprintf("%s:%d", cfg.Target, p)
-			conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
-			if err == nil {
-				conn.Close()
+			conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+			if err != nil {
+				return
+			}
+			// Read banner to confirm it's actually open (not just TCP accepted by firewall)
+			conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+			buf := make([]byte, 256)
+			n, _ := conn.Read(buf)
+			conn.Close()
+			if n > 0 {
+				banner := strings.TrimSpace(string(buf[:n]))
 				mu.Lock()
-				findings = append(findings, Finding{Type: fmt.Sprintf("Open Port: %d", p), Severity: "info", URL: addr, Template: "apex-open-port"})
+				findings = append(findings, Finding{Type: fmt.Sprintf("Open Port: %d", p), Severity: "info", URL: addr, Detail: "Banner: " + banner[:min(80, len(banner))], Template: "apex-open-port"})
 				mu.Unlock()
 			}
 		}(port)

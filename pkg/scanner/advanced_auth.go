@@ -167,8 +167,12 @@ func scanMutationFuzzer(cfg *engine.Config, http *engine.HTTPClient, crawl *craw
 		{"../../../etc/passwd", "root:"},
 	}
 	for u, params := range crawl.Params {
+		baseResp := http.Get(u)
 		for _, p := range params {
 			for _, m := range mutations {
+				if baseResp.Err == nil && m.detect != "" && strings.Contains(strings.ToLower(baseResp.Body), m.detect) {
+					continue // Already in baseline
+				}
 				testURL := injectParam(u, p, m.suffix)
 				resp := http.Get(testURL)
 				if resp.Err == nil && m.detect != "" && strings.Contains(strings.ToLower(resp.Body), m.detect) {

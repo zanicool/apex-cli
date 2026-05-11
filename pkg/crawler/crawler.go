@@ -122,13 +122,17 @@ func Run(cfg *engine.Config, http *engine.HTTPClient, targets []string) *Result 
 				}
 				mu.Unlock()
 
-				// Queue new links (same host only)
+				// Queue new links (same host or related domains)
 				for _, link := range links {
 					linkURL, err := url.Parse(link)
-					if err != nil || linkURL.Host != baseURL.Host {
+					if err != nil || linkURL.Host == "" {
 						continue
 					}
-					if engine.InScope(link, cfg.Scope) {
+					// Allow same host OR subdomains of target
+					sameOrg := linkURL.Host == baseURL.Host ||
+						strings.HasSuffix(linkURL.Host, "."+baseURL.Host) ||
+						strings.HasSuffix(baseURL.Host, "."+linkURL.Host)
+					if sameOrg && engine.InScope(link, cfg.Scope) {
 						select {
 						case queue <- link:
 						default:
