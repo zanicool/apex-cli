@@ -1,0 +1,64 @@
+---
+# ZAP active scan policy for WordPress targets
+# Enables rules most relevant to WP; disables noise
+name: "WordPress Policy"
+
+rules:
+  # SQL Injection (wp-login, search, REST API params)
+  - id: 40018
+    strength: HIGH
+    threshold: MEDIUM
+  - id: 40019
+    strength: HIGH
+    threshold: MEDIUM
+  - id: 40024
+    strength: HIGH
+    threshold: MEDIUM
+
+  # XSS (comments, search, plugin forms)
+  - id: 40012
+    strength: HIGH
+    threshold: MEDIUM
+  - id: 40014
+    strength: HIGH
+    threshold: MEDIUM
+
+  # Path Traversal (theme/plugin file params)
+  - id: 6
+    strength: HIGH
+    threshold: MEDIUM
+
+  # Remote File Inclusion
+  - id: 7
+    strength: MEDIUM
+    threshold: MEDIUM
+
+  # Server Side Include
+  - id: 40009
+    strength: MEDIUM
+    threshold: MEDIUM
+
+  # Command Injection
+  - id: 90020
+    strength: HIGH
+    threshold: MEDIUM
+
+  # SSRF
+  - id: 40046
+    strength: HIGH
+    threshold: MEDIUM
+
+  # SSTI
+  - id: 90035
+    strength: MEDIUM
+    threshold: MEDIUM
+
+  # LDAP Injection — disable (rarely relevant for WP)
+  - id: 40015
+    strength: OFF
+    threshold: OFF
+
+  # XPATH Injection — disable
+  - id: 90021
+    strength: OFF
+    threshold: OFF
