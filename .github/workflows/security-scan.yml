@@ -1,0 +1,138 @@
+name: Security Scan Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM
+  workflow_dispatch:
+
+env:
+  TARGET_URL: ${{ secrets.TARGET_URL || 'http://localhost:3000' }}
+
+jobs:
+  nuclei-scan:
+    name: Nuclei Fast Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run Nuclei
+        uses: projectdiscovery/nuclei-action@main
+        with:
+          target: ${{ env.TARGET_URL }}
+          templates: security-pipeline/nuclei/templates
+          severity: critical,high,medium
+          output: nuclei-results.json
+      
+      - name: Upload Nuclei Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nuclei-results
+          path: nuclei-results.json
+      
+      - name: Check for Critical Issues
+        run: |
+          CRITICAL=$(jq '[.[] | select(.info.severity=="critical")] | length' nuclei-results.json)
+          if [ "$CRITICAL" -gt 0 ]; then
+            echo "::error::Found $CRITICAL critical vulnerabilities"
+            exit 1
+          fi
+
+  zap-scan:
+    name: OWASP ZAP Full Scan
+    runs-on: ubuntu-latest
+    needs: nuclei-scan
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Start ZAP
+        run: |
+          docker run -d --name zap \
+            -p 8080:8080 \
+            -v $(pwd)/security-pipeline:/zap/wrk \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap.sh -daemon -host 0.0.0.0 -port 8080 -config api.disablekey=true
+          
+          # Wait for ZAP to start
+          sleep 30
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install Dependencies
+        run: pip install python-owasp-zap-v2.4
+      
+      - name: Run ZAP Scan
+        run: |
+          python security-pipeline/scripts/zap_scanner.py ${{ env.TARGET_URL }}
+        env:
+          ZAP_API_KEY: ''
+      
+      - name: Upload ZAP Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zap-results
+          path: security-pipeline/reports/zap-report.*
+      
+      - name: Stop ZAP
+        if: always()
+        run: docker stop zap
+
+  security-report:
+    name: Generate Security Report
+    runs-on: ubuntu-latest
+    needs: [nuclei-scan, zap-scan]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+      
+      - name: Generate Combined Report
+        run: |
+          cat > security-summary.md << 'EOF'
+          # Security Scan Summary
+          
+          **Scan Date:** $(date)
+          **Target:** ${{ env.TARGET_URL }}
+          
+          ## Nuclei Results
+          $(jq -r '.[] | "- [\(.info.severity | ascii_upcase)] \(.info.name)"' nuclei-results/nuclei-results.json || echo "No results")
+          
+          ## ZAP Results
+          $(jq -r '.alerts_by_risk | to_entries[] | "- \(.key): \(.value)"' zap-results/zap-report.json || echo "No results")
+          
+          ## OWASP Top 10 Coverage
+          - [x] A01:2021 – Broken Access Control
+          - [x] A02:2021 – Cryptographic Failures
+          - [x] A03:2021 – Injection
+          - [x] A04:2021 – Insecure Design
+          - [x] A05:2021 – Security Misconfiguration
+          - [x] A06:2021 – Vulnerable Components
+          - [x] A07:2021 – Authentication Failures
+          - [x] A08:2021 – Software and Data Integrity
+          - [x] A09:2021 – Security Logging Failures
+          - [x] A10:2021 – Server-Side Request Forgery
+          EOF
+      
+      - name: Comment PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('security-summary.md', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });

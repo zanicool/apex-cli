@@ -1,0 +1,35 @@
+id: nextjs-api-routes-exposure
+info:
+  name: Next.js API Routes Exposure
+  author: apex-security
+  severity: medium
+  description: Detects exposed Next.js API routes without authentication
+  tags: nextjs,api,auth
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/users"
+      - "{{BaseURL}}/api/admin"
+      - "{{BaseURL}}/api/config"
+      - "{{BaseURL}}/api/debug"
+      - "{{BaseURL}}/api/health"
+    
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      
+      - type: word
+        words:
+          - '"users"'
+          - '"data"'
+          - '"config"'
+        condition: or
+      
+      - type: word
+        words:
+          - "unauthorized"
+          - "forbidden"
+        negative: true

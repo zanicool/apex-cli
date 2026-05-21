@@ -1,0 +1,54 @@
+# cpm.toml — project quality configuration
+# https://github.com/rkristelijn/cpm
+#
+# Docs:   https://github.com/rkristelijn/cpm/blob/main/docs/features/config.md
+# Checks: https://github.com/rkristelijn/cpm/blob/main/docs/features/check.md
+# Levels: learn | guide | guard | enforce
+#
+# Run 'cpm check' to validate, 'cpm get' to inspect config.
+
+[project]
+name = "apex-cli"
+version = "0.1.0"
+lang = "cpp"
+build = "make"
+config-dir = ".config"
+
+[tools]
+llvm = "19"
+cppcheck = "2.13"
+cloc = "2.02"
+shellcheck = "0.10.0"
+shfmt = "3.7.0"
+yamllint = "1.33.0"
+rumdl = "0.1.73"
+doxygen = "1.16.1"
+semgrep = "1.56.0"
+gitleaks = "8.18.2"
+pmccabe = "2.8"
+
+[checks]
+code-cpp-syntax-format = true
+code-yaml-syntax-format = true
+docs-markdown-syntax-format = true
+code-scripts-syntax-format = true
+code-cpp-syntax-lint = true
+code-cpp-quality-lint = true
+code-scripts-syntax-lint = true
+configuration-makefile-policy-validate = true
+code-cpp-complexity-measure = true
+code-cpp-comment-measure = true
+docs-cpp-syntax-validate = true
+code-generic-vulnerability-scan = true
+code-generic-secrets-scan = true
+
+[checks.code-cpp-complexity-measure]
+threshold = 10
+
+[checks.code-cpp-comment-measure]
+threshold = 20
+
+[hooks]
+pre-commit = true
+pre-push = true
+commit-msg = false

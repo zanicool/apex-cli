@@ -1,0 +1,33 @@
+[maturity]
+target_level = 3        # Aim for "Advanced" (0-5)
+
+[enforcement]
+mode = "guide"          # learn | guide | guard | enforce
+
+[thresholds]
+max_critical = 0        # Fail if any critical findings
+max_high = 5            # Allow up to 5 high severity
+max_medium = 20         # Allow up to 20 medium severity
+
+[scanners]
+skip = []               # Skip specific scanners (e.g. ["Open Redirect"])
+required = ["SQLi", "XSS", "CMS Detection"]  # Must-run scanners
+
+[compliance]
+frameworks = ["OWASP", "CWE"]  # Map findings to compliance frameworks
+
+[scan]
+deep = false            # Enable deep scanning
+threads = 100           # Concurrent workers
+timeout = 10            # HTTP timeout (seconds)
+rate = 0                # Delay between requests (seconds)
+
+[osint]
+enabled = false         # Enable OSINT reconnaissance
+check_hibp = true       # Check HaveIBeenPwned
+scan_github = true      # Scan GitHub for leaks
+monitor_news = false    # Monitor news mentions
+
+[output]
+format = "json,terminal"  # Output formats
+directory = "./output"    # Output directory

@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  zap:
+    image: ghcr.io/zaproxy/zaproxy:stable
+    container_name: apex-zap
+    ports:
+      - "8080:8080"
+      - "8090:8090"
+    volumes:
+      - ./zap:/zap/wrk
+      - ./reports:/zap/reports
+    command: zap.sh -daemon -host 0.0.0.0 -port 8080 -config api.disablekey=true
+    networks:
+      - security-net
+
+  nuclei:
+    image: projectdiscovery/nuclei:latest
+    container_name: apex-nuclei
+    volumes:
+      - ./nuclei:/root/.config/nuclei
+      - ./reports:/reports
+    command: -update-templates
+    networks:
+      - security-net
+
+networks:
+  security-net:
+    driver: bridge

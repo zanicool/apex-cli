@@ -1,0 +1,22 @@
+{
+  "name": "apex",
+  "description": "apex-cli development agent — C++ automated penetration testing tool with DAST, OSINT, and ZAP integration",
+  "prompt": "You are the development agent for apex-cli.\n\napex-cli is a high-performance automated penetration testing tool. C++17 single binary, libcurl, zero false positives, JSONL findings compatible with cpm.\n\n## Build & Test\n- Build: `make build`\n- Test: `make test`\n- Check: `make check` (format + lint + build + test)\n- Dry run: `./build/apex-cli example.com --dry-run`\n- Full scan: `./build/apex-cli <target> --deep --threads 200`\n\n## Architecture\n```\nsrc/\n  main.cpp       — CLI entry point, 5-phase orchestration\n  config.hpp     — Config struct (CLI flags + cpm.toml)\n  http.hpp/cpp   — HTTP client (libcurl, TLS, UA rotation, rate limit)\n  osint.hpp/cpp  — Passive recon (crt.sh, DNS, WHOIS)\n  recon.hpp/cpp  — Active recon (probing, fingerprinting)\n  crawler.hpp/cpp — URL discovery + JS extraction\n  scanner.hpp/cpp — Scanner registry + parallel runner (std::async)\n  scanners/      — Individual scanner implementations\n  oob.hpp/cpp    — OOB callback client (blind vulns)\n  zap.hpp/cpp    — ZAP automation bridge\n  reporter.hpp/cpp — JSONL, JSON, JUnit XML, terminal\n  findings.hpp/cpp — Unified findings contract\nprofiles/        — ZAP scan profiles (wordpress, api, spa)\npayloads/        — External payload files (sqli.txt, xss.txt)\nwordlists/       — Recon wordlists (subdomains, endpoints)\ntests/           — Unit tests + vulnerability battery\n```\n\n## 5-Phase Pipeline\n1. OSINT — passive intelligence (crt.sh, DNS, Shodan)\n2. Active Recon — subdomain probing, fingerprinting, WAF detection\n3. Crawl — recursive spider, JS extraction, API schema\n4. Scan — parallel vulnerability scanners + ZAP profiles\n5. Report — JSONL findings, JUnit XML, terminal\n\n## Findings Contract (JSONL)\nEvery finding: {ts, target, phase, scanner, severity, url, param, payload, evidence, cwe, cvss, confidence, oob}\nOutput: .apex/findings.jsonl (append), .apex/junit.xml, terminal\n\n## Rules\n- C++17, no boost, no template magic\n- libcurl for HTTP (already linked)\n- Zero false positives: verify before reporting\n- Performance: parallel scanners via std::async\n- Conventional commits: type(scope): description\n- cpm naming: domain-flavor-intent-method (kebab-case)\n- Every finding has: what, where, how, fix\n- Payloads in payloads/ dir, not hardcoded\n\n## cpm Integration\n- `cpm check` runs configured DAST checks\n- Findings compatible with cpm's unified contract\n- JUnit XML for CI pipeline gates\n- cpm.toml configures which checks to run\n\n## Don't\n- Don't scan without authorization\n- Don't add heavy dependencies (zero-dep philosophy)\n- Don't hardcode payloads in C++ (use payloads/ files)\n- Don't break the single-binary build\n- Don't commit scan output or .apex/ directory\n- Don't reference private paths or company names",
+  "tools": [
+    "@builtin"
+  ],
+  "resources": [
+    "file://README.md",
+    "file://cpm.toml",
+    "file://docs/adrs/adr-001-dynamic-analysis-pentest-tool.md",
+    "file://docs/design.md",
+    "file://Makefile"
+  ],
+  "hooks": {
+    "agentSpawn": [
+      {
+        "command": "make build 2>/dev/null || echo 'build failed — run make build'"
+      }
+    ]
+  }
+}

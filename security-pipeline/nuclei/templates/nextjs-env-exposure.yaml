@@ -1,0 +1,28 @@
+id: nextjs-env-exposure
+info:
+  name: Next.js Environment Variables Exposure
+  author: apex-security
+  severity: high
+  description: Detects exposed Next.js environment variables
+  tags: nextjs,exposure,config
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/.env"
+      - "{{BaseURL}}/.env.local"
+      - "{{BaseURL}}/.env.production"
+      - "{{BaseURL}}/.env.development"
+    
+    matchers-condition: and
+    matchers:
+      - type: word
+        words:
+          - "NEXT_PUBLIC_"
+          - "DATABASE_URL"
+          - "API_KEY"
+        condition: or
+      
+      - type: status
+        status:
+          - 200

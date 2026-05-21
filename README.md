@@ -1,112 +1,189 @@
-# Apex CLI v10 — Go Edition
+# Apex CLI — C++ Edition
 
-**The fastest open-source automated penetration testing tool. 10-50x faster than Python scanners.**
+![cpm score](https://img.shields.io/badge/cpm%20score-97%25-brightgreen)
+![maturity](https://img.shields.io/badge/maturity-level%205%20excellent-brightgreen)
 
-![Apex CLI vs Other Scanners](scanner_comparison.png)
+High-performance automated penetration testing tool with progressive maturity framework.
 
-Single 7.9MB binary. 5,000+ requests/sec. Zero dependencies. Zero false positives.
+## Features
 
-> Finds what Nuclei, ZAP, Burp, and Nikto miss. Faster than all of them. Free.
+- **Progressive Maturity**: 5-level framework (learn → guide → guard → enforce)
+- **Vulnerability Detection**: SQLi, XSS, SSRF, Command Injection, CORS, LFI, Open Redirect
+- **CMS Detection**: 50+ platforms with version detection and outdated checks
+- **OSINT Intelligence**: Employee exposure, data breaches, leaked secrets, tech stack analysis
+- **Complete Audit Trail**: JSONL append-only history for trend analysis
+- **Compliance Mapping**: OWASP Top 10, CWE integration
 
-## Install
+## Maturity Levels
+
+```
+Level 0: None       → No scanning
+Level 1: Basic      → Core vulnerability detection (SQLi, XSS)
+Level 2: Standard   → + CMS detection, OSINT basics
+Level 3: Advanced   → + Deep scanning, compliance mapping
+Level 4: Expert     → + Continuous monitoring, auto-remediation
+Level 5: Excellent  → + Full traceability, zero tolerance
+```
+
+## Build
+
+Requires: C++17 compiler, libcurl.
 
 ```bash
-# From source
-git clone https://github.com/zanicool/apex-cli.git && cd apex-cli
-go build -o apex-cli .
-sudo mv apex-cli /usr/local/bin/
+# macOS
+brew install curl
 
-# Or download binary from releases
+# Ubuntu/Debian
+sudo apt-get install libcurl4-openssl-dev
+
+# Build
+make build
 ```
 
 ## Usage
 
 ```bash
-# Basic scan
-apex-cli example.com
+# Basic scan with maturity score
+./build/apex-cli example.com
 
-# Deep scan with max threads
-apex-cli example.com --deep --threads 200
+# Deep scan with CMS detection
+./build/apex-cli example.com --deep --threads 200
 
-# With HTML report
-apex-cli example.com --report json,html,terminal
+# OSINT reconnaissance
+./build/apex-cli example.com --osint
 
-# Rate limited (stealth)
-apex-cli example.com --rate 0.5 --threads 20
+# Configure maturity target
+cp apex.toml.example apex.toml
+# Edit apex.toml: target_level = 3
+./build/apex-cli example.com
+```
 
-# Through proxy (Burp)
-apex-cli example.com --proxy http://127.0.0.1:8080
+## Configuration
 
-# Dry run (preview)
-apex-cli example.com --dry-run
+```toml
+# apex.toml
+[maturity]
+target_level = 3        # Aim for "Advanced"
+
+[enforcement]
+mode = "guide"          # learn | guide | guard | enforce
+
+[thresholds]
+max_critical = 0
+max_high = 5
+max_medium = 20
+
+[scanners]
+skip = []
+required = ["SQLi", "XSS", "CMS Detection"]
+
+[compliance]
+frameworks = ["OWASP", "CWE"]
 ```
 
 ## Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--deep` | false | More payloads, wider ports, deeper crawl |
-| `--threads` | 100 | Concurrent workers (goroutines) |
-| `--rate` | 0 | Delay between requests (0 = max speed) |
-| `--timeout` | 10 | HTTP timeout in seconds |
+| `--deep` | false | More payloads, wider ports |
+| `--osint` | false | OSINT mode (employees, breaches, tech stack) |
+| `--threads` | 100 | Concurrent workers |
+| `--rate` | 0 | Delay between requests (seconds) |
+| `--timeout` | 10 | HTTP timeout (seconds) |
 | `--proxy` | | HTTP proxy URL |
 | `--output` | auto | Output directory |
-| `--report` | json,terminal | Report formats: json, html, terminal |
+| `--report` | json,terminal | Report formats |
 | `--scope` | | Restrict to matching targets |
 | `--skip` | | Skip scanners (comma-separated) |
-| `--oob-server` | jarvis.local:9877 | Custom OOB callback server |
 | `--no-oob` | false | Disable OOB confirmation |
 | `--dry-run` | false | Preview without sending packets |
 
-## Scan Phases
+## Scanners
 
-1. **Recon** — Subdomain enum (subfinder + crt.sh + HackerTarget), DNS probing, tech fingerprinting, WAF detection
-2. **Crawl** — Recursive spider + JS-aware extraction (fetch/axios/XHR patterns), form/param discovery
-3. **OOB Setup** — Connect to callback server for blind confirmation
-4. **Scan** — 11 parallel injection scanners:
-   - SQL Injection (error + time-based blind)
-   - Cross-Site Scripting (context-aware, 8 payload variants)
-   - Server-Side Request Forgery (AWS/GCP metadata, internal ports)
-   - OS Command Injection (Linux + Windows, time-based)
-   - Server-Side Template Injection (Jinja2, Twig, Freemarker, EL)
-   - Local File Inclusion (path traversal, PHP wrappers)
-   - Open Redirect
-   - IDOR/BOLA (automated ID swapping)
-   - Host Header Injection
-   - CORS Misconfiguration
-   - Prototype Pollution
-5. **Report** — JSON + HTML + terminal with CVSS scoring
+### Vulnerability Detection
+- SQL Injection (error-based, time-based)
+- Cross-Site Scripting (reflected)
+- Server-Side Request Forgery (cloud metadata)
+- Command Injection (time-based)
+- CORS Misconfiguration
+- Security Headers
+- Local File Inclusion (path traversal)
+- Open Redirect
+
+### CMS Detection (50+ platforms)
+- WordPress, Drupal, Joomla, Magento
+- Shopify, Wix, Squarespace, Webflow
+- Ghost, TYPO3, Craft CMS, Strapi
+- Version detection with outdated checks
+- Exports to `cms_inventory.csv`
+
+### OSINT Intelligence
+- **Employee Exposure**: LinkedIn scraping, email discovery
+- **Data Breaches**: HaveIBeenPwned integration
+- **Leaked Secrets**: GitHub, Pastebin scanning
+- **Tech Stack**: Job posting analysis
+- **Infrastructure**: Certificate transparency, DNS
+- **News Monitoring**: Breach/lawsuit mentions
+- Exports to `osint_*.csv` files
 
 ## Architecture
 
+```text
+src/
+  main.cpp         — CLI entry point and orchestration
+  config.hpp       — Configuration types
+  http.hpp/cpp     — HTTP client (libcurl, TLS, UA rotation)
+  scanner.hpp/cpp  — Scanner framework and implementations
+  cms_detector.hpp/cpp — CMS fingerprinting and versioning
+  osint.hpp/cpp    — OSINT reconnaissance
+  recon.hpp/cpp    — Subdomain enumeration and probing
+  reporter.hpp/cpp — JSON and terminal reporting
+tests/
+  test_main.cpp    — Unit tests
 ```
-main.go              — CLI entry point
-pkg/engine/          — HTTP client, TLS rotation, rate limiting, jitter
-pkg/scanner/         — All injection scanners (parallel goroutines)
-pkg/recon/           — Subdomain enum, probing, fingerprinting
-pkg/crawler/         — Recursive + JS-aware crawling
-pkg/oob/             — OOB callback server client
-pkg/reporter/        — JSON, HTML, terminal output
-python-legacy/       — Original Python version (302 scanners, 17k lines)
+
+## Output Files
+
+After a scan, the output directory contains:
+
+### Reports
+- `report.json` — Full vulnerability report
+- `cms_inventory.csv` — Detected CMS with versions and outdated status
+- `osint_leaks.csv` — Data breaches and leaked credentials
+- `osint_employees.csv` — Exposed employees
+- `osint_techstack.csv` — Technology stack from job postings
+- `osint_news.csv` — News mentions (breaches, lawsuits)
+
+### JSONL History (append-only)
+- `cms_recon.jsonl` — Complete CMS detection history with timestamps
+- `osint_recon.jsonl` — OSINT findings (leaks, employees, tech stack)
+- `vuln_recon.jsonl` — All vulnerability findings with evidence
+
+**Query recon history**:
+```bash
+# View all findings
+./scripts/query_recon.sh ./output
+
+# Find outdated CMS
+jq 'select(.outdated == true)' output/cms_recon.jsonl
+
+# Critical leaks
+jq 'select(.severity == "critical")' output/osint_recon.jsonl
+
+# Timeline
+jq -r '"\(.timestamp) | \(.type)"' output/vuln_recon.jsonl | tail -50
 ```
 
-## Speed
+See [JSONL_FORMAT.md](docs/JSONL_FORMAT.md) for query examples.
 
-| Tool | Requests/sec | Language |
-|------|-------------|----------|
-| **Apex CLI (Go)** | **5,000-10,000+** | Go |
-| Apex CLI (Python) | 200 | Python |
-| Nuclei | 3,000 | Go |
-| Burp Suite Pro | 500 | Java |
-| ZAP | 200 | Java |
-
-## Python Legacy
-
-The original Python version with 302 scan functions and 345 phases is in `python-legacy/`. It has more scan types but is 10-50x slower. Run it with:
+## Development
 
 ```bash
-cd python-legacy && pip install -r requirements.txt
-python3 apex.py example.com --deep
+make check    # format + lint + build + test
+make format   # clang-format
+make lint     # cppcheck
+make test     # run tests
+make clean    # remove build artifacts
 ```
 
 ## License

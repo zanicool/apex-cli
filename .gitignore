@@ -1,15 +1,28 @@
-# Binary
-/apex-cli
+# Build
+build/
+*.o
+*.d
+apex-cli
 
-# Scan output
-scan_*/
-
-# Python legacy cache
-python-legacy/__pycache__/
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
 
 # OS
 .DS_Store
-__pycache__/
-wordlists/seclists
-wordlists/best-dns-wordlist.txt
-wordlists/2m-subdomains.txt
+Thumbs.db
+
+# cpm
+.cpm/
+.tmp/
+
+# PII (personal, per-user)
+.config/.pii
+.config/.piiignore
+
+# Scan output
+scan_*/
+unified_scan_*/
+nuclei_*/
