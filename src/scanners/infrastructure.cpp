@@ -130,6 +130,95 @@ std::vector<Finding> scan_vhost_fuzzing(const Config &, HttpClient &http,
   return findings;
 }
 
+/// Open port scan — check common service ports.
+std::vector<Finding> scan_open_ports(const Config &cfg, HttpClient &,
+                                     const CrawlResult &crawl) {
+  std::vector<Finding> findings;
+  if (crawl.urls.empty()) return findings;
+  std::string base = base_url_from(crawl.urls[0]);
+  size_t start = base.find("://") + 3;
+  std::string host = base.substr(start);
+
+  const int ports[] = {21, 22, 23, 25, 3306, 5432, 6379, 8080, 8443, 9200};
+  for (int port : ports) {
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) continue;
+    struct timeval tv = {2, 0};
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    struct sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    struct hostent *he = gethostbyname(host.c_str());
+    if (!he) { close(sock); continue; }
+    memcpy(&addr.sin_addr, he->h_addr, he->h_length);
+    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
+      findings.push_back({"Open Port", "info", host + ":" + std::to_string(port),
+                          "Port " + std::to_string(port) + " open", "", "", ""});
+    }
+    close(sock);
+  }
+  return findings;
+}
+
+/// DNS Rebinding — check if target is vulnerable to DNS rebinding.
+std::vector<Finding> scan_dns_rebinding(const Config &, HttpClient &http,
+                                        const CrawlResult &crawl) {
+  std::vector<Finding> findings;
+  if (crawl.urls.empty()) return findings;
+  auto resp = http.get(crawl.urls[0]);
+  // If no Host header validation, DNS rebinding is possible.
+  auto resp2 = http.get(crawl.urls[0], {{"Host", "127.0.0.1"}});
+  if (resp2.status_code == 200 && resp2.body == resp.body) {
+    findings.push_back({"DNS Rebinding", "medium", crawl.urls[0],
+                        "No Host header validation (DNS rebinding possible)",
+                        "", "Host: 127.0.0.1", ""});
+  }
+  return findings;
+}
+
+/// Subdomain Permutation — find related subdomains via common prefixes.
+std::vector<Finding> scan_subdomain_permutation(const Config &, HttpClient &http,
+                                                const CrawlResult &crawl) {
+  std::vector<Finding> findings;
+  if (crawl.urls.empty()) return findings;
+  std::string base = base_url_from(crawl.urls[0]);
+  size_t start = base.find("://") + 3;
+  std::string domain = base.substr(start);
+
+  const std::vector<std::string> prefixes = {
+      "staging", "dev", "test", "uat", "beta", "old", "new", "backup"};
+  for (const auto &pre : prefixes) {
+    std::string url = "https://" + pre + "." + domain + "/";
+    auto resp = http.get(url);
+    if (resp.status_code == 200 && resp.body.size() > 100) {
+      findings.push_back({"Subdomain Permutation", "info", url,
+                          "Subdomain " + pre + "." + domain + " is live",
+                          "", "", ""});
+    }
+  }
+  return findings;
+}
+
+/// Staging Exposure — find staging/test environments.
+std::vector<Finding> scan_staging_exposure(const Config &, HttpClient &http,
+                                           const CrawlResult &crawl) {
+  std::vector<Finding> findings;
+  if (crawl.urls.empty()) return findings;
+  std::string base = base_url_from(crawl.urls[0]);
+
+  const std::vector<std::string> paths = {
+      "/staging/", "/test/", "/dev/", "/uat/", "/beta/",
+      "/stage/", "/_staging/", "/pre-prod/"};
+  for (const auto &path : paths) {
+    auto resp = http.get(base + path);
+    if (resp.status_code == 200 && resp.body.size() > 200) {
+      findings.push_back({"Staging Exposure", "medium", base + path,
+                          "Staging/test environment accessible", "", "", ""});
+    }
+  }
+  return findings;
+}
+
 } // namespace
 
 std::vector<Scanner> register_infrastructure_scanners() {
@@ -138,6 +227,10 @@ std::vector<Scanner> register_infrastructure_scanners() {
       {"S3 Buckets", scan_s3_buckets},
       {"DNS Zone Transfer", scan_dns_zone_transfer},
       {"VHost Fuzzing", scan_vhost_fuzzing},
+      {"Open Ports", scan_open_ports},
+      {"DNS Rebinding", scan_dns_rebinding},
+      {"Subdomain Permutation", scan_subdomain_permutation},
+      {"Staging Exposure", scan_staging_exposure},
   };
 }
 

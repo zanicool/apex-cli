@@ -23,6 +23,7 @@ Thumbs.db
 .config/.piiignore
 
 # Scan output
+scans/
 scan_*/
 unified_scan_*/
 nuclei_*/

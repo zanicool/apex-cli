@@ -177,36 +177,76 @@ std::vector<Finding> scan_token_race(const Config &, HttpClient &http,
   return findings;
 }
 
-/// Password spray — test common passwords against discovered usernames.
-std::vector<Finding> scan_password_spray(const Config &, HttpClient &http,
+/// Login security assessment — check for brute-force protections.
+std::vector<Finding> scan_login_security(const Config &, HttpClient &http,
                                          const CrawlResult &crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
-  const std::vector<std::string> users = {"admin", "test", "user", "root"};
-  const std::vector<std::string> passwords = {
-      "admin", "password", "123456", "admin123"};
+  // Find login forms.
+  std::vector<std::string> login_urls;
+  for (const auto &form : crawl.forms) {
+    if (form.action.find("login") != std::string::npos ||
+        form.action.find("inlog") != std::string::npos ||
+        form.action.find("signin") != std::string::npos ||
+        form.action.find("auth") != std::string::npos) {
+      login_urls.push_back(form.action);
+    }
+  }
+  // Also check common paths.
+  const std::vector<std::string> login_paths = {
+      "/login", "/admin/login", "/wp-login.php", "/user/login"};
+  for (const auto &path : login_paths) {
+    auto resp = http.get(base + path);
+    if (resp.status_code == 200 && resp.body.size() > 200)
+      login_urls.push_back(base + path);
+  }
+  if (login_urls.empty()) return findings;
 
-  for (const auto &path : {"/login", "/api/login", "/auth/login"}) {
-    for (const auto &user : users) {
-      for (const auto &pass : passwords) {
-        auto resp = http.post(base + path,
-                              "username=" + user + "&password=" + pass,
-                              "application/x-www-form-urlencoded");
-        if (resp.status_code == 200 &&
-            resp.body.find("invalid") == std::string::npos &&
-            resp.body.find("error") == std::string::npos &&
-            resp.body.find("failed") == std::string::npos &&
-            resp.body.size() > 50) {
-          findings.push_back({"Weak Credentials", "critical", base + path,
-                              "Login succeeded: " + user + ":" + pass,
-                              "", "", ""});
-          return findings; // One is enough.
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  for (const auto &url : login_urls) {
+    auto resp = http.get(url);
+    if (resp.status_code != 200) continue;
+
+    // Check for CAPTCHA.
+    bool has_captcha =
+        resp.body.find("captcha") != std::string::npos ||
+        resp.body.find("recaptcha") != std::string::npos ||
+        resp.body.find("hcaptcha") != std::string::npos ||
+        resp.body.find("turnstile") != std::string::npos;
+
+    if (!has_captcha) {
+      findings.push_back({"Login Security", "medium", url,
+                          "Login form without CAPTCHA protection", "", "", ""});
+    }
+
+    // Check for account lockout — send 5 invalid logins, see if blocked.
+    bool has_lockout = false;
+    for (int i = 0; i < 5; ++i) {
+      auto r = http.post(url, "username=test&password=wrong" + std::to_string(i),
+                         "application/x-www-form-urlencoded");
+      if (r.status_code == 429 || r.status_code == 403 ||
+          r.body.find("locked") != std::string::npos ||
+          r.body.find("blocked") != std::string::npos ||
+          r.body.find("too many") != std::string::npos) {
+        has_lockout = true;
+        break;
       }
     }
+    if (!has_lockout) {
+      findings.push_back({"Login Security", "medium", url,
+                          "No account lockout after 5 failed attempts",
+                          "", "", ""});
+    }
+
+    // Check HTTPS.
+    if (url.find("http://") == 0) {
+      findings.push_back({"Login Security", "high", url,
+                          "Login form served over HTTP (credentials in cleartext)",
+                          "", "", ""});
+    }
+
+    break; // One login form is enough.
   }
   return findings;
 }
@@ -221,7 +261,7 @@ std::vector<Scanner> register_auth_scanners() {
       {"Session Fixation", scan_session_fixation},
       {"Timing Oracle", scan_timing_oracle},
       {"Token Race", scan_token_race},
-      {"Password Spray", scan_password_spray},
+      {"Login Security", scan_login_security},
   };
 }
 

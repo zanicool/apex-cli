@@ -13,8 +13,10 @@
 #include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <sstream>
 
 namespace {
@@ -49,6 +51,8 @@ void print_usage() {
   std::cout << "  --no-oob       Disable OOB confirmation\n";
   std::cout << "  --crawl-depth N  Crawl depth (default: 3)\n";
   std::cout << "  --max-urls N   Max URLs to crawl (default: 500)\n";
+  std::cout << "  --ssh TARGET   SSH target (user@host) for kernel/OS audit\n";
+  std::cout << "  --ssh-key PATH SSH private key path\n";
   std::cout << "  --dry-run      Preview without sending packets\n";
   std::cout << "  --help         Show this help\n";
 }
@@ -58,7 +62,7 @@ std::string make_output_dir(const std::string &target) {
   auto now = std::chrono::system_clock::now();
   auto t = std::chrono::system_clock::to_time_t(now);
   std::ostringstream ss;
-  ss << "scan_" << apex::safe_name(target) << "_"
+  ss << "scans/scan_" << apex::safe_name(target) << "_"
      << std::put_time(std::localtime(&t), "%Y%m%d_%H%M%S");
   return ss.str();
 }
@@ -79,6 +83,9 @@ std::vector<std::string> split(const std::string &s, char delim) {
 } // namespace
 
 int main(int argc, char *argv[]) {
+  std::ios_base::sync_with_stdio(false);
+  std::cout << std::unitbuf; // Flush after every output.
+
   apex::Config cfg;
 
   // Parse arguments.
@@ -114,6 +121,10 @@ int main(int argc, char *argv[]) {
       cfg.crawl_depth = std::stoi(argv[++i]);
     } else if (arg == "--max-urls" && i + 1 < argc) {
       cfg.max_urls = std::stoi(argv[++i]);
+    } else if (arg == "--ssh" && i + 1 < argc) {
+      cfg.ssh_target = argv[++i];
+    } else if (arg == "--ssh-key" && i + 1 < argc) {
+      cfg.ssh_key = argv[++i];
     } else if (arg[0] != '-') {
       target = arg;
     }
@@ -177,6 +188,86 @@ int main(int argc, char *argv[]) {
       std::chrono::duration_cast<std::chrono::seconds>(end - start);
   std::cout << "\n[Phase 4] Report\n";
   apex::generate_report(cfg, findings, elapsed);
+
+  // Phase 4b: Verify — reproduce high/critical findings with baseline comparison.
+  int verify_count = 0;
+  for (const auto &f : findings) {
+    if (f.severity != "high" && f.severity != "critical") continue;
+    if (f.payload.empty()) continue;
+    ++verify_count;
+  }
+  if (verify_count > 0 && !cfg.dry_run) {
+    std::cout << "\n[Phase 4b] Verify — reproducing " << verify_count
+              << " high/critical findings\n";
+    std::string proof_path = cfg.output_dir + "/proof.jsonl";
+    std::ofstream proof_out(proof_path);
+
+    // Get baseline responses per URL (what does the page normally return?).
+    std::map<std::string, std::string> baselines;
+    for (auto &f : findings) {
+      if (f.severity != "high" && f.severity != "critical") continue;
+      if (f.payload.empty()) continue;
+      if (baselines.find(f.url) == baselines.end()) {
+        auto bl = http.get(f.url);
+        baselines[f.url] = bl.body.substr(0, 500);
+      }
+    }
+
+    int confirmed_count = 0;
+    for (auto &f : findings) {
+      if (f.severity != "high" && f.severity != "critical") continue;
+      if (f.payload.empty()) continue;
+
+      // Reproduce the request with payload.
+      std::string test_url = f.url;
+      if (!f.param.empty())
+        test_url += (f.url.find('?') != std::string::npos ? "&" : "?") +
+                    f.param + "=" + f.payload;
+      else
+        test_url += "?id=" + f.payload;
+      auto resp = http.get(test_url);
+
+      // Smart confirmation: evidence must NOT be in baseline.
+      bool confirmed = false;
+      std::string baseline = baselines[f.url];
+
+      if (!f.evidence.empty() && !f.evidence.empty()) {
+        bool in_response = resp.body.find(f.evidence) != std::string::npos;
+        bool in_baseline = baseline.find(f.evidence) != std::string::npos;
+        confirmed = in_response && !in_baseline;
+      } else if (f.type.find("SSRF") != std::string::npos ||
+                 f.type.find("Escalate") != std::string::npos ||
+                 f.type.find("Metadata") != std::string::npos) {
+        // SSRF/escalation: response must differ significantly from baseline.
+        bool same_page = resp.body.substr(0, 500) == baseline;
+        bool has_internal_data =
+            resp.body.find("ami-id") != std::string::npos ||
+            resp.body.find("AccessKey") != std::string::npos ||
+            resp.body.find("redis_version") != std::string::npos ||
+            resp.body.find("127.0.0.1") != std::string::npos;
+        confirmed = !same_page && has_internal_data;
+      }
+
+      std::string status = confirmed ? "confirmed" : "unconfirmed";
+      if (confirmed) ++confirmed_count;
+
+      if (proof_out.is_open()) {
+        proof_out << "{\"type\":\"" << f.type << "\",\"severity\":\""
+                  << f.severity << "\",\"url\":\"" << f.url
+                  << "\",\"param\":\"" << f.param << "\",\"payload\":\""
+                  << f.payload << "\",\"status\":\"" << status
+                  << "\",\"response_code\":" << resp.status_code
+                  << ",\"response_size\":" << resp.body.size()
+                  << "}\n";
+      }
+      std::cout << "    [" << status << "] " << f.type << " — " << f.url
+                << "\n";
+      if (!confirmed) f.severity = "low"; // Downgrade unconfirmed.
+    }
+    std::cout << "  -> " << confirmed_count << "/" << verify_count
+              << " confirmed\n";
+    std::cout << "  -> Proof log: " << proof_path << "\n";
+  }
 
   // Export CMS inventory if any CMS findings exist.
   bool has_cms = false;

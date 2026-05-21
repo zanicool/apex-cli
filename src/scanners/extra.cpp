@@ -257,6 +257,84 @@ std::vector<Finding> scan_saml(const Config &, HttpClient &http,
   return findings;
 }
 
+/// Billion Laughs — XML bomb DoS.
+std::vector<Finding> scan_billion_laughs(const Config &, HttpClient &http,
+                                         const CrawlResult &crawl) {
+  std::vector<Finding> findings;
+  // Small XML bomb that shouldn't crash but tests if XML parsing is unlimited.
+  const std::string payload =
+      "<?xml version=\"1.0\"?><!DOCTYPE lolz ["
+      "<!ENTITY lol \"lol\">"
+      "<!ENTITY lol2 \"&lol;&lol;&lol;&lol;&lol;\">"
+      "<!ENTITY lol3 \"&lol2;&lol2;&lol2;&lol2;&lol2;\">"
+      "]><root>&lol3;</root>";
+  for (const auto &url : crawl.urls) {
+    auto resp = http.post(url, payload, "application/xml");
+    if (resp.duration.count() > 5000) {
+      findings.push_back({"Billion Laughs", "medium", url,
+                          "XML bomb caused " +
+                              std::to_string(resp.duration.count()) + "ms delay",
+                          "", "", ""});
+    }
+  }
+  return findings;
+}
+
+/// Open Redirect → OAuth chain — steal tokens via redirect.
+std::vector<Finding> scan_redirect_oauth_chain(const Config &, HttpClient &http,
+                                               const CrawlResult &crawl) {
+  std::vector<Finding> findings;
+  if (crawl.urls.empty()) return findings;
+  std::string base = base_url_from(crawl.urls[0]);
+  const std::vector<std::string> oauth_paths = {
+      "/oauth/authorize", "/auth/authorize", "/connect/authorize"};
+  for (const auto &path : oauth_paths) {
+    auto resp = http.get(base + path + "?redirect_uri=https://evil.com/callback&response_type=code&client_id=test");
+    if (resp.status_code == 302 || resp.status_code == 301) {
+      auto loc = resp.headers.find("Location");
+      if (loc != resp.headers.end() && loc->second.find("evil.com") != std::string::npos) {
+        findings.push_back({"OAuth Redirect Chain", "high", base + path,
+                            "OAuth allows arbitrary redirect_uri", "",
+                            "redirect_uri=https://evil.com/callback", ""});
+      }
+    }
+  }
+  return findings;
+}
+
+/// Tech-Specific — targeted checks based on detected technology.
+std::vector<Finding> scan_tech_specific(const Config &, HttpClient &http,
+                                        const CrawlResult &crawl) {
+  std::vector<Finding> findings;
+  if (crawl.urls.empty()) return findings;
+  std::string base = base_url_from(crawl.urls[0]);
+  auto resp = http.get(base + "/");
+
+  // ColdFusion specific.
+  if (resp.body.find("cfid") != std::string::npos ||
+      resp.body.find(".cfm") != std::string::npos) {
+    auto cf = http.get(base + "/CFIDE/administrator/enter.cfm");
+    if (cf.status_code == 200)
+      findings.push_back({"Tech-Specific", "high", base + "/CFIDE/administrator/enter.cfm",
+                          "ColdFusion admin panel accessible", "", "", ""});
+  }
+  // Laravel specific.
+  if (resp.body.find("laravel") != std::string::npos) {
+    auto dbg = http.get(base + "/_ignition/health-check");
+    if (dbg.status_code == 200)
+      findings.push_back({"Tech-Specific", "medium", base + "/_ignition/health-check",
+                          "Laravel Ignition debug mode enabled", "", "", ""});
+  }
+  // Django specific.
+  if (resp.body.find("csrfmiddlewaretoken") != std::string::npos) {
+    auto dbg = http.get(base + "/__debug__/");
+    if (dbg.status_code == 200)
+      findings.push_back({"Tech-Specific", "high", base + "/__debug__/",
+                          "Django debug toolbar accessible", "", "", ""});
+  }
+  return findings;
+}
+
 } // namespace
 
 std::vector<Scanner> register_extra_scanners() {
@@ -272,6 +350,9 @@ std::vector<Scanner> register_extra_scanners() {
       {"XSLT Injection", scan_xslt},
       {"Log Injection", scan_log_injection},
       {"SAML", scan_saml},
+      {"Billion Laughs", scan_billion_laughs},
+      {"OAuth Redirect Chain", scan_redirect_oauth_chain},
+      {"Tech-Specific", scan_tech_specific},
   };
 }
 

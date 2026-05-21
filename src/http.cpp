@@ -192,10 +192,20 @@ Response HttpClient::do_request(
 }
 
 void HttpClient::rate_limit() {
-  if (cfg_.rate > 0.0) {
-    auto ms = static_cast<int>(cfg_.rate * 1000.0);
-    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+  if (cfg_.rate <= 0.0) return;
+  // Global token bucket: allow 1/rate requests per second.
+  static std::mutex rate_mu;
+  static auto last = std::chrono::steady_clock::now();
+  std::lock_guard<std::mutex> lock(rate_mu);
+  auto now = std::chrono::steady_clock::now();
+  auto min_interval = std::chrono::milliseconds(
+      static_cast<int>(cfg_.rate * 1000.0));
+  auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+      now - last);
+  if (elapsed < min_interval) {
+    std::this_thread::sleep_for(min_interval - elapsed);
   }
+  last = std::chrono::steady_clock::now();
 }
 
 std::string HttpClient::random_ua() const {

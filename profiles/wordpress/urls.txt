@@ -1,0 +1,21 @@
+# WordPress plugin/theme enumeration paths
+akismet/readme.txt
+contact-form-7/readme.txt
+woocommerce/readme.txt
+jetpack/readme.txt
+elementor/readme.txt
+wordfence/readme.txt
+yoast-seo/readme.txt
+wp-super-cache/readme.txt
+classic-editor/readme.txt
+really-simple-ssl/readme.txt
+all-in-one-seo-pack/readme.txt
+updraftplus/readme.txt
+wpforms-lite/readme.txt
+duplicate-post/readme.txt
+redirection/readme.txt
+wp-mail-smtp/readme.txt
+litespeed-cache/readme.txt
+google-sitemap-generator/readme.txt
+advanced-custom-fields/readme.txt
+tinymce-advanced/readme.txt

@@ -1,0 +1,89 @@
+---
+env:
+  contexts:
+    - name: "WordPress Target"
+      urls:
+        - "${target.url}"
+      includePaths:
+        - "${target.url}.*"
+      excludePaths:
+        - ".*\\.js$"
+        - ".*\\.css$"
+        - ".*\\.png$"
+        - ".*\\.jpg$"
+        - ".*\\.gif$"
+        - ".*\\.woff2?$"
+
+jobs:
+  - type: spider
+    parameters:
+      maxDuration: 5
+      maxDepth: 5
+      maxChildren: 20
+    urls:
+      - "${target.url}"
+
+  - type: spiderAjax
+    parameters:
+      maxDuration: 3
+      maxCrawlDepth: 3
+
+  - type: openApi
+    parameters:
+      targetUrl: "${target.url}/wp-json"
+
+  - type: requestor
+    parameters:
+      user: ""
+    requests:
+      - url: "${target.url}/xmlrpc.php"
+        method: POST
+        httpVersion: "HTTP/1.1"
+        headers:
+          - "Content-Type: text/xml"
+        body: |
+          <?xml version="1.0"?>
+          <methodCall><methodName>system.listMethods</methodName></methodCall>
+      - url: "${target.url}/wp-json/wp/v2/users"
+      - url: "${target.url}/wp-login.php"
+      - url: "${target.url}/wp-admin/"
+      - url: "${target.url}/readme.html"
+      - url: "${target.url}/license.txt"
+      - url: "${target.url}/wp-config.php.bak"
+      - url: "${target.url}/wp-config.old"
+      - url: "${target.url}/.wp-config.php.swp"
+      - url: "${target.url}/wp-content/debug.log"
+      - url: "${target.url}/wp-content/uploads/"
+      - url: "${target.url}/wp-includes/"
+      - url: "${target.url}/?author=1"
+      - url: "${target.url}/wp-json/wp/v2/posts"
+      - url: "${target.url}/wp-json/wp/v2/pages"
+      - url: "${target.url}/wp-cron.php"
+      - url: "${target.url}/wp-trackback.php"
+
+  - type: urlFuzz
+    parameters: {}
+    requests:
+      - url: "${target.url}/wp-content/plugins/{{path}}"
+        method: GET
+    variables:
+      path:
+        type: file
+        value: "urls.txt"
+
+  - type: activeScan
+    parameters:
+      maxRuleDurationInMins: 5
+      maxScanDurationInMins: 30
+      policy: "policy.yaml"
+
+  - type: report
+    parameters:
+      template: "traditional-json"
+      reportDir: "/tmp/zap-reports"
+      reportFile: "wordpress-scan"
+    risks:
+      - high
+      - medium
+      - low
+      - info

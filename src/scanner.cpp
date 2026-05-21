@@ -35,6 +35,24 @@ std::vector<Scanner> get_scanners() {
   append(register_exploit_scanners());
   append(register_extra_scanners());
   append(register_waf_scanners());
+  append(register_advanced_auth_scanners());
+  append(register_power_scanners());
+  append(register_oob_confirmed_scanners());
+  append(register_remaining_web_scanners());
+  append(register_cloud_misconfig_scanners());
+  append(register_secrets_scanners());
+  append(register_ai_infra_scanners());
+  append(register_version_cve_scanners());
+  append(register_ssh_audit_scanners());
+  append(register_cloud_stack_scanners());
+  append(register_deep_recon_scanners());
+  append(register_network_security_scanners());
+  append(register_enterprise_osint_scanners());
+  append(register_kev_scanners());
+  append(register_cms_misconfig_scanners());
+  append(register_contact_intel_scanners());
+  append(register_leak_intel_scanners());
+  append(register_shadow_it_scanners());
 
   return all;
 }

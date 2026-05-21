@@ -64,6 +64,25 @@ std::vector<Scanner> register_web_scanners();
 std::vector<Scanner> register_exploit_scanners();
 std::vector<Scanner> register_extra_scanners();
 std::vector<Scanner> register_waf_scanners();
+std::vector<Scanner> register_advanced_auth_scanners();
+std::vector<Scanner> register_power_scanners();
+std::vector<Scanner> register_oob_confirmed_scanners();
+std::vector<Scanner> register_remaining_web_scanners();
+std::vector<Scanner> register_cloud_misconfig_scanners();
+std::vector<Scanner> register_secrets_scanners();
+std::vector<Scanner> register_ai_infra_scanners();
+std::vector<Scanner> register_version_cve_scanners();
+std::vector<Scanner> register_ssh_audit_scanners();
+std::vector<Scanner> register_cloud_stack_scanners();
+std::vector<Scanner> register_deep_recon_scanners();
+std::vector<Scanner> register_network_security_scanners();
+std::vector<Scanner> register_enterprise_osint_scanners();
+std::vector<Scanner> register_kev_scanners();
+std::vector<Scanner> register_cms_misconfig_scanners();
+std::vector<Scanner> register_contact_intel_scanners();
+std::vector<Scanner> register_leak_intel_scanners();
+std::vector<Scanner> register_shadow_it_scanners();
+std::vector<Scanner> register_remaining_web_scanners();
 
 } // namespace apex
 

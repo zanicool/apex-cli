@@ -79,7 +79,14 @@ void generate_report(const Config &cfg, const std::vector<Finding> &findings,
         out << "    {\"type\": \"" << json_escape(f.type) << "\", ";
         out << "\"severity\": \"" << json_escape(f.severity) << "\", ";
         out << "\"url\": \"" << json_escape(f.url) << "\", ";
-        out << "\"detail\": \"" << json_escape(f.detail) << "\"}";
+        out << "\"detail\": \"" << json_escape(f.detail) << "\"";
+        if (!f.param.empty())
+          out << ", \"param\": \"" << json_escape(f.param) << "\"";
+        if (!f.payload.empty())
+          out << ", \"payload\": \"" << json_escape(f.payload) << "\"";
+        if (!f.evidence.empty())
+          out << ", \"evidence\": \"" << json_escape(f.evidence) << "\"";
+        out << "}";
         if (i + 1 < findings.size())
           out << ",";
         out << "\n";
