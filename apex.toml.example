@@ -14,7 +14,11 @@ skip = []               # Skip specific scanners (e.g. ["Open Redirect"])
 required = ["SQLi", "XSS", "CMS Detection"]  # Must-run scanners
 
 [compliance]
-frameworks = ["OWASP", "CWE"]  # Map findings to compliance frameworks
+frameworks = ["OWASP", "CWE"]
+
+[api_keys]
+# Free: https://www.wordfence.com/api/intelligence/ (sign up for free key)
+wordfence = ""  # Map findings to compliance frameworks
 
 [scan]
 deep = false            # Enable deep scanning

@@ -11,6 +11,7 @@
 #include "recon_logger.hpp"
 #include "maturity.hpp"
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -103,6 +104,8 @@ int main(int argc, char *argv[]) {
       cfg.no_oob = true;
     } else if (arg == "--quick") {
       cfg.quick = true;
+    } else if (arg == "--wf-key" && i + 1 < argc) {
+      cfg.wf_api_key = argv[++i];
     } else if (arg == "--threads" && i + 1 < argc) {
       cfg.threads = std::stoi(argv[++i]);
     } else if (arg == "--rate" && i + 1 < argc) {
@@ -138,6 +141,10 @@ int main(int argc, char *argv[]) {
   }
 
   cfg.target = target;
+  if (cfg.wf_api_key.empty()) {
+    const char *env = std::getenv("WORDFENCE_API_KEY");
+    if (env) cfg.wf_api_key = env;
+  }
   if (cfg.output_dir.empty()) {
     cfg.output_dir = make_output_dir(target);
   }

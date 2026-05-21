@@ -12,7 +12,7 @@ namespace apex {
 namespace {
 
 /// CMS detection scanner with version checking.
-std::vector<Finding> scan_cms(const Config &, HttpClient &http,
+std::vector<Finding> scan_cms(const Config &cfg, HttpClient &http,
                               const CrawlResult &crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
@@ -53,15 +53,16 @@ std::vector<Finding> scan_cms(const Config &, HttpClient &http,
       std::string key = name + "|" + version;
       if (!seen.insert(key).second) continue;
 
-      // Check OSV for known vulnerabilities.
-      std::string osv_req = R"({"package":{"name":")" + name +
-                            R"(","ecosystem":"WordPress"},"version":")" +
-                            version + "\"}";
-      auto osv = http.post("https://api.osv.dev/v1/query", osv_req,
-                           "application/json");
-      bool has_vuln = osv.status_code == 200 &&
-                      osv.body.find("\"vulns\"") != std::string::npos &&
-                      osv.body.find("\"id\"") != std::string::npos;
+      // Check for known vulnerabilities via Wordfence Intelligence API.
+      bool has_vuln = false;
+      if (!cfg.wf_api_key.empty()) {
+        std::string wf_url = "https://www.wordfence.com/api/intelligence/v3/"
+                             "vulnerabilities?slug=" + name + "&type=plugin";
+        auto wf = http.get(wf_url, {{"Authorization", "Bearer " + cfg.wf_api_key}});
+        has_vuln = wf.status_code == 200 &&
+                   wf.body.find("\"id\"") != std::string::npos &&
+                   wf.body.find(name) != std::string::npos;
+      }
 
       std::string sev = has_vuln ? "high" : "info";
       std::string detail = std::string(type) + ": " + name + " v" + version;
