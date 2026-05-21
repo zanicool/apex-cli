@@ -3,10 +3,12 @@
 #include "config.hpp"
 #include "crawler.hpp"
 #include "http.hpp"
+#include "profile_generator.hpp"
 #include "recon.hpp"
 #include "reporter.hpp"
 #include "sbom.hpp"
 #include "scanner.hpp"
+#include "toolchain.hpp"
 #include "cms_export.hpp"
 #include "recon_logger.hpp"
 #include "maturity.hpp"
@@ -159,6 +161,20 @@ int main(int argc, char *argv[]) {
     std::cout << "[*] Mode: DRY RUN\n";
   }
 
+  // Detect external tools.
+  auto tools = apex::detect_tools();
+  bool has_httpx = false, has_katana = false, has_sqlmap = false;
+  bool has_dalfox = false, has_nuclei = false, has_ffuf = false;
+  for (const auto &t : tools) {
+    if (t.name == "httpx" && t.available) has_httpx = true;
+    if (t.name == "katana" && t.available) has_katana = true;
+    if (t.name == "sqlmap" && t.available) has_sqlmap = true;
+    if (t.name == "dalfox" && t.available) has_dalfox = true;
+    if (t.name == "nuclei" && t.available) has_nuclei = true;
+    if (t.name == "ffuf" && t.available) has_ffuf = true;
+  }
+  apex::print_tool_status(tools);
+
   auto start = std::chrono::steady_clock::now();
 
   // Initialize HTTP client and JSONL logger
@@ -276,6 +292,45 @@ int main(int argc, char *argv[]) {
     std::cout << "  -> " << confirmed_count << "/" << verify_count
               << " confirmed\n";
     std::cout << "  -> Proof log: " << proof_path << "\n";
+  }
+
+  // Phase 4c: Deep verify with external tools (sqlmap, dalfox).
+  if (!cfg.dry_run) {
+    bool ran_deep = false;
+    for (auto &f : findings) {
+      if (f.severity != "high" && f.severity != "critical") continue;
+      if (f.param.empty()) continue;
+
+      if (f.type.find("SQLi") != std::string::npos && has_sqlmap) {
+        if (!ran_deep) {
+          std::cout << "\n[Phase 4c] Deep verify — external tools\n";
+          ran_deep = true;
+        }
+        std::cout << "    [sqlmap] " << f.url << " param=" << f.param << "\n";
+        std::string result = apex::run_sqlmap(f);
+        if (result.find("injectable") != std::string::npos) {
+          f.evidence = "sqlmap confirmed: " + result.substr(0, 200);
+          std::cout << "      → CONFIRMED by sqlmap\n";
+        } else {
+          std::cout << "      → not confirmed\n";
+        }
+      }
+      if (f.type.find("XSS") != std::string::npos && has_dalfox) {
+        if (!ran_deep) {
+          std::cout << "\n[Phase 4c] Deep verify — external tools\n";
+          ran_deep = true;
+        }
+        std::cout << "    [dalfox] " << f.url << " param=" << f.param << "\n";
+        std::string result = apex::run_dalfox(f);
+        if (result.find("POC") != std::string::npos ||
+            result.find("Verified") != std::string::npos) {
+          f.evidence = "dalfox confirmed: " + result.substr(0, 200);
+          std::cout << "      → CONFIRMED by dalfox\n";
+        } else {
+          std::cout << "      → not confirmed\n";
+        }
+      }
+    }
   }
 
   // Export CMS inventory if any CMS findings exist.
@@ -453,10 +508,31 @@ int main(int argc, char *argv[]) {
       zap_out.close();
       std::cout << "  -> ZAP config: " << zap_config << "\n";
 
-      // Launch ZAP automation framework.
-      std::string zap_cmd = "zap.sh -cmd -autorun " + zap_config +
+      // Check if we have a learned profile for the detected CMS/framework.
+      std::string profile_config;
+      for (const auto &f : findings) {
+        if (f.type != "CMS Detection") continue;
+        std::string fw = f.detail;
+        size_t pos = fw.find("Detected: ");
+        if (pos != std::string::npos) fw = fw.substr(pos + 10);
+        pos = fw.find(" v");
+        if (pos != std::string::npos) fw = fw.substr(0, pos);
+        // Normalize to directory name.
+        std::string slug;
+        for (char c : fw) slug += (c == ' ' || c == '/') ? '-' : std::tolower(c);
+        std::string profile_path = "profiles/" + slug + "/scan.yaml";
+        if (std::filesystem::exists(profile_path)) {
+          profile_config = profile_path;
+          std::cout << "  -> Using learned profile: " << profile_path << "\n";
+          break;
+        }
+      }
+
+      // Launch ZAP: prefer learned profile, fallback to generated config.
+      std::string active_config = profile_config.empty() ? zap_config : profile_config;
+      std::string zap_cmd = "zap.sh -cmd -autorun " + active_config +
+                            " -config target.url=https://" + cfg.target +
                             " -config api.disablekey=true 2>/dev/null";
-      // Try zap-cli first, then zap.sh.
       if (system("command -v zap-cli >/dev/null 2>&1") == 0) {
         zap_cmd = "zap-cli --zap-path $(which zap.sh) quick-scan -s xss,sqli "
                   "https://" + cfg.target + " --output " + cfg.output_dir +
@@ -467,7 +543,45 @@ int main(int argc, char *argv[]) {
       if (ret == 0) {
         std::cout << "  -> ZAP scan complete: " << cfg.output_dir << "/zap-report.json\n";
       } else {
-        std::cout << "  -> ZAP automation config generated (run manually with: zap.sh -cmd -autorun " << zap_config << ")\n";
+        std::cout << "  -> ZAP automation config generated (run manually with: zap.sh -cmd -autorun " << active_config << ")\n";
+      }
+    }
+  }
+
+  // Phase 7: Learn — auto-generate/update ZAP profiles for detected frameworks.
+  {
+    apex::ProfileGenerator profgen("profiles");
+    auto intel = apex::ProfileGenerator::build_intel(cfg.target, crawl, findings);
+
+    // Check each CMS/framework detection finding.
+    for (const auto &f : findings) {
+      if (f.type != "CMS Detection") continue;
+      // Extract framework name from detail (e.g., "Detected: WordPress v6.4")
+      std::string fw = f.detail;
+      size_t pos = fw.find("Detected: ");
+      if (pos != std::string::npos) fw = fw.substr(pos + 10);
+      pos = fw.find(" v");
+      if (pos != std::string::npos) fw = fw.substr(0, pos);
+      if (fw.empty()) continue;
+
+      if (!profgen.has_profile(fw)) {
+        std::cout << "\n[Phase 7] Learn — New framework detected: " << fw << "\n";
+        profgen.generate_profile(fw, intel);
+      } else {
+        profgen.update_profile(fw, intel);
+      }
+    }
+
+    // Also learn from tech detected in headers/JS.
+    for (const auto &f : findings) {
+      if (f.type != "Technology Disclosure" && f.type != "Server Banner Disclosure")
+        continue;
+      for (const auto &tech : {"Next.js", "Nuxt", "Laravel", "Django", "Rails",
+                                "Spring", "Express", "Flask", "FastAPI", "Symfony"}) {
+        if (f.detail.find(tech) != std::string::npos && !profgen.has_profile(tech)) {
+          std::cout << "\n[Phase 7] Learn — New framework detected: " << tech << "\n";
+          profgen.generate_profile(tech, intel);
+        }
       }
     }
   }
