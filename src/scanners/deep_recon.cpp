@@ -13,6 +13,7 @@ namespace {
 /// Load subdomain wordlist.
 std::vector<std::string> load_subdomain_wordlist() {
   std::vector<std::string> words;
+  // Iterate over targets.
   for (const auto &path : {"./wordlists/subdomains-10000.txt",
                             "../wordlists/subdomains-10000.txt"}) {
     std::ifstream f(path);
@@ -28,6 +29,7 @@ std::vector<std::string> load_subdomain_wordlist() {
 }
 
 /// DNS brute-force subdomain enumeration.
+/// Scanner implementation.
 std::vector<Finding> scan_dns_bruteforce(const Config &cfg, HttpClient &http,
                                          const CrawlResult &) {
   std::vector<Finding> findings;
@@ -41,6 +43,7 @@ std::vector<Finding> scan_dns_bruteforce(const Config &cfg, HttpClient &http,
     domain = domain.substr(0, domain.find('/'));
 
   std::set<std::string> live;
+  // Iterate over targets.
   for (const auto &word : wordlist) {
     std::string sub = word + "." + domain;
     auto resp = http.get("https://" + sub + "/");
@@ -66,6 +69,7 @@ std::vector<Finding> scan_dns_bruteforce(const Config &cfg, HttpClient &http,
 }
 
 /// Wayback Machine full URL discovery — find forgotten endpoints.
+/// Scanner implementation.
 std::vector<Finding> scan_wayback_urls(const Config &cfg, HttpClient &http,
                                        const CrawlResult &) {
   std::vector<Finding> findings;
@@ -78,6 +82,7 @@ std::vector<Finding> scan_wayback_urls(const Config &cfg, HttpClient &http,
   std::string wb_url = "https://web.archive.org/cdx/search/cdx?url=" + domain +
                        "/*&output=text&fl=original&collapse=urlkey&limit=200";
   auto resp = http.get(wb_url);
+  // Check response status.
   if (resp.status_code != 200) return findings;
 
   // Parse URLs and look for interesting patterns.
@@ -102,6 +107,7 @@ std::vector<Finding> scan_wayback_urls(const Config &cfg, HttpClient &http,
 
   // Probe interesting URLs to see if they're still live.
   std::vector<std::string> still_live;
+  // Iterate over targets.
   for (const auto &url : interesting) {
     auto probe = http.get(url);
     if (probe.status_code == 200 && probe.body.size() > 50)
@@ -126,6 +132,7 @@ std::vector<Finding> scan_wayback_urls(const Config &cfg, HttpClient &http,
 }
 
 /// Google dorking — automated search for exposed files/pages.
+/// Scanner implementation.
 std::vector<Finding> scan_google_dorks(const Config &cfg, HttpClient &http,
                                        const CrawlResult &) {
   std::vector<Finding> findings;
@@ -151,6 +158,7 @@ std::vector<Finding> scan_google_dorks(const Config &cfg, HttpClient &http,
       {"site:%s inurl:confluence", "Confluence pages indexed", "medium"},
   };
 
+  // Iterate over targets.
   for (const auto &dork : dorks) {
     char query[256];
     snprintf(query, sizeof(query), dork.query, domain.c_str());
@@ -169,12 +177,14 @@ std::vector<Finding> scan_google_dorks(const Config &cfg, HttpClient &http,
 }
 
 /// Metadata extraction from PDF/DOCX files found during crawl.
+/// Scanner implementation.
 std::vector<Finding> scan_metadata(const Config &, HttpClient &http,
                                    const CrawlResult &crawl) {
   std::vector<Finding> findings;
 
   // Find document URLs from crawl.
   std::set<std::string> doc_urls;
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     if (url.find(".pdf") != std::string::npos ||
         url.find(".docx") != std::string::npos ||
@@ -194,6 +204,7 @@ std::vector<Finding> scan_metadata(const Config &, HttpClient &http,
     }
   }
 
+  // Iterate over targets.
   for (const auto &url : doc_urls) {
     auto resp = http.get(url);
     if (resp.status_code != 200) continue;
@@ -240,6 +251,7 @@ std::vector<Finding> scan_metadata(const Config &, HttpClient &http,
 }
 
 /// GitHub recon — search for leaked code/secrets related to target.
+/// Scanner implementation.
 std::vector<Finding> scan_github_recon(const Config &cfg, HttpClient &http,
                                        const CrawlResult &) {
   std::vector<Finding> findings;
@@ -257,6 +269,7 @@ std::vector<Finding> scan_github_recon(const Config &cfg, HttpClient &http,
       {domain + " token", "Tokens referencing domain"},
   };
 
+  // Iterate over targets.
   for (const auto &[query, desc] : searches) {
     std::string url = "https://github.com/search?q=" + query + "&type=code";
     auto resp = http.get(url);
@@ -271,9 +284,11 @@ std::vector<Finding> scan_github_recon(const Config &cfg, HttpClient &http,
 }
 
 /// robots.txt and sitemap.xml mining.
+/// Scanner implementation.
 std::vector<Finding> scan_robots_sitemap(const Config &, HttpClient &http,
                                          const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
@@ -335,6 +350,7 @@ std::vector<Finding> scan_robots_sitemap(const Config &, HttpClient &http,
 }
 
 /// Certificate transparency deep — find historical/expired subdomains.
+/// Scanner implementation.
 std::vector<Finding> scan_ct_deep(const Config &cfg, HttpClient &http,
                                   const CrawlResult &) {
   std::vector<Finding> findings;
@@ -347,6 +363,7 @@ std::vector<Finding> scan_ct_deep(const Config &cfg, HttpClient &http,
   // Query crt.sh for expired/historical certs.
   std::string url = "https://crt.sh/?q=%25." + domain + "&output=json&expired=true";
   auto resp = http.get(url);
+  // Check response status.
   if (resp.status_code != 200) return findings;
 
   std::set<std::string> all_subs;
@@ -361,6 +378,7 @@ std::vector<Finding> scan_ct_deep(const Config &cfg, HttpClient &http,
 
   // Check for potential subdomain takeover on expired/dangling subs.
   std::vector<std::string> dangling;
+  // Iterate over targets.
   for (const auto &sub : all_subs) {
     auto probe = http.get("https://" + sub + "/");
     if (probe.status_code == 0 || !probe.error.empty()) {

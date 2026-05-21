@@ -9,14 +9,17 @@ namespace apex {
 namespace {
 
 /// Supabase misconfigurations: exposed anon key, disabled RLS, open storage.
+/// Scanner implementation.
 std::vector<Finding> scan_supabase(const Config &, HttpClient &http,
                                    const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
   // Look for Supabase keys in page source.
   std::string supabase_url, anon_key;
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     auto resp = http.get(url);
     // NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -76,12 +79,15 @@ std::vector<Finding> scan_supabase(const Config &, HttpClient &http,
 }
 
 /// Clerk/Auth0/auth provider misconfigurations.
+/// Scanner implementation.
 std::vector<Finding> scan_auth_providers(const Config &, HttpClient &http,
                                          const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
 
   std::string clerk_key, auth0_domain;
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     auto resp = http.get(url);
     // Clerk publishable key.
@@ -121,9 +127,11 @@ std::vector<Finding> scan_auth_providers(const Config &, HttpClient &http,
 }
 
 /// Vercel/Netlify/Cloudflare deployment misconfigs.
+/// Scanner implementation.
 std::vector<Finding> scan_deployment_platforms(const Config &, HttpClient &http,
                                                const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
@@ -135,6 +143,7 @@ std::vector<Finding> scan_deployment_platforms(const Config &, HttpClient &http,
   }
 
   // Check for exposed .vercel, .netlify configs.
+  // Iterate over targets.
   for (const auto &path : {"/.vercel/project.json", "/.netlify/state.json"}) {
     auto resp = http.get(base + path);
     if (resp.status_code == 200 && resp.body.size() > 10) {
@@ -144,6 +153,7 @@ std::vector<Finding> scan_deployment_platforms(const Config &, HttpClient &http,
   }
 
   // Cloudflare: check for exposed Workers KV, D1, R2.
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     auto resp = http.get(url);
     if (resp.body.find("CLOUDFLARE_API_TOKEN") != std::string::npos ||
@@ -163,9 +173,11 @@ std::vector<Finding> scan_deployment_platforms(const Config &, HttpClient &http,
 }
 
 /// Serverless DB misconfigs: Neon, PlanetScale, Turso, Upstash.
+/// Scanner implementation.
 std::vector<Finding> scan_serverless_db(const Config &, HttpClient &http,
                                         const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
 
   // Scan for leaked connection strings in source.
@@ -182,6 +194,7 @@ std::vector<Finding> scan_serverless_db(const Config &, HttpClient &http,
       {"UPSTASH_REDIS_REST_URL", "Upstash Redis URL"},
   };
 
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     auto resp = http.get(url);
     for (const auto &[pattern, desc] : patterns) {
@@ -202,13 +215,16 @@ std::vector<Finding> scan_serverless_db(const Config &, HttpClient &http,
 }
 
 /// Observability/analytics misconfigs: PostHog, Sentry, Datadog.
+/// Scanner implementation.
 std::vector<Finding> scan_observability(const Config &, HttpClient &http,
                                         const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
   // PostHog: check for exposed API with overly permissive project key.
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     auto resp = http.get(url);
     std::regex ph_re(R"(phc_[A-Za-z0-9]{20,})");
@@ -235,6 +251,7 @@ std::vector<Finding> scan_observability(const Config &, HttpClient &http,
   }
 
   // Check for exposed Grafana/monitoring dashboards.
+  // Iterate over targets.
   for (const auto &path : {"/grafana/", "/kibana/", "/prometheus/", "/jaeger/"}) {
     auto resp = http.get(base + path);
     if (resp.status_code == 200 && resp.body.size() > 200 &&
@@ -248,11 +265,14 @@ std::vector<Finding> scan_observability(const Config &, HttpClient &http,
 }
 
 /// Realtime/messaging misconfigs: Pusher, Ably, WebSocket endpoints.
+/// Scanner implementation.
 std::vector<Finding> scan_realtime_infra(const Config &, HttpClient &http,
                                          const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
 
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     auto resp = http.get(url);
 
@@ -297,9 +317,11 @@ std::vector<Finding> scan_realtime_infra(const Config &, HttpClient &http,
 }
 
 /// Automation/low-code misconfigs: n8n, Retool, internal tools.
+/// Scanner implementation.
 std::vector<Finding> scan_automation_tools(const Config &, HttpClient &http,
                                            const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
@@ -315,6 +337,7 @@ std::vector<Finding> scan_automation_tools(const Config &, HttpClient &http,
       {"/api/v1/workflows", "Workflow API"},
   };
 
+  // Iterate over targets.
   for (const auto &[path, name] : paths) {
     auto resp = http.get(base + path);
     if (resp.status_code == 200 && resp.body.size() > 100 &&

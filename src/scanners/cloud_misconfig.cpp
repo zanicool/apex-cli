@@ -7,6 +7,7 @@
 namespace apex {
 namespace {
 
+/// Scanner implementation.
 std::vector<Finding> scan_azure_blob(const Config &cfg, HttpClient &http,
                                      const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -24,6 +25,7 @@ std::vector<Finding> scan_azure_blob(const Config &cfg, HttpClient &http,
       "data", "backup", "backups", "uploads", "static", "assets",
       "logs", "media", "public", "private", "dev", "staging", "prod"};
 
+  // Iterate over targets.
   for (const auto &container : containers) {
     std::string url = "https://" + org + ".blob.core.windows.net/" + container + "?restype=container&comp=list";
     auto resp = http.get(url);
@@ -36,6 +38,7 @@ std::vector<Finding> scan_azure_blob(const Config &cfg, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_gcp_bucket(const Config &cfg, HttpClient &http,
                                      const CrawlResult &) {
   std::vector<Finding> findings;
@@ -51,6 +54,7 @@ std::vector<Finding> scan_gcp_bucket(const Config &cfg, HttpClient &http,
       org + "-assets", org + "-static", org + "-dev", org + "-prod",
       org + "-staging", org + "-logs", org + "-ml", org + "-models"};
 
+  // Iterate over targets.
   for (const auto &bucket : buckets) {
     std::string url = "https://storage.googleapis.com/" + bucket;
     auto resp = http.get(url);
@@ -65,6 +69,7 @@ std::vector<Finding> scan_gcp_bucket(const Config &cfg, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_s3_expanded(const Config &cfg, HttpClient &http,
                                       const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -79,6 +84,7 @@ std::vector<Finding> scan_s3_expanded(const Config &cfg, HttpClient &http,
   std::regex s3_re(R"((https?://[a-z0-9\-]+\.s3[.\-][a-z0-9\-]+\.amazonaws\.com|https?://s3[.\-][a-z0-9\-]+\.amazonaws\.com/[a-z0-9\-]+))");
   std::set<std::string> found_buckets;
 
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     auto resp = http.get(url);
     auto begin = std::sregex_iterator(resp.body.begin(), resp.body.end(), s3_re);
@@ -92,6 +98,7 @@ std::vector<Finding> scan_s3_expanded(const Config &cfg, HttpClient &http,
       org + "-internal", org + "-secrets", org + "-config",
       org + "-terraform", org + "-ci", org + "-artifacts"};
 
+  // Iterate over targets.
   for (const auto &b : guesses) {
     std::string url = "https://" + b + ".s3.amazonaws.com/";
     auto resp = http.get(url);
@@ -99,6 +106,7 @@ std::vector<Finding> scan_s3_expanded(const Config &cfg, HttpClient &http,
       found_buckets.insert(url);
   }
 
+  // Iterate over targets.
   for (const auto &bucket : found_buckets) {
     auto resp = http.get(bucket);
     if (resp.status_code == 200 && resp.body.find("<Contents>") != std::string::npos) {
@@ -110,6 +118,7 @@ std::vector<Finding> scan_s3_expanded(const Config &cfg, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_k8s_dashboard(const Config &cfg, HttpClient &http,
                                         const CrawlResult &) {
   std::vector<Finding> findings;
@@ -130,6 +139,7 @@ std::vector<Finding> scan_k8s_dashboard(const Config &cfg, HttpClient &http,
       {"/nginx_status", "Nginx Status"},
   };
 
+  // Iterate over targets.
   for (const auto &[path, name] : paths) {
     auto resp = http.get(base + path);
     if (resp.status_code == 200 && resp.body.size() > 50 &&

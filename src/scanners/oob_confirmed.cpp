@@ -33,6 +33,7 @@ std::string gen_uid() {
 }
 
 /// Blind SSRF with OOB confirmation.
+/// Scanner implementation.
 std::vector<Finding> scan_blind_ssrf_confirmed(const Config &cfg, HttpClient &http,
                                                const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -42,6 +43,7 @@ std::vector<Finding> scan_blind_ssrf_confirmed(const Config &cfg, HttpClient &ht
       "url", "uri", "link", "src", "source", "fetch", "request",
       "proxy", "redirect", "image", "avatar", "webhook", "callback"};
 
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     for (const auto &p : crawl.params) {
       if (p.url != url) continue;
@@ -68,11 +70,13 @@ std::vector<Finding> scan_blind_ssrf_confirmed(const Config &cfg, HttpClient &ht
 }
 
 /// Blind CMDi with OOB confirmation.
+/// Scanner implementation.
 std::vector<Finding> scan_blind_cmdi_confirmed(const Config &cfg, HttpClient &http,
                                                const CrawlResult &crawl) {
   std::vector<Finding> findings;
   if (cfg.no_oob || crawl.urls.empty()) return findings;
 
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     auto targets = get_targets(crawl, url, "cmd");
     for (const auto &[base, param] : targets) {
@@ -103,6 +107,7 @@ std::vector<Finding> scan_blind_cmdi_confirmed(const Config &cfg, HttpClient &ht
 }
 
 /// Blind SQLi with OOB DNS confirmation.
+/// Scanner implementation.
 std::vector<Finding> scan_blind_sqli_confirmed(const Config &cfg, HttpClient &http,
                                                const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -114,6 +119,7 @@ std::vector<Finding> scan_blind_sqli_confirmed(const Config &cfg, HttpClient &ht
   size_t c = oob_host.find(':');
   if (c != std::string::npos) oob_host = oob_host.substr(0, c);
 
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     auto targets = get_targets(crawl, url);
     for (const auto &[base, param] : targets) {
@@ -143,6 +149,7 @@ std::vector<Finding> scan_blind_sqli_confirmed(const Config &cfg, HttpClient &ht
 }
 
 /// Log4Shell with OOB confirmation.
+/// Scanner implementation.
 std::vector<Finding> scan_log4shell_confirmed(const Config &cfg, HttpClient &http,
                                               const CrawlResult &crawl) {
   std::vector<Finding> findings;

@@ -7,9 +7,11 @@
 namespace apex {
 namespace {
 
+/// Scanner implementation.
 std::vector<Finding> scan_exposed_env(const Config &, HttpClient &http,
                                       const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
@@ -31,6 +33,7 @@ std::vector<Finding> scan_exposed_env(const Config &, HttpClient &http,
       "SMTP_PASS", "SENDGRID", "STRIPE", "TWILIO", "password:",
       "secret_key", "client_secret", "-----BEGIN"};
 
+  // Iterate over targets.
   for (const auto &path : paths) {
     auto resp = http.get(base + path);
     if (resp.status_code != 200 || resp.body.size() < 10) continue;
@@ -46,14 +49,17 @@ std::vector<Finding> scan_exposed_env(const Config &, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_git_exposure(const Config &, HttpClient &http,
                                        const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
   // Check for exposed .git directory.
   auto resp = http.get(base + "/.git/HEAD");
+  // Check response status.
   if (resp.status_code == 200 && resp.body.find("ref:") != std::string::npos) {
     findings.push_back({"Git Repository Exposed", "critical", base + "/.git/",
                         "Full git repository accessible — source code + history downloadable",
@@ -85,6 +91,7 @@ std::vector<Finding> scan_git_exposure(const Config &, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_docker_registry(const Config &cfg, HttpClient &http,
                                           const CrawlResult &) {
   std::vector<Finding> findings;
@@ -101,6 +108,7 @@ std::vector<Finding> scan_docker_registry(const Config &cfg, HttpClient &http,
       "http://" + domain + ":5000",
   };
 
+  // Iterate over targets.
   for (const auto &host : registry_hosts) {
     auto resp = http.get(host + "/v2/_catalog");
     if (resp.status_code == 200 && resp.body.find("repositories") != std::string::npos) {
@@ -112,9 +120,11 @@ std::vector<Finding> scan_docker_registry(const Config &cfg, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_cicd_artifacts(const Config &, HttpClient &http,
                                          const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
@@ -135,6 +145,7 @@ std::vector<Finding> scan_cicd_artifacts(const Config &, HttpClient &http,
       {"/k8s/secrets.yaml", "Kubernetes secrets"},
   };
 
+  // Iterate over targets.
   for (const auto &[path, name] : paths) {
     auto resp = http.get(base + path);
     if (resp.status_code == 200 && resp.body.size() > 20) {
@@ -151,9 +162,11 @@ std::vector<Finding> scan_cicd_artifacts(const Config &, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_backup_files(const Config &, HttpClient &http,
                                        const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
@@ -165,6 +178,7 @@ std::vector<Finding> scan_backup_files(const Config &, HttpClient &http,
       "/old/", "/temp/", "/tmp/",
   };
 
+  // Iterate over targets.
   for (const auto &path : paths) {
     auto resp = http.get(base + path);
     if (resp.status_code == 200 && resp.body.size() > 100) {

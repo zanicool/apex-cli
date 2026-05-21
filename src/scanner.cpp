@@ -49,11 +49,16 @@ std::vector<Scanner> get_scanners() {
   append(register_deep_recon_scanners());
   append(register_network_security_scanners());
   append(register_enterprise_osint_scanners());
+  append(register_interactive_surface_scanners());
+  append(register_otap_scanners());
+  append(register_kvk_scanners());
   append(register_kev_scanners());
   append(register_cms_misconfig_scanners());
   append(register_contact_intel_scanners());
   append(register_leak_intel_scanners());
   append(register_shadow_it_scanners());
+  append(register_document_intel_scanners());
+  append(register_version_fingerprint_scanners());
 
   return all;
 }
@@ -65,8 +70,25 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
   std::mutex mu;
 
   auto should_skip = [&](const std::string &name) {
-    return std::any_of(cfg.skip.begin(), cfg.skip.end(),
-                       [&](const std::string &s) { return s == name; });
+    if (std::any_of(cfg.skip.begin(), cfg.skip.end(),
+                    [&](const std::string &s) { return s == name; }))
+      return true;
+    // Quick mode: only run high-value scanners.
+    if (cfg.quick) {
+      static const std::vector<std::string> quick_scanners = {
+          "CMS Detection", "SQLi", "XSS", "SSRF", "CMDi", "LFI",
+          "Security Headers", "Open Redirect", "SSTI", "XXE",
+          "CORS", "Clickjacking", "Info Disclosure",
+          "WAF Detection", "Login Security", "Header Analysis",
+          "Content Discovery", "Forced Browsing",
+          "Supply Chain: Self-Hosted Tools", "Supply Chain: Cloud Storage",
+          "Supply Chain: Integrations", "Supply Chain: Management Panels",
+          "Supply Chain: SSO Config", "Supply Chain: API Keys",
+          "WP Plugin", "WP Theme"};
+      return std::none_of(quick_scanners.begin(), quick_scanners.end(),
+                          [&](const std::string &q) { return q == name; });
+    }
+    return false;
   };
 
   std::vector<std::future<std::vector<Finding>>> futures;

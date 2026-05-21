@@ -75,6 +75,7 @@ bool is_vulnerable(int major, int minor, const KernelCVE &cve) {
 }
 
 /// SSH-based scan — requires ssh_target in config or --ssh-target flag.
+/// Scanner implementation.
 std::vector<Finding> scan_ssh_audit(const Config &cfg, HttpClient &,
                                     const CrawlResult &) {
   std::vector<Finding> findings;
@@ -101,6 +102,7 @@ std::vector<Finding> scan_ssh_audit(const Config &cfg, HttpClient &,
   if (!parse_kernel(uname, major, minor, patch)) return findings;
 
   // Check against known kernel CVEs.
+  // Iterate over targets.
   for (const auto &cve : kernel_cves) {
     if (is_vulnerable(major, minor, cve)) {
       findings.push_back({std::string(cve.cve) + " (" + cve.name + ")",

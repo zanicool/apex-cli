@@ -26,6 +26,7 @@ struct Config {
   int crawl_depth = 3;
   int max_urls = 500;
   bool osint_mode = false;  // Enable OSINT reconnaissance
+  bool quick = false;       // Quick mode: only high-value scanners
   std::string ssh_target;   // SSH target (user@host) for agent-based scanning
   std::string ssh_key;      // SSH private key path
 };

@@ -101,6 +101,8 @@ int main(int argc, char *argv[]) {
       cfg.dry_run = true;
     } else if (arg == "--no-oob") {
       cfg.no_oob = true;
+    } else if (arg == "--quick") {
+      cfg.quick = true;
     } else if (arg == "--threads" && i + 1 < argc) {
       cfg.threads = std::stoi(argv[++i]);
     } else if (arg == "--rate" && i + 1 < argc) {

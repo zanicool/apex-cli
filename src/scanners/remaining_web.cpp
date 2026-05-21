@@ -6,11 +6,13 @@
 namespace apex {
 namespace {
 
+/// Scanner implementation.
 std::vector<Finding> scan_csv_injection(const Config &, HttpClient &http,
                                         const CrawlResult &crawl) {
   std::vector<Finding> findings;
   // Test if user input ends up in CSV/Excel exports without sanitization.
   const std::string payload = "=CMD(\"calc\")";
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     auto targets = get_targets(crawl, url, "name");
     for (const auto &[base, param] : targets) {
@@ -27,9 +29,11 @@ std::vector<Finding> scan_csv_injection(const Config &, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_prototype_pollution(const Config &, HttpClient &http,
                                               const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
@@ -40,6 +44,7 @@ std::vector<Finding> scan_prototype_pollution(const Config &, HttpClient &http,
       "?__proto__.polluted=true",
   };
 
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     for (const auto &p : payloads) {
       auto resp = http.get(url + p);
@@ -63,10 +68,12 @@ std::vector<Finding> scan_prototype_pollution(const Config &, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_css_injection(const Config &, HttpClient &http,
                                         const CrawlResult &crawl) {
   std::vector<Finding> findings;
   std::string payload = "color:red;background:url(https://evil.com/steal)";
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     auto targets = get_targets(crawl, url, "style");
     for (const auto &[base, param] : targets) {
@@ -82,9 +89,11 @@ std::vector<Finding> scan_css_injection(const Config &, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_tabnabbing(const Config &, HttpClient &http,
                                      const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     auto resp = http.get(url);
     // Look for target="_blank" without rel="noopener"
@@ -105,9 +114,11 @@ std::vector<Finding> scan_tabnabbing(const Config &, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_service_worker(const Config &, HttpClient &http,
                                          const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
@@ -116,6 +127,7 @@ std::vector<Finding> scan_service_worker(const Config &, HttpClient &http,
       "/sw.js", "/service-worker.js", "/serviceworker.js",
       "/firebase-messaging-sw.js", "/ngsw-worker.js"};
 
+  // Iterate over targets.
   for (const auto &path : sw_paths) {
     auto resp = http.get(base + path);
     if (resp.status_code == 200 && resp.body.size() > 50 &&
@@ -138,6 +150,7 @@ std::vector<Finding> scan_service_worker(const Config &, HttpClient &http,
   }
 
   // Check if we can register a SW via XSS (JSONP/upload endpoint).
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     auto targets = get_targets(crawl, url, "callback");
     for (const auto &[tbase, param] : targets) {
@@ -155,15 +168,18 @@ std::vector<Finding> scan_service_worker(const Config &, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_weak_logout(const Config &, HttpClient &http,
                                       const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
   // Get a session, then "logout", then try to reuse the session.
   auto r1 = http.get(crawl.urls[0]);
   std::string session;
+  // Iterate over targets.
   for (const auto &[h, v] : r1.headers) {
     if (h == "Set-Cookie" && (v.find("session") != std::string::npos ||
                               v.find("token") != std::string::npos)) {
@@ -174,6 +190,7 @@ std::vector<Finding> scan_weak_logout(const Config &, HttpClient &http,
   if (session.empty()) return findings;
 
   // Hit logout endpoints.
+  // Iterate over targets.
   for (const auto &path : {"/logout", "/api/logout", "/auth/logout", "/signout"}) {
     http.get(base + path, {{"Cookie", session}});
   }
@@ -190,12 +207,15 @@ std::vector<Finding> scan_weak_logout(const Config &, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_insecure_remember_me(const Config &, HttpClient &http,
                                                const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
 
   auto resp = http.get(crawl.urls[0]);
+  // Iterate over targets.
   for (const auto &[h, v] : resp.headers) {
     if (h != "Set-Cookie") continue;
     bool is_remember = v.find("remember") != std::string::npos ||
@@ -231,9 +251,11 @@ std::vector<Finding> scan_insecure_remember_me(const Config &, HttpClient &http,
 }
 
 /// XS-Leaks — cross-site information leakage via timing/error oracles.
+/// Scanner implementation.
 std::vector<Finding> scan_xs_leaks(const Config &, HttpClient &http,
                                    const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
   // Check if error pages differ for authenticated vs unauthenticated resources.
@@ -250,11 +272,14 @@ std::vector<Finding> scan_xs_leaks(const Config &, HttpClient &http,
 }
 
 /// Cookie Tossing — set cookies from subdomain to parent.
+/// Scanner implementation.
 std::vector<Finding> scan_cookie_tossing(const Config &, HttpClient &http,
                                          const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
   auto resp = http.get(crawl.urls[0]);
+  // Iterate over targets.
   for (const auto &[name, value] : resp.headers) {
     if (name != "Set-Cookie") continue;
     // Vulnerable if cookie domain is set to parent domain without __Host- prefix.
@@ -269,10 +294,12 @@ std::vector<Finding> scan_cookie_tossing(const Config &, HttpClient &http,
 }
 
 /// Second Order Injection — inject payloads that trigger on later retrieval.
+/// Scanner implementation.
 std::vector<Finding> scan_second_order(const Config &, HttpClient &http,
                                        const CrawlResult &crawl) {
   std::vector<Finding> findings;
   const std::string canary = "apex_2nd_order_" + std::to_string(time(nullptr));
+  // Iterate over targets.
   for (const auto &form : crawl.forms) {
     if (form.method != "POST") continue;
     // Submit canary value.
@@ -284,6 +311,7 @@ std::vector<Finding> scan_second_order(const Config &, HttpClient &http,
     http.post(form.action, body, "application/x-www-form-urlencoded");
   }
   // Check if canary appears anywhere after submission.
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     auto resp = http.get(url);
     if (resp.body.find(canary) != std::string::npos) {
@@ -296,12 +324,14 @@ std::vector<Finding> scan_second_order(const Config &, HttpClient &http,
 }
 
 /// Param Discovery — brute-force hidden parameters.
+/// Scanner implementation.
 std::vector<Finding> scan_param_discovery(const Config &, HttpClient &http,
                                           const CrawlResult &crawl) {
   std::vector<Finding> findings;
   const std::vector<std::string> params = {
       "debug", "test", "admin", "verbose", "internal", "dev", "staging",
       "secret", "token", "key", "api_key", "callback", "redirect"};
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     auto baseline = http.get(url);
     for (const auto &p : params) {
@@ -319,9 +349,11 @@ std::vector<Finding> scan_param_discovery(const Config &, HttpClient &http,
 }
 
 /// Param Value Enum — enumerate valid values for discovered params.
+/// Scanner implementation.
 std::vector<Finding> scan_param_value_enum(const Config &, HttpClient &http,
                                            const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     for (const auto &p : crawl.params) {
       if (p.url != url) continue;

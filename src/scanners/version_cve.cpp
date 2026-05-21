@@ -40,9 +40,11 @@ const CVEEntry known_cves[] = {
     {"Express", "4.", "CVE-2024-29041", "medium", "Open redirect"},
 };
 
+/// Scanner implementation.
 std::vector<Finding> scan_server_banner(const Config &, HttpClient &http,
                                         const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
 
   auto resp = http.get(crawl.urls[0]);
@@ -65,6 +67,7 @@ std::vector<Finding> scan_server_banner(const Config &, HttpClient &http,
   }
 
   // Match against known CVEs.
+  // Iterate over targets.
   for (const auto &[key, value] : detected) {
     for (const auto &cve : known_cves) {
       if (value.find(cve.product) != std::string::npos &&
@@ -79,6 +82,7 @@ std::vector<Finding> scan_server_banner(const Config &, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_ssh_version(const Config &cfg, HttpClient &http,
                                       const CrawlResult &) {
   std::vector<Finding> findings;
@@ -111,9 +115,11 @@ std::vector<Finding> scan_ssh_version(const Config &cfg, HttpClient &http,
   return findings;
 }
 
+/// Scanner implementation.
 std::vector<Finding> scan_version_endpoints(const Config &, HttpClient &http,
                                             const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
@@ -124,6 +130,7 @@ std::vector<Finding> scan_version_endpoints(const Config &, HttpClient &http,
       "/.well-known/security.txt", "/humans.txt",
   };
 
+  // Iterate over targets.
   for (const auto &path : paths) {
     auto resp = http.get(base + path);
     if (resp.status_code != 200 || resp.body.size() < 5) continue;

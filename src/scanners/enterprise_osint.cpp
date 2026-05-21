@@ -9,6 +9,7 @@ namespace apex {
 namespace {
 
 /// Microsoft 365 / Azure AD tenant enumeration and metadata.
+/// Scanner implementation.
 std::vector<Finding> scan_m365_tenant(const Config &cfg, HttpClient &http,
                                       const CrawlResult &) {
   std::vector<Finding> findings;
@@ -70,6 +71,7 @@ std::vector<Finding> scan_m365_tenant(const Config &cfg, HttpClient &http,
 }
 
 /// SharePoint / OneDrive exposure check.
+/// Scanner implementation.
 std::vector<Finding> scan_sharepoint(const Config &cfg, HttpClient &http,
                                      const CrawlResult &) {
   std::vector<Finding> findings;
@@ -89,6 +91,7 @@ std::vector<Finding> scan_sharepoint(const Config &cfg, HttpClient &http,
       "https://" + org + ".sharepoint.com/sites/",
   };
 
+  // Iterate over targets.
   for (const auto &url : sp_urls) {
     auto resp = http.get(url);
     if (resp.status_code == 200 && resp.body.size() > 100) {
@@ -102,6 +105,7 @@ std::vector<Finding> scan_sharepoint(const Config &cfg, HttpClient &http,
   }
 
   // Common public SharePoint sites.
+  // Iterate over targets.
   for (const auto &site : {"public", "intranet", "hr", "wiki", "docs", "portal"}) {
     auto resp = http.get("https://" + org + ".sharepoint.com/sites/" + site);
     if (resp.status_code == 200 && resp.body.size() > 500) {
@@ -115,6 +119,7 @@ std::vector<Finding> scan_sharepoint(const Config &cfg, HttpClient &http,
 }
 
 /// Atlassian (Jira/Confluence) exposure.
+/// Scanner implementation.
 std::vector<Finding> scan_atlassian(const Config &cfg, HttpClient &http,
                                     const CrawlResult &) {
   std::vector<Finding> findings;
@@ -136,6 +141,7 @@ std::vector<Finding> scan_atlassian(const Config &cfg, HttpClient &http,
       {"https://confluence." + domain, "Self-hosted Confluence"},
   };
 
+  // Iterate over targets.
   for (const auto &check : checks) {
     auto resp = http.get(check.url);
     if (resp.status_code == 200 && resp.body.size() > 50) {
@@ -154,6 +160,7 @@ std::vector<Finding> scan_atlassian(const Config &cfg, HttpClient &http,
 }
 
 /// Slack workspace discovery.
+/// Scanner implementation.
 std::vector<Finding> scan_slack(const Config &cfg, HttpClient &http,
                                 const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -166,12 +173,14 @@ std::vector<Finding> scan_slack(const Config &cfg, HttpClient &http,
 
   // Check Slack workspace.
   auto resp = http.get("https://" + org + ".slack.com");
+  // Check response status.
   if (resp.status_code == 200 && resp.body.find("slack") != std::string::npos) {
     findings.push_back({"Slack Workspace Found", "info", "https://" + org + ".slack.com",
                         "Slack workspace exists for this organization", "", "", ""});
   }
 
   // Check for leaked Slack webhooks in source.
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     auto page = http.get(url);
     if (page.body.find("hooks.slack.com") != std::string::npos) {
@@ -185,6 +194,7 @@ std::vector<Finding> scan_slack(const Config &cfg, HttpClient &http,
 }
 
 /// OAuth / SSO enumeration — discover identity providers and apps.
+/// Scanner implementation.
 std::vector<Finding> scan_oauth_enum(const Config &cfg, HttpClient &http,
                                      const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -206,6 +216,7 @@ std::vector<Finding> scan_oauth_enum(const Config &cfg, HttpClient &http,
       {"https://accounts.google.com/o/saml2?idpid=" + org, "Google SAML"},
   };
 
+  // Iterate over targets.
   for (const auto &check : checks) {
     auto resp = http.get(check.url);
     if (resp.status_code == 200 || resp.status_code == 302) {
@@ -227,6 +238,7 @@ std::vector<Finding> scan_oauth_enum(const Config &cfg, HttpClient &http,
 }
 
 /// Cloud resource naming intelligence.
+/// Scanner implementation.
 std::vector<Finding> scan_cloud_naming(const Config &cfg, HttpClient &http,
                                        const CrawlResult &) {
   std::vector<Finding> findings;
@@ -260,6 +272,7 @@ std::vector<Finding> scan_cloud_naming(const Config &cfg, HttpClient &http,
       {"https://" + org + ".onrender.com", "Render"},
   };
 
+  // Iterate over targets.
   for (const auto &res : resources) {
     auto resp = http.get(res.url);
     if (resp.status_code > 0 && resp.status_code < 500 && resp.error.empty()) {
@@ -272,6 +285,7 @@ std::vector<Finding> scan_cloud_naming(const Config &cfg, HttpClient &http,
 }
 
 /// User enumeration via common SaaS login flows.
+/// Scanner implementation.
 std::vector<Finding> scan_user_enum(const Config &cfg, HttpClient &http,
                                     const CrawlResult &) {
   std::vector<Finding> findings;
@@ -285,6 +299,7 @@ std::vector<Finding> scan_user_enum(const Config &cfg, HttpClient &http,
   auto resp = http.post("https://login.microsoftonline.com/common/GetCredentialType",
                         R"({"Username":"nonexistent_user_xyz@)" + domain + R"("})",
                         "application/json");
+  // Check response status.
   if (resp.status_code == 200) {
     // If IfExistsResult == 0, user exists; 1 = doesn't exist.
     // If both return same response, enumeration is not possible.

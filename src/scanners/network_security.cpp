@@ -21,6 +21,7 @@ std::string run_cmd(const std::string &cmd) {
 }
 
 /// TLS/SSL analysis — check certificate validity, weak ciphers, protocols.
+/// Scanner implementation.
 std::vector<Finding> scan_tls(const Config &cfg, HttpClient &http,
                               const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -57,6 +58,7 @@ std::vector<Finding> scan_tls(const Config &cfg, HttpClient &http,
       {"TLS 1.1", "-tls1_1", "medium"},
   };
 
+  // Iterate over targets.
   for (const auto &p : weak_protos) {
     std::string result = run_cmd("echo | openssl s_client -connect " + domain +
                                  ":443 " + p.flag + " 2>&1");
@@ -73,6 +75,7 @@ std::vector<Finding> scan_tls(const Config &cfg, HttpClient &http,
   const std::vector<std::string> weak_ciphers = {"RC4", "DES", "NULL", "EXPORT", "MD5"};
   std::string ciphers = run_cmd("echo | openssl s_client -connect " + domain +
                                 ":443 -cipher ALL 2>/dev/null | grep 'Cipher'");
+  // Iterate over targets.
   for (const auto &wc : weak_ciphers) {
     if (ciphers.find(wc) != std::string::npos) {
       findings.push_back({"Weak Cipher: " + wc, "high", domain,
@@ -93,6 +96,7 @@ std::vector<Finding> scan_tls(const Config &cfg, HttpClient &http,
 }
 
 /// Email security — SPF, DKIM, DMARC record checks.
+/// Scanner implementation.
 std::vector<Finding> scan_email_security(const Config &cfg, HttpClient &,
                                          const CrawlResult &) {
   std::vector<Finding> findings;
@@ -140,6 +144,7 @@ std::vector<Finding> scan_email_security(const Config &cfg, HttpClient &,
   const std::vector<std::string> selectors = {
       "default", "google", "selector1", "selector2", "k1", "mail", "dkim"};
   bool dkim_found = false;
+  // Iterate over targets.
   for (const auto &sel : selectors) {
     std::string dkim = run_cmd("dig +short TXT " + sel + "._domainkey." + domain + " 2>/dev/null");
     if (dkim.find("v=DKIM") != std::string::npos || dkim.find("p=") != std::string::npos) {
@@ -165,6 +170,7 @@ std::vector<Finding> scan_email_security(const Config &cfg, HttpClient &,
 }
 
 /// DNS security — DNSSEC validation, CAA records, zone transfer.
+/// Scanner implementation.
 std::vector<Finding> scan_dns_security(const Config &cfg, HttpClient &,
                                        const CrawlResult &) {
   std::vector<Finding> findings;

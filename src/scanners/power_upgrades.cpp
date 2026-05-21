@@ -13,6 +13,7 @@ namespace {
 /// Load lines from a file, skipping comments and blanks.
 std::vector<std::string> load_wordlist(const std::string &filename) {
   std::vector<std::string> lines;
+  // Iterate over targets.
   for (const auto &dir : {"./payloads", "../payloads", "/usr/share/apex-cli/payloads"}) {
     std::string path = std::string(dir) + "/" + filename;
     std::ifstream f(path);
@@ -27,19 +28,23 @@ std::vector<std::string> load_wordlist(const std::string &filename) {
 }
 
 /// JS endpoint extraction — find API routes in JavaScript files.
+/// Scanner implementation.
 std::vector<Finding> scan_js_endpoints(const Config &, HttpClient &http,
                                        const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
   std::set<std::string> js_urls;
+  // Iterate over targets.
   for (const auto &url : crawl.urls) {
     if (url.find(".js") != std::string::npos ||
         url.find("/static/js/") != std::string::npos ||
         url.find("/_next/") != std::string::npos)
       js_urls.insert(url);
   }
+  // Iterate over targets.
   for (const auto &p : {"/main.js", "/app.js", "/bundle.js", "/vendor.js",
                          "/_next/static/chunks/main.js", "/static/js/main.js"})
     js_urls.insert(base + p);
@@ -52,6 +57,7 @@ std::vector<Finding> scan_js_endpoints(const Config &, HttpClient &http,
   };
 
   std::set<std::string> discovered;
+  // Iterate over targets.
   for (const auto &js_url : js_urls) {
     auto resp = http.get(js_url);
     if (resp.status_code != 200 || resp.body.size() < 100) continue;
@@ -70,6 +76,7 @@ std::vector<Finding> scan_js_endpoints(const Config &, HttpClient &http,
 
   // Probe discovered endpoints.
   std::vector<std::string> live;
+  // Iterate over targets.
   for (const auto &ep : discovered) {
     std::string full = ep.find("http") == 0 ? ep : base + ep;
     auto resp = http.get(full);
@@ -90,9 +97,11 @@ std::vector<Finding> scan_js_endpoints(const Config &, HttpClient &http,
 }
 
 /// Auto-register and scan authenticated endpoints.
+/// Scanner implementation.
 std::vector<Finding> scan_authenticated(const Config &, HttpClient &http,
                                         const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
@@ -102,6 +111,7 @@ std::vector<Finding> scan_authenticated(const Config &, HttpClient &http,
   std::string auth_token;
   std::string test_email = "apex_test_" + std::to_string(time(nullptr)) + "@test.com";
 
+  // Iterate over targets.
   for (const auto &path : reg_paths) {
     std::string body = R"({"email":")" + test_email +
                        R"(","password":"ApexTest123!","username":"apextest"})";
@@ -129,6 +139,7 @@ std::vector<Finding> scan_authenticated(const Config &, HttpClient &http,
       "/api/me", "/api/user", "/api/profile", "/api/account",
       "/api/admin", "/api/users", "/api/dashboard"};
 
+  // Iterate over targets.
   for (const auto &path : auth_paths) {
     auto unauth = http.get(base + path);
     auto authed = http.get(base + path, {{"Authorization", "Bearer " + auth_token}});
@@ -153,6 +164,7 @@ std::vector<Finding> scan_authenticated(const Config &, HttpClient &http,
 }
 
 /// Arjun-style param brute-force.
+/// Scanner implementation.
 std::vector<Finding> scan_param_bruteforce(const Config &, HttpClient &http,
                                            const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -200,6 +212,7 @@ std::vector<Finding> scan_param_bruteforce(const Config &, HttpClient &http,
 }
 
 /// Differential response analysis.
+/// Scanner implementation.
 std::vector<Finding> scan_differential(const Config &, HttpClient &http,
                                        const CrawlResult &crawl) {
   std::vector<Finding> findings;
