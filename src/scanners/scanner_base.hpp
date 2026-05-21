@@ -64,6 +64,7 @@ std::vector<Scanner> register_web_scanners();
 std::vector<Scanner> register_exploit_scanners();
 std::vector<Scanner> register_extra_scanners();
 std::vector<Scanner> register_waf_scanners();
+std::vector<Scanner> register_supply_chain_scanners();
 std::vector<Scanner> register_advanced_auth_scanners();
 std::vector<Scanner> register_power_scanners();
 std::vector<Scanner> register_oob_confirmed_scanners();

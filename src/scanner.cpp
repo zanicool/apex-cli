@@ -35,6 +35,7 @@ std::vector<Scanner> get_scanners() {
   append(register_exploit_scanners());
   append(register_extra_scanners());
   append(register_waf_scanners());
+  append(register_supply_chain_scanners());
   append(register_advanced_auth_scanners());
   append(register_power_scanners());
   append(register_oob_confirmed_scanners());
