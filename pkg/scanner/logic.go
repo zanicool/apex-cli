@@ -16,8 +16,10 @@ import (
 func scanRaceCondition(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, _ *oob.Client) []Finding {
 	var findings []Finding
 	raceKeywords := []string{"coupon", "redeem", "transfer", "vote", "like", "follow",
-		"apply", "claim", "register", "withdraw", "purchase", "checkout"}
+		"apply", "claim", "register", "withdraw", "purchase", "checkout",
+		"add", "create", "submit", "confirm", "verify", "activate"}
 
+	// Test forms
 	for _, form := range crawl.Forms {
 		action := form.Action
 		isRaceTarget := false
@@ -43,33 +45,62 @@ func scanRaceCondition(cfg *engine.Config, http *engine.HTTPClient, crawl *crawl
 			data += inp.Name + "=" + val
 		}
 
-		// Fire 30 parallel requests
-		var wg sync.WaitGroup
-		var mu sync.Mutex
-		successes := 0
-		for i := 0; i < 30; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				resp := http.Post(action, "application/x-www-form-urlencoded", data)
-				if resp.Err == nil && resp.StatusCode >= 200 && resp.StatusCode < 400 {
-					mu.Lock()
-					successes++
-					mu.Unlock()
-				}
-			}()
-		}
-		wg.Wait()
-
-		if successes > 1 {
-			findings = append(findings, Finding{
-				Type: "Race Condition — Limit Bypass", Severity: "high",
-				URL: action, Detail: fmt.Sprintf("%d/30 parallel requests succeeded. Duplicate action possible.", successes),
-				Template: "apex-race-condition",
-			})
+		result := raceTest(http, "POST", action, "application/x-www-form-urlencoded", data)
+		if result != nil {
+			findings = append(findings, *result)
 		}
 	}
+
+	// Test API endpoints from crawl
+	for _, page := range crawl.Pages {
+		urlLower := strings.ToLower(page.URL)
+		for _, kw := range raceKeywords {
+			if strings.Contains(urlLower, kw) && strings.Contains(urlLower, "/api") {
+				result := raceTest(http, "POST", page.URL, "application/json", "{}")
+				if result != nil {
+					findings = append(findings, *result)
+				}
+				break
+			}
+		}
+	}
+
 	return findings
+}
+
+func raceTest(http *engine.HTTPClient, method, url, contentType, body string) *Finding {
+	// Fire 20 parallel requests simultaneously
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	successes := 0
+	responses := make([]int, 0, 20)
+
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp := http.Post(url, contentType, body)
+			if resp.Err == nil {
+				mu.Lock()
+				responses = append(responses, resp.StatusCode)
+				if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+					successes++
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+
+	// If multiple succeeded AND we got consistent 200s, it's likely a race condition
+	if successes > 1 {
+		return &Finding{
+			Type: "Race Condition — Limit Bypass", Severity: "high",
+			URL: url, Detail: fmt.Sprintf("%d/20 parallel requests succeeded — duplicate action possible", successes),
+			Template: "apex-race-condition",
+		}
+	}
+	return nil
 }
 
 // --- Price Manipulation ---
@@ -239,10 +270,22 @@ func scanForcedBrowsing(cfg *engine.Config, http *engine.HTTPClient, crawl *craw
 				defer func() { <-sem }()
 
 				resp := http.Get(url)
-				if resp.Err != nil || resp.StatusCode == 404 || resp.StatusCode == 403 {
+				if resp.Err != nil || resp.StatusCode == 404 || resp.StatusCode == 403 || resp.StatusCode == 401 {
+					return
+				}
+				if engine.IsWAFChallenge(resp) {
+					return
+				}
+				// Reject redirects to login/auth pages
+				if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 					return
 				}
 				if resp.StatusCode == 200 && len(resp.Body) > 100 {
+					// Reject if it's actually a login/auth page
+					bodyLower := strings.ToLower(resp.Body)
+					if strings.Contains(bodyLower, "sign in") || strings.Contains(bodyLower, "log in") || strings.Contains(bodyLower, "login") {
+						return
+					}
 					// Verify it's not a generic page
 					if strings.Contains(strings.ToLower(resp.Body), "admin") ||
 						strings.Contains(strings.ToLower(resp.Body), "dashboard") ||

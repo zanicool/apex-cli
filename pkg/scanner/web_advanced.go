@@ -163,8 +163,10 @@ func scanDOMXSS(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Resu
 			sinks := sinkPattern.FindAllString(resp.Body, -1)
 			sources := sourcePattern.FindAllString(resp.Body, -1)
 			if len(sinks) > 0 && len(sources) > 0 {
+				uniqSources := unique(sources)
+				uniqSinks := unique(sinks)
 				mu.Lock()
-				findings = append(findings, Finding{Type: "Potential DOM XSS", Severity: "medium", URL: url, Detail: fmt.Sprintf("Sources: %v → Sinks: %v", unique(sources)[:min(3, len(sources))], unique(sinks)[:min(3, len(sinks))]), Template: "apex-dom-xss"})
+				findings = append(findings, Finding{Type: "Potential DOM XSS", Severity: "medium", URL: url, Detail: fmt.Sprintf("Sources: %v → Sinks: %v", uniqSources[:min(3, len(uniqSources))], uniqSinks[:min(3, len(uniqSinks))]), Template: "apex-dom-xss"})
 				mu.Unlock()
 			}
 		}(page.URL)

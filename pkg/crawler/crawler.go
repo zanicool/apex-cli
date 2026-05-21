@@ -120,6 +120,22 @@ func Run(cfg *engine.Config, http *engine.HTTPClient, targets []string) *Result 
 				for u, ps := range params {
 					result.Params[u] = append(result.Params[u], ps...)
 				}
+				// Add form actions as crawl targets with their inputs as params
+				for _, form := range forms {
+					action := form.Action
+					if action == "" {
+						action = target
+					}
+					var formParams []string
+					for _, inp := range form.Inputs {
+						if inp.Name != "" {
+							formParams = append(formParams, inp.Name)
+						}
+					}
+					if len(formParams) > 0 {
+						result.Params[action] = append(result.Params[action], formParams...)
+					}
+				}
 				mu.Unlock()
 
 				// Queue new links (same host or related domains)
@@ -214,6 +230,40 @@ func extractParams(pageURL, body string) map[string][]string {
 	// From body links
 	for _, m := range paramRe.FindAllStringSubmatch(body, -1) {
 		params[baseURL] = append(params[baseURL], m[1])
+	}
+	// From form inputs — extract input names as params for the form action
+	formActions := actionRe.FindAllStringSubmatch(body, -1)
+	inputNames := inputRe.FindAllStringSubmatch(body, -1)
+	if len(inputNames) > 0 {
+		actionURL := baseURL
+		if len(formActions) > 0 && formActions[0][1] != "" {
+			actionURL = formActions[0][1]
+			if !strings.HasPrefix(actionURL, "http") {
+				actionURL = baseURL
+			}
+		}
+		for _, m := range inputNames {
+			params[actionURL] = append(params[actionURL], m[1])
+		}
+		// Also add to the page URL itself (for GET forms)
+		if actionURL != baseURL {
+			for _, m := range inputNames {
+				params[baseURL] = append(params[baseURL], m[1])
+			}
+		}
+	}
+	// Extract params from href links in body
+	for _, m := range hrefRe.FindAllStringSubmatch(body, -1) {
+		if len(m) >= 2 && strings.Contains(m[1], "?") {
+			linkParams := paramRe.FindAllStringSubmatch(m[1], -1)
+			linkBase := strings.Split(m[1], "?")[0]
+			if !strings.HasPrefix(linkBase, "http") {
+				linkBase = baseURL
+			}
+			for _, p := range linkParams {
+				params[linkBase] = append(params[linkBase], p[1])
+			}
+		}
 	}
 	return params
 }

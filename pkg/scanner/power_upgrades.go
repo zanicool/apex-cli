@@ -169,7 +169,7 @@ func scanJSEndpoints(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler
 
 // --- Auto-Register + Authenticated Scan ---
 
-func scanAuthenticated(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, _ *oob.Client) []Finding {
+func scanAuthenticatedLegacy(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, _ *oob.Client) []Finding {
 	var findings []Finding
 	if len(crawl.Pages) == 0 {
 		return findings
@@ -352,7 +352,7 @@ func scanParamBruteforce(cfg *engine.Config, http *engine.HTTPClient, crawl *cra
 
 // --- Differential Response Analyzer ---
 
-func scanDifferential(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, _ *oob.Client) []Finding {
+func scanDifferentialLegacy(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, _ *oob.Client) []Finding {
 	var findings []Finding
 	var mu sync.Mutex
 	sem := make(chan struct{}, cfg.Threads)
@@ -378,12 +378,21 @@ func scanDifferential(cfg *engine.Config, http *engine.HTTPClient, crawl *crawle
 				{"Cookie", "admin=true; role=admin", "admin cookie"},
 				{"X-Forwarded-For", "127.0.0.1", "internal IP"},
 			}
+
+			// Skip pages that redirect to OAuth/login (dynamic nonces cause FPs)
+			baseLower := strings.ToLower(baseResp.Body)
+			if strings.Contains(baseLower, "oauth") || strings.Contains(baseLower, "microsoftonline") ||
+				strings.Contains(baseLower, "accounts.google") || strings.Contains(baseLower, "login") ||
+				baseResp.StatusCode == 301 || baseResp.StatusCode == 302 {
+				return
+			}
+
 			for _, ah := range authHeaders {
 				items := []engine.RequestItem{{URL: pageURL, Method: "GET", Headers: map[string]string{ah.header: ah.value}}}
 				for resp := range http.BatchRequest(items, 1) {
 					if resp.Err == nil && resp.StatusCode == 200 && resp.Body != baseResp.Body {
 						sizeDiff := len(resp.Body) - len(baseResp.Body)
-						if sizeDiff > 50 { // More content with header = info leak
+						if sizeDiff > 500 { // 500+ bytes = real content difference, not nonces
 							mu.Lock()
 							findings = append(findings, Finding{
 								Type: "Differential: Extra Data with " + ah.name, Severity: "high",
@@ -400,7 +409,7 @@ func scanDifferential(cfg *engine.Config, http *engine.HTTPClient, crawl *crawle
 			for _, method := range []string{"POST", "PUT", "PATCH", "DELETE"} {
 				items := []engine.RequestItem{{URL: pageURL, Method: method, Headers: map[string]string{"Content-Type": "application/json"}}}
 				for resp := range http.BatchRequest(items, 1) {
-					if resp.Err == nil && resp.StatusCode == 200 && resp.Body != baseResp.Body && len(resp.Body) > len(baseResp.Body)+50 {
+					if resp.Err == nil && resp.StatusCode == 200 && resp.Body != baseResp.Body && len(resp.Body) > len(baseResp.Body)+500 {
 						mu.Lock()
 						findings = append(findings, Finding{
 							Type: "Differential: " + method + " Returns Extra Data", Severity: "medium",

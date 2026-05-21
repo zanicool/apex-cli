@@ -2,7 +2,6 @@ package scanner
 
 import (
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
@@ -13,86 +12,6 @@ import (
 	"github.com/zanicool/apex-cli/pkg/engine"
 	"github.com/zanicool/apex-cli/pkg/oob"
 )
-
-// --- GraphQL Full Suite ---
-
-func scanGraphQL(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, _ *oob.Client) []Finding {
-	var findings []Finding
-	gqlPaths := []string{"/graphql", "/gql", "/api/graphql", "/v1/graphql", "/query", "/api/gql"}
-
-	for _, page := range crawl.Pages[:min(5, len(crawl.Pages))] {
-		baseURL := strings.Split(page.URL, "/")[0] + "//" + strings.Split(page.URL, "/")[2]
-		for _, path := range gqlPaths {
-			endpoint := baseURL + path
-
-			// Introspection
-			introspection := `{"query":"{ __schema { types { name fields { name args { name type { name } } } } mutationType { fields { name args { name type { name } } } } } }"}`
-			resp := http.Post(endpoint, "application/json", introspection)
-			if resp.Err != nil || !strings.Contains(resp.Body, "__schema") {
-				continue
-			}
-
-			findings = append(findings, Finding{
-				Type: "GraphQL Introspection Enabled", Severity: "medium",
-				URL: endpoint, Detail: "Full schema exposed via introspection",
-				Template: "apex-graphql-introspection",
-			})
-
-			// Depth attack (DoS)
-			depthQuery := `{"query":"{ __schema { types { fields { type { fields { type { fields { type { name } } } } } } } } }"}`
-			dResp := http.Post(endpoint, "application/json", depthQuery)
-			if dResp.Err == nil && dResp.Duration > 3*time.Second {
-				findings = append(findings, Finding{
-					Type: "GraphQL Depth Attack (DoS)", Severity: "high",
-					URL: endpoint, Detail: fmt.Sprintf("Deep nested query took %.1fs — no depth limit", dResp.Duration.Seconds()),
-					Template: "apex-graphql-dos",
-				})
-			}
-
-			// Batching attack
-			batchQuery := `[{"query":"{ __typename }"},{"query":"{ __typename }"},{"query":"{ __typename }"},{"query":"{ __typename }"},{"query":"{ __typename }"}]`
-			bResp := http.Post(endpoint, "application/json", batchQuery)
-			if bResp.Err == nil && bResp.StatusCode == 200 && strings.Count(bResp.Body, "__typename") >= 5 {
-				findings = append(findings, Finding{
-					Type: "GraphQL Batching Enabled — Rate Limit Bypass", Severity: "medium",
-					URL: endpoint, Detail: "Server processes batched queries — can bypass per-request rate limits",
-					Template: "apex-graphql-batch",
-				})
-			}
-
-			// Mutation fuzzing
-			var schema struct {
-				Data struct {
-					Schema struct {
-						MutationType struct {
-							Fields []struct {
-								Name string `json:"name"`
-							} `json:"fields"`
-						} `json:"mutationType"`
-					} `json:"__schema"`
-				} `json:"data"`
-			}
-			json.Unmarshal([]byte(resp.Body), &schema)
-			if schema.Data.Schema.MutationType.Fields != nil {
-				for _, mut := range schema.Data.Schema.MutationType.Fields {
-					if containsAny(strings.ToLower(mut.Name), []string{"delete", "remove", "admin", "update", "create", "reset"}) {
-						mutQuery := fmt.Sprintf(`{"query":"mutation { %s }"}`, mut.Name)
-						mResp := http.Post(endpoint, "application/json", mutQuery)
-						if mResp.Err == nil && mResp.StatusCode == 200 && !strings.Contains(mResp.Body, "error") {
-							findings = append(findings, Finding{
-								Type: "GraphQL Dangerous Mutation Accessible", Severity: "critical",
-								URL: endpoint, Detail: fmt.Sprintf("Mutation '%s' executable without auth", mut.Name),
-								Template: "apex-graphql-mutation",
-							})
-						}
-					}
-				}
-			}
-			break // Found GraphQL endpoint
-		}
-	}
-	return findings
-}
 
 // --- HTTP Request Smuggling ---
 

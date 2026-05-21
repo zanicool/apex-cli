@@ -366,11 +366,17 @@ func scanContentDiscovery(cfg *engine.Config, http *engine.HTTPClient, crawl *cr
 
 			// Real content: differs from 404 fingerprint AND has meaningful content
 			if fp.DiffersFrom(notFoundFP) && resp.StatusCode != 404 && resp.StatusCode < 500 && len(resp.Body) > 50 {
+				// Skip WAF blanket 403s (all return same status+similar size)
+				if resp.StatusCode == 403 {
+					return
+				}
 				sev := "info"
-				if strings.Contains(p, ".env") || strings.Contains(p, "config") || strings.Contains(p, "backup") || strings.Contains(p, "dump") || strings.Contains(p, "actuator") || strings.Contains(p, "debug") {
-					sev = "high"
-				} else if strings.Contains(p, "admin") || strings.Contains(p, "swagger") || strings.Contains(p, "graphql") || strings.Contains(p, ".git") {
-					sev = "medium"
+				if resp.StatusCode == 200 {
+					if strings.Contains(p, ".env") || strings.Contains(p, "config") || strings.Contains(p, "backup") || strings.Contains(p, "dump") || strings.Contains(p, "actuator") || strings.Contains(p, "debug") {
+						sev = "high"
+					} else if strings.Contains(p, "admin") || strings.Contains(p, "swagger") || strings.Contains(p, "graphql") || strings.Contains(p, ".git") {
+						sev = "medium"
+					}
 				}
 				mu.Lock()
 				findings = append(findings, Finding{

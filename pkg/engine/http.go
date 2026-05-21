@@ -112,49 +112,76 @@ func (h *HTTPClient) Do(req *http.Request) *Response {
 	if h.cfg.DryRun {
 		return &Response{URL: req.URL.String(), StatusCode: 0}
 	}
-	// Rate limiting with jitter
-	if h.cfg.Rate > 0 {
-		jitter := h.cfg.Rate * h.jitter * (rand.Float64()*2 - 1)
-		time.Sleep(time.Duration((h.cfg.Rate + jitter) * float64(time.Second)))
-	}
 	// Rotate User-Agent
 	if req.Header.Get("User-Agent") == "" {
 		req.Header.Set("User-Agent", userAgents[rand.Intn(len(userAgents))])
 	}
 
-	start := time.Now()
-	resp, err := h.getClient().Do(req)
-	duration := time.Since(start)
-	h.reqCount.Add(1)
+	maxRetries := 3
+	var lastResp *Response
 
-	if err != nil {
-		return &Response{URL: req.URL.String(), Err: err, Duration: duration}
-	}
-	defer resp.Body.Close()
-
-	// Read body with size limit (10MB)
-	buf := make([]byte, 0, 4096)
-	tmp := make([]byte, 4096)
-	total := 0
-	for total < 10*1024*1024 {
-		n, err := resp.Body.Read(tmp)
-		if n > 0 {
-			buf = append(buf, tmp[:n]...)
-			total += n
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Rate limiting with jitter
+		if h.cfg.Rate > 0 {
+			jitter := h.cfg.Rate * h.jitter * (rand.Float64()*2 - 1)
+			time.Sleep(time.Duration((h.cfg.Rate + jitter) * float64(time.Second)))
 		}
+
+		// Exponential backoff on retry
+		if attempt > 0 {
+			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
+			jitter := time.Duration(rand.Float64() * float64(backoff) * 0.3)
+			time.Sleep(backoff + jitter)
+		}
+
+		start := time.Now()
+		resp, err := h.getClient().Do(req)
+		duration := time.Since(start)
+		h.reqCount.Add(1)
+
 		if err != nil {
-			break
+			lastResp = &Response{URL: req.URL.String(), Err: err, Duration: duration}
+			continue // retry on connection errors
 		}
-	}
 
-	return &Response{
-		URL:        req.URL.String(),
-		StatusCode: resp.StatusCode,
-		Body:       string(buf),
-		Headers:    resp.Header,
-		Size:       total,
-		Duration:   duration,
+		// Read body with size limit (10MB)
+		buf := make([]byte, 0, 4096)
+		tmp := make([]byte, 4096)
+		total := 0
+		for total < 10*1024*1024 {
+			n, readErr := resp.Body.Read(tmp)
+			if n > 0 {
+				buf = append(buf, tmp[:n]...)
+				total += n
+			}
+			if readErr != nil {
+				break
+			}
+		}
+		resp.Body.Close()
+
+		lastResp = &Response{
+			URL:        req.URL.String(),
+			StatusCode: resp.StatusCode,
+			Body:       string(buf),
+			Headers:    resp.Header,
+			Size:       total,
+			Duration:   duration,
+		}
+
+		// Retry on 429 (rate limited) or 503 (overloaded)
+		if resp.StatusCode == 429 || resp.StatusCode == 503 {
+			// Respect Retry-After header
+			if ra := resp.Header.Get("Retry-After"); ra != "" {
+				if d, err := time.ParseDuration(ra + "s"); err == nil {
+					time.Sleep(d)
+				}
+			}
+			continue
+		}
+		return lastResp // success
 	}
+	return lastResp
 }
 
 func (h *HTTPClient) Get(targetURL string) *Response {
@@ -267,4 +294,30 @@ func FormatDuration(d time.Duration) string {
 		return fmt.Sprintf("%.1fs", d.Seconds())
 	}
 	return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
+}
+
+// IsWAFChallenge detects if a response is a WAF/CDN challenge page (not real content)
+func IsWAFChallenge(resp *Response) bool {
+	if resp == nil || resp.Err != nil {
+		return false
+	}
+	// Cloudflare challenge
+	if strings.Contains(resp.Body, "Just a moment...") || strings.Contains(resp.Body, "cf-browser-verification") ||
+		strings.Contains(resp.Body, "challenge-platform") || strings.Contains(resp.Body, "Checking your browser") ||
+		strings.Contains(resp.Body, "Cloudflare Access") {
+		return true
+	}
+	// Akamai
+	if strings.Contains(resp.Body, "Access Denied") && strings.Contains(resp.Body, "Reference&#32;&#35;") {
+		return true
+	}
+	// AWS WAF
+	if strings.Contains(resp.Body, "Request blocked") && resp.StatusCode == 403 {
+		return true
+	}
+	// Generic bot detection
+	if strings.Contains(resp.Body, "Please verify you are a human") || strings.Contains(resp.Body, "captcha") {
+		return true
+	}
+	return false
 }

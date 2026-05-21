@@ -339,3 +339,53 @@ func abs(x int) int {
 	}
 	return x
 }
+
+// IsCloudflareChallenge checks if a target returns a Cloudflare challenge/block page
+func IsCloudflareChallenge(http *engine.HTTPClient, target string) bool {
+	resp := http.Get(target)
+	if resp.Err != nil {
+		return false
+	}
+	body := resp.Body
+	// Cloudflare managed challenge markers
+	cfMarkers := []string{
+		"challenges.cloudflare.com",
+		"cf-chl-bypass",
+		"_cf_chl_opt",
+		"Just a moment...",
+		"cf-error-details",
+		"cdn-cgi/challenge-platform",
+	}
+	for _, marker := range cfMarkers {
+		if strings.Contains(body, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsSPACatchAll checks if a target returns identical responses for any path (SPA with client-side routing)
+func IsSPACatchAll(http *engine.HTTPClient, target string) bool {
+	paths := []string{"/", "/apex_fake_path_x9k2m", "/apex_fake_path_q7w3n", "/checkout/complete", "/api/upload"}
+	var bodies []string
+	for _, p := range paths {
+		resp := http.Get(target + p)
+		if resp.Err != nil {
+			return false
+		}
+		if resp.StatusCode == 404 || resp.StatusCode == 403 || resp.StatusCode == 301 || resp.StatusCode == 302 {
+			return false
+		}
+		bodies = append(bodies, hashBody(resp.Body))
+	}
+	// If all paths return identical content, it's a SPA catch-all
+	if len(bodies) >= 4 {
+		for i := 1; i < len(bodies); i++ {
+			if bodies[i] != bodies[0] {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}

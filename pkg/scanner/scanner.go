@@ -175,17 +175,78 @@ func Run(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, oob
 		{"Blind XSS Callback", scanBlindXSSCallback},
 		{"API Schema Inference", scanAPISchemaInference},
 		{"Header Deep Analysis", scanHeaderAnalysis},
+		// Bounty Killer (H1-optimized techniques)
+		{"JWT Attacks", scanJWTAttacks},
+		{"Password Reset Poisoning", scanPasswordResetPoison},
+		// Nuclear Tier (200% better)
+		{"Tech-Targeted Exploits", scanTechTargeted},
+		{"API Anomaly Detection", scanResponseAnomalies},
+		// Neutrino Tier (differential role engine)
+		{"Role Differential (IDOR/BAC)", scanRoleDifferential},
+		// GOAT Tier (what no other scanner has)
+		{"AI Payload Mutation", scanAIPayloads},
+		{"Business Logic", scanBusinessLogic},
+		{"Response Differential", scanDifferential},
+		// Browser-confirmed advanced
+		{"DOM XSS Advanced", scanBrowserDOMXSSAdvanced},
+		{"SPA Route Discovery", scanSPACrawl},
+		{"postMessage Advanced", scanPostMessageAdvanced},
+		// Cloud security
+		{"Cloud Security", scanCloudSecurity},
+		// Advanced attacks
+		{"Subdomain Takeover Real", scanSubdomainTakeoverReal},
+		{"Stored XSS", scanStoredXSS},
+		{"OAuth Bypass", scanOAuthBypass},
+		{"Email Header Injection", scanEmailHeaderInjection},
+		{"CORS All Subdomains", scanCORSAllSubdomains},
+		{"Open Redirect OAuth Chain", scanOpenRedirectOAuthChainReal},
+		{"Host Header Cache Poison", scanHostHeaderCache},
+		{"Password Reset Referer Leak", scanPasswordResetReferer},
+		{"CRLF Injection Real", scanCRLFInjection},
+		{"Path Traversal Deep", scanPathTraversalDeep},
+		{"HTTP Smuggling Real", scanHTTPSmugglingReal},
+		{"WebSocket Discovery", scanWebSocketInjection},
+		// Extra attacks
+		{"Blind XSS (OOB)", scanBlindXSS},
+		{"CSV/Formula Injection", scanCSVInjection},
+		{"Mass Assignment", scanMassAssignmentReal},
+		{"Exposed Databases", scanExposedDatabases},
+		{".git Exposure", scanGitExposure},
+		{"DNS Zone Transfer", scanDNSZoneTransferReal},
+		{"JWT kid Injection", scanJWTKidInjection},
+		{"Reverse Tabnabbing", scanReverseTabnabbing},
+		{"LocalStorage Secrets", scanLocalStorageSecrets},
+		{"Backup Files", scanBackupFiles},
+		// Batch 2
+		{"Hidden Params", scanHiddenParams},
+		{"Virtual Host Discovery", scanVHostDiscovery},
+		{"User Enum Timing", scanUserEnumTiming},
+		{"Internal IP Disclosure", scanInternalIPDisclosure},
+		{"Deserialization Advanced", scanDeserializationAdvanced},
+		{"Robots.txt Secrets", scanRobotsTxtSecrets},
+		{"Workflow Bypass", scanWorkflowBypassReal},
+		{"Client-Side Template Injection", scanClientSideTemplateInjection},
 	}
 
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, 8) // 8 scanner types in parallel
-	scanTimeout := 60 * time.Second
+	sem := make(chan struct{}, 20) // 20 scanner types in parallel
+	scanTimeout := 30 * time.Second
 	if cfg.Deep {
-		scanTimeout = 180 * time.Second
+		scanTimeout = 60 * time.Second
 	}
+
+	// Smart filtering: analyze target and skip irrelevant scanners
+	smartFilter := AnalyzeTarget(http, crawl)
+
+	// Prioritize params: test likely-injectable ones first, skip static assets
+	crawl.Params = PrioritizeParams(crawl.Params)
 
 	for _, s := range scanners {
 		if cfg.Skip != "" && strings.Contains(cfg.Skip, strings.ToLower(s.name)) {
+			continue
+		}
+		// Smart skip: don't run scanners that aren't relevant for this target
+		if !smartFilter.ShouldRunScanner(s.name) {
 			continue
 		}
 		wg.Add(1)
@@ -193,6 +254,11 @@ func Run(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, oob
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Printf("    [✗] %s: panic recovered: %v\n", name, r)
+				}
+			}()
 			fmt.Printf("    [→] %s\n", name)
 
 			// Per-scanner timeout
@@ -218,6 +284,32 @@ func Run(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, oob
 
 	// Smart deduplication — remove duplicate findings for same endpoint
 	findings = DeduplicateFindings(findings)
+
+	// Intel DB: filter known false positives
+	intel := GetIntelDB()
+	var filtered []Finding
+	for _, f := range findings {
+		if !intel.IsFalsePositive(f) {
+			filtered = append(filtered, f)
+		}
+	}
+	findings = filtered
+
+	// Verification layer — re-test findings, score confidence, remove false positives
+	findings = VerifyAndScore(cfg, http, findings)
+
+	// Exploit Chain Engine — combine findings into higher-impact chains
+	chains := RunExploitChains(cfg, http, findings)
+	findings = append(chains, findings...)
+
+	// Record successful payloads to intel DB
+	for _, f := range findings {
+		if f.Payload != "" {
+			intel.RecordPayload(f.Type, f.Payload, "", "")
+		}
+	}
+	intel.Save()
+
 	return findings
 }
 
@@ -392,6 +484,9 @@ func scanSSRF(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result
 	ssrfParams := []string{"url", "uri", "link", "src", "source", "fetch", "request",
 		"proxy", "redirect", "image", "avatar", "webhook", "callback", "endpoint", "dest"}
 
+	// Skip static assets — these are never server-side fetched
+	staticExts := []string{".js", ".css", ".png", ".jpg", ".gif", ".svg", ".woff", ".map", ".ico"}
+
 	ssrfPayloads := []string{
 		"http://169.254.169.254/latest/meta-data/",
 		"http://127.0.0.1:80/",
@@ -402,6 +497,22 @@ func scanSSRF(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result
 	}
 
 	for u, params := range crawl.Params {
+		// Skip static asset URLs — never server-side fetched
+		uLower := strings.ToLower(u)
+		isStatic := false
+		for _, ext := range staticExts {
+			if strings.Contains(uLower, ext) {
+				isStatic = true
+				break
+			}
+		}
+		if isStatic {
+			continue
+		}
+		// Only test URLs that are actual endpoints (have query params or are API paths)
+		if !strings.Contains(u, "?") && !strings.Contains(u, "/api") {
+			continue
+		}
 		for _, p := range params {
 			pLower := strings.ToLower(p)
 			isSSRFParam := false
@@ -423,7 +534,7 @@ func scanSSRF(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result
 
 					testURL := injectParam(baseURL, param, pl)
 					resp := http.Get(testURL)
-					if resp.Err != nil {
+					if resp.Err != nil || engine.IsWAFChallenge(resp) {
 						return
 					}
 					bodyLower := strings.ToLower(resp.Body)
@@ -472,51 +583,68 @@ var cmdiPayloads = []struct {
 func scanCMDi(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, _ *oob.Client) []Finding {
 	var findings []Finding
 	var mu sync.Mutex
-	sem := make(chan struct{}, cfg.Threads)
-	var wg sync.WaitGroup
 
+	type job struct {
+		url, param string
+		pl         struct{ payload, detect string }
+	}
+	var jobs []job
 	for u, params := range crawl.Params {
+		// Only test actual URL endpoints, not JS-extracted params
+		if !strings.Contains(u, "?") && !strings.Contains(u, "/api") {
+			continue
+		}
 		for _, p := range params {
 			for _, payload := range cmdiPayloads {
-				wg.Add(1)
-				go func(baseURL, param string, pl struct{ payload, detect string }) {
-					defer wg.Done()
-					sem <- struct{}{}
-					defer func() { <-sem }()
-
-					testURL := injectParam(baseURL, param, pl.payload)
-					resp := http.Get(testURL)
-					if resp.Err != nil {
-						return
-					}
-					if pl.detect != "" && strings.Contains(resp.Body, pl.detect) {
-						mu.Lock()
-						findings = append(findings, Finding{
-							Type:     "OS Command Injection",
-							Severity: "critical",
-							URL:      testURL,
-							Param:    param,
-							Payload:  pl.payload,
-							Evidence: pl.detect,
-							Template: "apex-cmdi",
-						})
-						mu.Unlock()
-					} else if strings.Contains(pl.payload, "sleep") && resp.Duration.Seconds() >= 2.5 {
-						mu.Lock()
-						findings = append(findings, Finding{
-							Type:     "OS Command Injection (Time-Based)",
-							Severity: "critical",
-							URL:      testURL,
-							Param:    param,
-							Payload:  pl.payload,
-							Evidence: fmt.Sprintf("Delayed %.1fs", resp.Duration.Seconds()),
-							Template: "apex-cmdi-time",
-						})
-						mu.Unlock()
-					}
-				}(u, p, payload)
+				jobs = append(jobs, job{u, p, payload})
 			}
 		}
+	}
+	// Cap at 500 jobs to prevent goroutine explosion
+	if len(jobs) > 500 {
+		jobs = jobs[:500]
+	}
+
+	sem := make(chan struct{}, cfg.Threads)
+	var wg sync.WaitGroup
+	for _, j := range jobs {
+		wg.Add(1)
+		go func(baseURL, param string, pl struct{ payload, detect string }) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			testURL := injectParam(baseURL, param, pl.payload)
+			resp := http.Get(testURL)
+			if resp.Err != nil {
+				return
+			}
+			if pl.detect != "" && strings.Contains(resp.Body, pl.detect) {
+				mu.Lock()
+				findings = append(findings, Finding{
+					Type:     "OS Command Injection",
+					Severity: "critical",
+					URL:      testURL,
+					Param:    param,
+					Payload:  pl.payload,
+					Evidence: pl.detect,
+					Template: "apex-cmdi",
+				})
+				mu.Unlock()
+			} else if strings.Contains(pl.payload, "sleep") && resp.Duration.Seconds() >= 2.5 {
+				mu.Lock()
+				findings = append(findings, Finding{
+					Type:     "OS Command Injection (Time-Based)",
+					Severity: "critical",
+					URL:      testURL,
+					Param:    param,
+					Payload:  pl.payload,
+					Evidence: fmt.Sprintf("Delayed %.1fs", resp.Duration.Seconds()),
+					Template: "apex-cmdi-time",
+				})
+				mu.Unlock()
+			}
+		}(j.url, j.param, j.pl)
 	}
 	wg.Wait()
 	return dedup(findings)
@@ -763,17 +891,31 @@ func scanCORS(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result
 
 func scanPrototypePollution(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, _ *oob.Client) []Finding {
 	var findings []Finding
+	canary := "apex_pp_7x7q9"
 	for u := range crawl.Params {
+		// Skip static assets
+		if strings.HasSuffix(u, ".js") || strings.HasSuffix(u, ".css") || strings.HasSuffix(u, ".png") || strings.HasSuffix(u, ".svg") {
+			continue
+		}
+		// Get baseline first
+		baseResp := http.Get(u)
+		if baseResp.Err != nil || strings.Contains(baseResp.Body, canary) {
+			continue
+		}
+		if engine.IsWAFChallenge(baseResp) {
+			continue
+		}
 		sep := "&"
 		if !strings.Contains(u, "?") {
 			sep = "?"
 		}
-		testURL := u + sep + "__proto__[polluted]=apex"
+		testURL := u + sep + "__proto__[polluted]=" + canary
 		resp := http.Get(testURL)
-		if resp.Err == nil && strings.Contains(resp.Body, "apex") {
+		if resp.Err == nil && !engine.IsWAFChallenge(resp) && strings.Contains(resp.Body, canary) && !strings.Contains(baseResp.Body, canary) {
 			findings = append(findings, Finding{
 				Type: "Prototype Pollution", Severity: "high",
-				URL: testURL, Detail: "__proto__ payload reflected",
+				URL: testURL, Detail: "__proto__ payload reflected in response (not in baseline)",
+				Evidence: canary,
 				Template: "apex-prototype-pollution",
 			})
 		}
@@ -821,4 +963,18 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// paramJobs generates capped (url, param) pairs from crawl data
+func paramJobs(crawl *crawler.Result, maxJobs int) []struct{ URL, Param string } {
+	var jobs []struct{ URL, Param string }
+	for u, params := range crawl.Params {
+		for _, p := range params {
+			jobs = append(jobs, struct{ URL, Param string }{u, p})
+			if len(jobs) >= maxJobs {
+				return jobs
+			}
+		}
+	}
+	return jobs
 }

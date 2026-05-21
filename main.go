@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -41,6 +42,8 @@ func main() {
 	noOOB := flag.Bool("no-oob", false, "Disable OOB server")
 	oobServer := flag.String("oob-server", "http://roz:1234@jarvis.local:9877", "Custom OOB server URL")
 	dryRun := flag.Bool("dry-run", false, "Preview without sending packets")
+	_ = flag.String("session", "", "Session file (JSON) for authenticated scanning")
+	_ = flag.String("templates", "", "Custom templates directory")
 	flag.Parse()
 
 	if flag.NArg() < 1 {
@@ -86,6 +89,23 @@ func main() {
 	reconResult := recon.Run(cfg, http)
 	fmt.Printf("  → %d subdomains, %d live targets\n", len(reconResult.Subdomains), len(reconResult.LiveTargets))
 
+	// Pre-filter: skip Cloudflare challenge and SPA catch-all targets
+	var filteredTargets []string
+	for _, t := range reconResult.LiveTargets {
+		if scanner.IsCloudflareChallenge(http, t) {
+			fmt.Printf("  ⚠ Cloudflare challenge: %s — skipped\n", t)
+		} else if scanner.IsSPACatchAll(http, t) {
+			fmt.Printf("  ⚠ SPA catch-all: %s — skipped\n", t)
+		} else {
+			filteredTargets = append(filteredTargets, t)
+		}
+	}
+	reconResult.LiveTargets = filteredTargets
+	if len(filteredTargets) == 0 {
+		fmt.Println("\n[!] All targets filtered (Cloudflare/SPA) — nothing to scan.")
+		os.Exit(0)
+	}
+
 	// Phase 2: Crawl
 	fmt.Println("\n[Phase 2] Crawl — Recursive + JS-aware URL extraction")
 	crawlResult := crawler.Run(cfg, http, reconResult.LiveTargets)
@@ -122,6 +142,12 @@ func main() {
 
 	findings := scanner.Run(cfg, http, crawlResult, oobClient)
 	fmt.Printf("  → %d findings\n", len(findings))
+
+	// Write raw findings immediately (in case report phase is slow)
+	rawPath := cfg.OutputDir + "/findings_raw.json"
+	if rawData, err := json.MarshalIndent(findings, "", "  "); err == nil {
+		os.WriteFile(rawPath, rawData, 0644)
+	}
 
 	// Phase 5: Report
 	fmt.Println("\n[Phase 5] Report")

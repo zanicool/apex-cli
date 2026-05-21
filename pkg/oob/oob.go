@@ -27,13 +27,14 @@ type PollResponse struct {
 func NewClient(serverURL string) *Client {
 	c := &Client{
 		serverURL: serverURL,
-		client:    &http.Client{Timeout: 5 * time.Second},
+		client:    &http.Client{Timeout: 2 * time.Second},
 	}
-	// Health check
+	// Quick health check — don't block scan if OOB server is down
 	resp, err := c.client.Get(serverURL + "/oob_health_check")
 	if err == nil && resp.StatusCode == 200 {
 		c.active = true
 		c.domain = serverURL
+		resp.Body.Close()
 	}
 	return c
 }

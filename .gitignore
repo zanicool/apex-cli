@@ -13,3 +13,4 @@ __pycache__/
 wordlists/seclists
 wordlists/best-dns-wordlist.txt
 wordlists/2m-subdomains.txt
+.env

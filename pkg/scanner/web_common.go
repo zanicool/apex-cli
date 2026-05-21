@@ -150,7 +150,15 @@ func scanInfoDisclosure(cfg *engine.Config, http *engine.HTTPClient, crawl *craw
 			defer func() { <-sem }()
 			resp := http.Get(u)
 			if resp.Err == nil && resp.StatusCode == 200 && len(resp.Body) > 20 {
-				if strings.Contains(resp.Body, "DB_PASSWORD") || strings.Contains(resp.Body, "[core]") || strings.Contains(resp.Body, "phpinfo") || strings.Contains(resp.Body, "root:") || strings.Contains(resp.Body, "swagger") || strings.Contains(resp.Body, "openapi") {
+				bodyLower := strings.ToLower(resp.Body)
+				if strings.Contains(bodyLower, "db_pass") || strings.Contains(bodyLower, "db_password") ||
+					strings.Contains(bodyLower, "secret") || strings.Contains(bodyLower, "api_key") ||
+					strings.Contains(bodyLower, "aws_") || strings.Contains(bodyLower, "private_key") ||
+					strings.Contains(bodyLower, "[core]") || strings.Contains(bodyLower, "phpinfo") ||
+					strings.Contains(bodyLower, "root:") || strings.Contains(bodyLower, "swagger") ||
+					strings.Contains(bodyLower, "openapi") || strings.Contains(bodyLower, "app_key") ||
+					strings.Contains(bodyLower, "token") || strings.Contains(bodyLower, "password") ||
+					strings.Contains(bodyLower, "credential") {
 					mu.Lock()
 					findings = append(findings, Finding{Type: "Sensitive File Exposed", Severity: "high", URL: u, Detail: fmt.Sprintf("Accessible (%d bytes)", resp.Size), Template: "apex-sensitive-file"})
 					mu.Unlock()
