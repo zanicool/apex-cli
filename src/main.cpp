@@ -349,6 +349,120 @@ int main(int argc, char *argv[]) {
   logger.close();
   std::cout << "  -> JSONL logs: cms_recon.jsonl, osint_recon.jsonl, vuln_recon.jsonl\n";
 
+  // Phase 6: ZAP — generate config from recon and launch active scan.
+  if (!cfg.dry_run && system("command -v zap-cli >/dev/null 2>&1 || command -v zap.sh >/dev/null 2>&1") == 0) {
+    std::cout << "\n[Phase 6] ZAP — Active scan with targeted policy\n";
+
+    // Generate ZAP automation YAML from our findings.
+    std::string zap_config = cfg.output_dir + "/zap-automation.yaml";
+    std::ofstream zap_out(zap_config);
+    if (zap_out.is_open()) {
+      // Determine scan policy based on detected tech.
+      bool is_wordpress = false, has_forms = !crawl.forms.empty();
+      bool has_api = false;
+      for (const auto &f : findings) {
+        if (f.detail.find("WordPress") != std::string::npos) is_wordpress = true;
+        if (f.type == "API Schema Inference" || f.type == "GraphQL") has_api = true;
+      }
+
+      zap_out << "---\nenv:\n";
+      zap_out << "  contexts:\n";
+      zap_out << "    - name: \"apex-generated\"\n";
+      zap_out << "      urls:\n";
+      zap_out << "        - \"https://" << cfg.target << "\"\n";
+      for (const auto &url : crawl.urls) {
+        if (url.find(cfg.target) != std::string::npos)
+          zap_out << "        - \"" << url << "\"\n";
+      }
+      zap_out << "      includePaths:\n";
+      zap_out << "        - \"https://" << cfg.target << "/.*\"\n";
+      zap_out << "      excludePaths:\n";
+      zap_out << "        - \".*logout.*\"\n";
+      zap_out << "        - \".*signout.*\"\n";
+
+      // Authentication if login form detected.
+      for (const auto &form : crawl.forms) {
+        if (form.action.find("login") != std::string::npos ||
+            form.action.find("inlog") != std::string::npos) {
+          zap_out << "      authentication:\n";
+          zap_out << "        method: \"form\"\n";
+          zap_out << "        parameters:\n";
+          zap_out << "          loginPageUrl: \"" << form.action << "\"\n";
+          zap_out << "          loginRequestUrl: \"" << form.action << "\"\n";
+          break;
+        }
+      }
+
+      zap_out << "\njobs:\n";
+      // Spider with discovered URLs as seeds.
+      zap_out << "  - type: spider\n";
+      zap_out << "    parameters:\n";
+      zap_out << "      maxDuration: 5\n";
+      zap_out << "      maxDepth: 5\n";
+      zap_out << "      url: \"https://" << cfg.target << "\"\n";
+
+      // AJAX spider for SPAs.
+      zap_out << "  - type: spiderAjax\n";
+      zap_out << "    parameters:\n";
+      zap_out << "      maxDuration: 3\n";
+      zap_out << "      url: \"https://" << cfg.target << "\"\n";
+
+      // Active scan with targeted policy.
+      zap_out << "  - type: activeScan\n";
+      zap_out << "    parameters:\n";
+      zap_out << "      maxRuleDurationInMins: 5\n";
+      zap_out << "      maxScanDurationInMins: 15\n";
+      zap_out << "    policyDefinition:\n";
+      zap_out << "      defaultStrength: medium\n";
+      zap_out << "      defaultThreshold: medium\n";
+      zap_out << "      rules:\n";
+      // Enable specific rules based on our findings.
+      if (is_wordpress) {
+        zap_out << "        - id: 90034  # WordPress\n";
+        zap_out << "          strength: high\n";
+      }
+      if (has_forms) {
+        zap_out << "        - id: 40012  # XSS Reflected\n";
+        zap_out << "          strength: high\n";
+        zap_out << "        - id: 40014  # XSS Persistent\n";
+        zap_out << "          strength: high\n";
+        zap_out << "        - id: 40018  # SQL Injection\n";
+        zap_out << "          strength: high\n";
+      }
+      if (has_api) {
+        zap_out << "        - id: 40035  # SSRF\n";
+        zap_out << "          strength: high\n";
+      }
+
+      // Report output.
+      zap_out << "  - type: report\n";
+      zap_out << "    parameters:\n";
+      zap_out << "      template: \"traditional-json\"\n";
+      zap_out << "      reportDir: \"" << cfg.output_dir << "\"\n";
+      zap_out << "      reportFile: \"zap-report\"\n";
+
+      zap_out.close();
+      std::cout << "  -> ZAP config: " << zap_config << "\n";
+
+      // Launch ZAP automation framework.
+      std::string zap_cmd = "zap.sh -cmd -autorun " + zap_config +
+                            " -config api.disablekey=true 2>/dev/null";
+      // Try zap-cli first, then zap.sh.
+      if (system("command -v zap-cli >/dev/null 2>&1") == 0) {
+        zap_cmd = "zap-cli --zap-path $(which zap.sh) quick-scan -s xss,sqli "
+                  "https://" + cfg.target + " --output " + cfg.output_dir +
+                  "/zap-report.json 2>/dev/null";
+      }
+      std::cout << "  -> Launching ZAP active scan...\n";
+      int ret = system(zap_cmd.c_str());
+      if (ret == 0) {
+        std::cout << "  -> ZAP scan complete: " << cfg.output_dir << "/zap-report.json\n";
+      } else {
+        std::cout << "  -> ZAP automation config generated (run manually with: zap.sh -cmd -autorun " << zap_config << ")\n";
+      }
+    }
+  }
+
   // Calculate maturity score
   std::cout << "\n[Maturity] Calculating score...\n";
   apex::MaturityCalculator maturity_calc;
