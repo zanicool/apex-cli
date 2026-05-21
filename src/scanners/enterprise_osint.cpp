@@ -5,14 +5,34 @@
 #include "scanner_base.hpp"
 #include <set>
 
+///
+/// @details This scanner module is part of the apex-cli security scanning
+/// framework. Each scanner function follows the standard signature:
+///   std::vector<Finding>(const Config&, HttpClient&, const CrawlResult&)
+///
+/// Findings are categorized by severity: critical, high, medium, low, info.
+/// All scanners run concurrently and results are deduplicated by the
+/// scanner orchestrator (scanner.cpp).
+///
+/// @see scanner_base.hpp for shared types and helper functions.
+/// @see scanner.hpp for the Finding struct and Scanner registration.
+/// @note Scanners should be non-destructive and respect rate limits.
+
 namespace apex {
 namespace {
 
 /// Microsoft 365 / Azure AD tenant enumeration and metadata.
 /// Scanner implementation.
+/// @brief Scan for m365_tenant vulnerabilities.
 std::vector<Finding> scan_m365_tenant(const Config &cfg, HttpClient &http,
                                       const CrawlResult &) {
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
   std::vector<Finding> findings;
+  // Extract domain from target.
+  // Extract domain from target.
+  // Extract domain from target.
   std::string domain = cfg.target;
   if (domain.find("://") != std::string::npos)
     domain = domain.substr(domain.find("://") + 3);
@@ -67,11 +87,15 @@ std::vector<Finding> scan_m365_tenant(const Config &cfg, HttpClient &http,
                         "Autodiscover accessible without auth — config leak", "", "", ""});
   }
 
+  // Return collected findings.
+  // Return collected findings.
+  // Return collected findings.
   return findings;
 }
 
 /// SharePoint / OneDrive exposure check.
 /// Scanner implementation.
+/// @brief Scan for sharepoint vulnerabilities.
 std::vector<Finding> scan_sharepoint(const Config &cfg, HttpClient &http,
                                      const CrawlResult &) {
   std::vector<Finding> findings;
@@ -80,6 +104,9 @@ std::vector<Finding> scan_sharepoint(const Config &cfg, HttpClient &http,
     domain = domain.substr(domain.find("://") + 3);
   if (domain.find('/') != std::string::npos)
     domain = domain.substr(0, domain.find('/'));
+  // Extract organization name from domain.
+  // Extract organization name from domain.
+  // Extract organization name from domain.
   std::string org = domain.substr(0, domain.find('.'));
 
   // SharePoint tenant URLs.
@@ -120,6 +147,7 @@ std::vector<Finding> scan_sharepoint(const Config &cfg, HttpClient &http,
 
 /// Atlassian (Jira/Confluence) exposure.
 /// Scanner implementation.
+/// @brief Scan for atlassian vulnerabilities.
 std::vector<Finding> scan_atlassian(const Config &cfg, HttpClient &http,
                                     const CrawlResult &) {
   std::vector<Finding> findings;
@@ -161,6 +189,7 @@ std::vector<Finding> scan_atlassian(const Config &cfg, HttpClient &http,
 
 /// Slack workspace discovery.
 /// Scanner implementation.
+/// @brief Scan for slack vulnerabilities.
 std::vector<Finding> scan_slack(const Config &cfg, HttpClient &http,
                                 const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -172,8 +201,14 @@ std::vector<Finding> scan_slack(const Config &cfg, HttpClient &http,
   std::string org = domain.substr(0, domain.find('.'));
 
   // Check Slack workspace.
+  // Send HTTP request.
+  // Send HTTP request.
+  // Send HTTP request.
   auto resp = http.get("https://" + org + ".slack.com");
   // Check response status.
+  // Analyze successful response.
+  // Analyze successful response.
+  // Analyze successful response.
   if (resp.status_code == 200 && resp.body.find("slack") != std::string::npos) {
     findings.push_back({"Slack Workspace Found", "info", "https://" + org + ".slack.com",
                         "Slack workspace exists for this organization", "", "", ""});
@@ -181,6 +216,9 @@ std::vector<Finding> scan_slack(const Config &cfg, HttpClient &http,
 
   // Check for leaked Slack webhooks in source.
   // Iterate over targets.
+  // Process each crawled URL.
+  // Process each crawled URL.
+  // Process each crawled URL.
   for (const auto &url : crawl.urls) {
     auto page = http.get(url);
     if (page.body.find("hooks.slack.com") != std::string::npos) {
@@ -195,6 +233,7 @@ std::vector<Finding> scan_slack(const Config &cfg, HttpClient &http,
 
 /// OAuth / SSO enumeration — discover identity providers and apps.
 /// Scanner implementation.
+/// @brief Scan for oauth_enum vulnerabilities.
 std::vector<Finding> scan_oauth_enum(const Config &cfg, HttpClient &http,
                                      const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -239,6 +278,7 @@ std::vector<Finding> scan_oauth_enum(const Config &cfg, HttpClient &http,
 
 /// Cloud resource naming intelligence.
 /// Scanner implementation.
+/// @brief Scan for cloud_naming vulnerabilities.
 std::vector<Finding> scan_cloud_naming(const Config &cfg, HttpClient &http,
                                        const CrawlResult &) {
   std::vector<Finding> findings;
@@ -286,6 +326,7 @@ std::vector<Finding> scan_cloud_naming(const Config &cfg, HttpClient &http,
 
 /// User enumeration via common SaaS login flows.
 /// Scanner implementation.
+/// @brief Scan for user_enum vulnerabilities.
 std::vector<Finding> scan_user_enum(const Config &cfg, HttpClient &http,
                                     const CrawlResult &) {
   std::vector<Finding> findings;

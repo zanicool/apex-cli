@@ -4,6 +4,19 @@
 #include "scanner_base.hpp"
 #include <map>
 
+///
+/// @details This scanner module is part of the apex-cli security scanning
+/// framework. Each scanner function follows the standard signature:
+///   std::vector<Finding>(const Config&, HttpClient&, const CrawlResult&)
+///
+/// Findings are categorized by severity: critical, high, medium, low, info.
+/// All scanners run concurrently and results are deduplicated by the
+/// scanner orchestrator (scanner.cpp).
+///
+/// @see scanner_base.hpp for shared types and helper functions.
+/// @see scanner.hpp for the Finding struct and Scanner registration.
+/// @note Scanners should be non-destructive and respect rate limits.
+
 namespace apex {
 namespace {
 
@@ -41,6 +54,7 @@ const CVEEntry known_cves[] = {
 };
 
 /// Scanner implementation.
+/// @brief Scan for server_banner vulnerabilities.
 std::vector<Finding> scan_server_banner(const Config &, HttpClient &http,
                                         const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -83,6 +97,7 @@ std::vector<Finding> scan_server_banner(const Config &, HttpClient &http,
 }
 
 /// Scanner implementation.
+/// @brief Scan for ssh_version vulnerabilities.
 std::vector<Finding> scan_ssh_version(const Config &cfg, HttpClient &http,
                                       const CrawlResult &) {
   std::vector<Finding> findings;
@@ -116,6 +131,7 @@ std::vector<Finding> scan_ssh_version(const Config &cfg, HttpClient &http,
 }
 
 /// Scanner implementation.
+/// @brief Scan for version_endpoints vulnerabilities.
 std::vector<Finding> scan_version_endpoints(const Config &, HttpClient &http,
                                             const CrawlResult &crawl) {
   std::vector<Finding> findings;

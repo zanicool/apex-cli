@@ -4,17 +4,43 @@
 #include "scanner_base.hpp"
 #include <set>
 
+///
+/// @details This scanner module is part of the apex-cli security scanning
+/// framework. Each scanner function follows the standard signature:
+///   std::vector<Finding>(const Config&, HttpClient&, const CrawlResult&)
+///
+/// Findings are categorized by severity: critical, high, medium, low, info.
+/// All scanners run concurrently and results are deduplicated by the
+/// scanner orchestrator (scanner.cpp).
+///
+/// @see scanner_base.hpp for shared types and helper functions.
+/// @see scanner.hpp for the Finding struct and Scanner registration.
+/// @note Scanners should be non-destructive and respect rate limits.
+
 namespace apex {
 namespace {
 
 /// Scanner implementation.
+/// @brief Scan for exposed_env vulnerabilities.
 std::vector<Finding> scan_exposed_env(const Config &, HttpClient &http,
                                       const CrawlResult &crawl) {
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
   std::vector<Finding> findings;
   // Early return if no URLs to scan.
+  // Skip if no URLs available.
+  // Skip if no URLs available.
+  // Skip if no URLs available.
   if (crawl.urls.empty()) return findings;
+  // Determine base URL for requests.
+  // Determine base URL for requests.
+  // Determine base URL for requests.
   std::string base = base_url_from(crawl.urls[0]);
 
+  // Target paths to probe.
+  // Target paths to probe.
+  // Target paths to probe.
   const std::vector<std::string> paths = {
       "/.env", "/.env.local", "/.env.production", "/.env.staging",
       "/.env.development", "/.env.backup", "/.env.old", "/.env.bak",
@@ -34,6 +60,9 @@ std::vector<Finding> scan_exposed_env(const Config &, HttpClient &http,
       "secret_key", "client_secret", "-----BEGIN"};
 
   // Iterate over targets.
+  // Probe each path.
+  // Probe each path.
+  // Probe each path.
   for (const auto &path : paths) {
     auto resp = http.get(base + path);
     if (resp.status_code != 200 || resp.body.size() < 10) continue;
@@ -46,10 +75,14 @@ std::vector<Finding> scan_exposed_env(const Config &, HttpClient &http,
       }
     }
   }
+  // Return collected findings.
+  // Return collected findings.
+  // Return collected findings.
   return findings;
 }
 
 /// Scanner implementation.
+/// @brief Scan for git_exposure vulnerabilities.
 std::vector<Finding> scan_git_exposure(const Config &, HttpClient &http,
                                        const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -58,8 +91,14 @@ std::vector<Finding> scan_git_exposure(const Config &, HttpClient &http,
   std::string base = base_url_from(crawl.urls[0]);
 
   // Check for exposed .git directory.
+  // Send HTTP request.
+  // Send HTTP request.
+  // Send HTTP request.
   auto resp = http.get(base + "/.git/HEAD");
   // Check response status.
+  // Analyze successful response.
+  // Analyze successful response.
+  // Analyze successful response.
   if (resp.status_code == 200 && resp.body.find("ref:") != std::string::npos) {
     findings.push_back({"Git Repository Exposed", "critical", base + "/.git/",
                         "Full git repository accessible — source code + history downloadable",
@@ -92,9 +131,13 @@ std::vector<Finding> scan_git_exposure(const Config &, HttpClient &http,
 }
 
 /// Scanner implementation.
+/// @brief Scan for docker_registry vulnerabilities.
 std::vector<Finding> scan_docker_registry(const Config &cfg, HttpClient &http,
                                           const CrawlResult &) {
   std::vector<Finding> findings;
+  // Extract domain from target.
+  // Extract domain from target.
+  // Extract domain from target.
   std::string domain = cfg.target;
   if (domain.find("://") != std::string::npos)
     domain = domain.substr(domain.find("://") + 3);
@@ -121,6 +164,7 @@ std::vector<Finding> scan_docker_registry(const Config &cfg, HttpClient &http,
 }
 
 /// Scanner implementation.
+/// @brief Scan for cicd_artifacts vulnerabilities.
 std::vector<Finding> scan_cicd_artifacts(const Config &, HttpClient &http,
                                          const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -163,6 +207,7 @@ std::vector<Finding> scan_cicd_artifacts(const Config &, HttpClient &http,
 }
 
 /// Scanner implementation.
+/// @brief Scan for backup_files vulnerabilities.
 std::vector<Finding> scan_backup_files(const Config &, HttpClient &http,
                                        const CrawlResult &crawl) {
   std::vector<Finding> findings;

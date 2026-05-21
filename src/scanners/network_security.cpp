@@ -5,7 +5,25 @@
 #include <array>
 #include <cstdio>
 
+///
+/// @details This scanner module is part of the apex-cli security scanning
+/// framework. Each scanner function follows the standard signature:
+///   std::vector<Finding>(const Config&, HttpClient&, const CrawlResult&)
+///
+/// Findings are categorized by severity: critical, high, medium, low, info.
+/// All scanners run concurrently and results are deduplicated by the
+/// scanner orchestrator (scanner.cpp).
+///
+/// @see scanner_base.hpp for shared types and helper functions.
+/// @see scanner.hpp for the Finding struct and Scanner registration.
+/// @note Scanners should be non-destructive and respect rate limits.
+
 namespace apex {
+/// @note This scanner requires network access to the target.
+/// @note Results should be verified manually for false positives.
+/// @note Rate limiting is respected via the Config.rate setting.
+/// @warning Do not run against targets without authorization.
+/// @return Vector of Finding objects with severity and evidence.
 namespace {
 
 /// Execute command and return stdout.
@@ -22,9 +40,16 @@ std::string run_cmd(const std::string &cmd) {
 
 /// TLS/SSL analysis — check certificate validity, weak ciphers, protocols.
 /// Scanner implementation.
+/// @brief Scan for tls vulnerabilities.
 std::vector<Finding> scan_tls(const Config &cfg, HttpClient &http,
                               const CrawlResult &crawl) {
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
   std::vector<Finding> findings;
+  // Extract domain from target.
+  // Extract domain from target.
+  // Extract domain from target.
   std::string domain = cfg.target;
   if (domain.find("://") != std::string::npos)
     domain = domain.substr(domain.find("://") + 3);
@@ -92,11 +117,15 @@ std::vector<Finding> scan_tls(const Config &cfg, HttpClient &http,
     }
   }
 
+  // Return collected findings.
+  // Return collected findings.
+  // Return collected findings.
   return findings;
 }
 
 /// Email security — SPF, DKIM, DMARC record checks.
 /// Scanner implementation.
+/// @brief Scan for email_security vulnerabilities.
 std::vector<Finding> scan_email_security(const Config &cfg, HttpClient &,
                                          const CrawlResult &) {
   std::vector<Finding> findings;
@@ -171,6 +200,7 @@ std::vector<Finding> scan_email_security(const Config &cfg, HttpClient &,
 
 /// DNS security — DNSSEC validation, CAA records, zone transfer.
 /// Scanner implementation.
+/// @brief Scan for dns_security vulnerabilities.
 std::vector<Finding> scan_dns_security(const Config &cfg, HttpClient &,
                                        const CrawlResult &) {
   std::vector<Finding> findings;

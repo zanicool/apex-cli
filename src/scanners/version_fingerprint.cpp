@@ -187,80 +187,134 @@ std::vector<Finding> scan_feature_fingerprint(const Config &, HttpClient &http,
 
   auto resp = http.get(base + "/");
 
-  // Next.js version detection via _next patterns.
+  // === Header ordering fingerprint ===
+  // Different servers return headers in characteristic orders.
+  std::string header_order;
+  for (const auto &[name, val] : resp.headers)
+    header_order += name.substr(0, 3) + ",";
+
+  // === Framework detection via behavioral signals ===
+
+  // Next.js (build artifacts + runtime behavior)
   if (resp.body.find("/_next/static") != std::string::npos) {
     std::string ver = "unknown";
-    if (resp.body.find("_next/static/css") != std::string::npos &&
-        resp.body.find("srcMappingURL") != std::string::npos)
-      ver = "13+";
     if (resp.body.find("_next/static/chunks/app/") != std::string::npos)
       ver = "13.4+ (App Router)";
-    if (resp.body.find("_next/static/chunks/pages/") != std::string::npos &&
-        resp.body.find("_next/static/chunks/app/") == std::string::npos)
-      ver = "12.x-13.x (Pages Router only)";
+    else if (resp.body.find("_next/static/chunks/pages/") != std::string::npos)
+      ver = "12.x-13.x (Pages Router)";
+    else if (resp.body.find("_next/static/") != std::string::npos)
+      ver = "11+ (detected)";
+    // Check for RSC payload (React Server Components = Next 13.4+)
+    if (resp.body.find("__next_f") != std::string::npos)
+      ver = "14+ (RSC flight data)";
+    // x-nextjs-cache header
+    for (const auto &[h, v] : resp.headers) {
+      if (h == "x-nextjs-cache") { ver += " + edge caching"; break; }
+    }
     findings.push_back({"Next.js Fingerprint", "info", base,
-                        "Next.js " + ver + " (detected via build output pattern)",
-                        "", "", ""});
+                        "Next.js " + ver, "", "", ""});
   }
 
-  // React version via react-dom.
+  // React version via react-dom or __NEXT_DATA__
   std::regex react_re(R"(react[.-]dom[./](\d+\.\d+))");
   std::smatch rm;
   if (std::regex_search(resp.body, rm, react_re)) {
     findings.push_back({"React Version", "info", base,
-                        "React " + rm[1].str() + ".x (from script reference)",
-                        "", "", ""});
+                        "React " + rm[1].str() + ".x", "", "", ""});
   }
 
-  // Vue.js detection.
+  // Vue.js
   if (resp.body.find("__vue__") != std::string::npos ||
-      resp.body.find("Vue.js v") != std::string::npos) {
+      resp.body.find("Vue.js v") != std::string::npos ||
+      resp.body.find("__VUE__") != std::string::npos) {
     std::string ver = "detected";
     std::regex vue_re(R"(Vue\.js v(\d+\.\d+))");
     std::smatch vm;
     if (std::regex_search(resp.body, vm, vue_re)) ver = vm[1].str() + ".x";
-    findings.push_back({"Vue.js Fingerprint", "info", base,
-                        "Vue.js " + ver, "", "", ""});
+    else if (resp.body.find("__VUE_HMR_RUNTIME__") != std::string::npos) ver = "3.x (HMR)";
+    findings.push_back({"Vue.js Fingerprint", "info", base, "Vue.js " + ver, "", "", ""});
   }
 
-  // Angular detection.
+  // Angular (ng-version attribute)
   if (resp.body.find("ng-version=\"") != std::string::npos) {
     std::regex ng_re(R"(ng-version="(\d+\.\d+))");
     std::smatch nm;
-    if (std::regex_search(resp.body, nm, ng_re)) {
+    if (std::regex_search(resp.body, nm, ng_re))
       findings.push_back({"Angular Fingerprint", "info", base,
                           "Angular " + nm[1].str() + ".x", "", "", ""});
-    }
   }
 
-  // Laravel detection via XSRF-TOKEN cookie format.
+  // Nuxt.js
+  if (resp.body.find("__NUXT__") != std::string::npos ||
+      resp.body.find("/_nuxt/") != std::string::npos) {
+    std::string ver = resp.body.find("_payload.json") != std::string::npos ? "3.x" : "2.x";
+    findings.push_back({"Nuxt.js Fingerprint", "info", base, "Nuxt.js " + ver, "", "", ""});
+  }
+
+  // Svelte/SvelteKit
+  if (resp.body.find("__sveltekit") != std::string::npos ||
+      resp.body.find("/_app/") != std::string::npos) {
+    findings.push_back({"SvelteKit Fingerprint", "info", base, "SvelteKit detected", "", "", ""});
+  }
+
+  // Laravel (XSRF-TOKEN cookie + specific header patterns)
   for (const auto &[name, value] : resp.headers) {
     if (name == "Set-Cookie" && value.find("XSRF-TOKEN") != std::string::npos) {
-      findings.push_back({"Laravel Detected", "info", base,
-                          "Laravel framework (XSRF-TOKEN cookie pattern)",
-                          "", "", ""});
+      // Laravel XSRF tokens are base64-encoded JSON with specific length
+      std::string ver = "detected";
+      if (value.find("samesite=lax") != std::string::npos) ver = "7+ (SameSite default)";
+      findings.push_back({"Laravel Fingerprint", "info", base, "Laravel " + ver, "", "", ""});
       break;
     }
   }
 
-  // Express.js detection.
-  auto xpb = resp.headers.find("X-Powered-By");
-  if (xpb != resp.headers.end() && xpb->second.find("Express") != std::string::npos) {
-    findings.push_back({"Express.js Detected", "info", base,
-                        "Express.js (X-Powered-By header)", "", "", ""});
+  // Django (csrfmiddlewaretoken pattern, admin URL)
+  if (resp.body.find("csrfmiddlewaretoken") != std::string::npos) {
+    findings.push_back({"Django Fingerprint", "info", base, "Django detected", "", "", ""});
   }
 
-  // ASP.NET version from headers.
+  // Express.js
+  auto xpb = resp.headers.find("X-Powered-By");
+  if (xpb != resp.headers.end() && xpb->second.find("Express") != std::string::npos)
+    findings.push_back({"Express.js Detected", "info", base, "Express.js", "", "", ""});
+
+  // ASP.NET
   auto aspnet = resp.headers.find("X-AspNet-Version");
-  if (aspnet != resp.headers.end()) {
-    findings.push_back({"ASP.NET Version", "low", base,
-                        "ASP.NET " + aspnet->second, "", "", ""});
-  }
+  if (aspnet != resp.headers.end())
+    findings.push_back({"ASP.NET Version", "low", base, "ASP.NET " + aspnet->second, "", "", ""});
   auto aspnetmvc = resp.headers.find("X-AspNetMvc-Version");
-  if (aspnetmvc != resp.headers.end()) {
-    findings.push_back({"ASP.NET MVC Version", "low", base,
-                        "ASP.NET MVC " + aspnetmvc->second, "", "", ""});
+  if (aspnetmvc != resp.headers.end())
+    findings.push_back({"ASP.NET MVC Version", "low", base, "MVC " + aspnetmvc->second, "", "", ""});
+
+  // Spring Boot (Whitelabel error page, actuator)
+  auto err = http.get(base + "/error");
+  if (err.body.find("Whitelabel Error Page") != std::string::npos)
+    findings.push_back({"Spring Boot Fingerprint", "info", base, "Spring Boot (Whitelabel error)", "", "", ""});
+
+  // Ruby on Rails (X-Request-Id format, cookie naming)
+  auto xrid = resp.headers.find("X-Request-Id");
+  if (xrid != resp.headers.end() && xrid->second.size() == 36 &&
+      xrid->second[8] == '-') { // UUID format typical of Rails
+    if (resp.headers.find("X-Runtime") != resp.headers.end())
+      findings.push_back({"Rails Fingerprint", "info", base,
+                          "Ruby on Rails (X-Request-Id + X-Runtime)", "", "", ""});
   }
+
+  // PHP behavioral detection (session cookie naming)
+  for (const auto &[name, value] : resp.headers) {
+    if (name == "Set-Cookie" && value.find("PHPSESSID") != std::string::npos) {
+      findings.push_back({"PHP Detected", "info", base, "PHP (PHPSESSID cookie)", "", "", ""});
+      break;
+    }
+  }
+
+  // Cloudflare / CDN detection
+  auto cf_ray = resp.headers.find("CF-RAY");
+  if (cf_ray != resp.headers.end())
+    findings.push_back({"Cloudflare CDN", "info", base, "Behind Cloudflare", "", "", ""});
+  auto cf_cache = resp.headers.find("CF-Cache-Status");
+  if (cf_cache != resp.headers.end())
+    findings.push_back({"Cloudflare Cache", "info", base, "CF-Cache: " + cf_cache->second, "", "", ""});
 
   return findings;
 }

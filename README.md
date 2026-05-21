@@ -7,10 +7,20 @@ High-performance automated penetration testing tool with progressive maturity fr
 
 ## Features
 
+- **225+ Scanners**: Full-spectrum security testing in a single binary
+- **Web Application**: SQLi, XSS, SSRF, CMDi, CORS, LFI, CSRF, SSTI, XXE, and 100+ more
+- **Authentication**: JWT, OAuth, 2FA bypass, session fixation, password spray, timing oracle
+- **Cloud Misconfig**: AWS S3, Azure Blob, GCP buckets, K8s dashboards, IAM
+- **Modern Stack**: Supabase, Clerk, Auth0, Vercel, Neon, PostHog, Pusher
+- **AI Infrastructure**: Vector DBs, LLM endpoints, prompt injection, training data exposure
+- **Enterprise OSINT**: M365 tenant enum, SharePoint, Atlassian, Slack, OAuth/SSO
+- **Deep Recon**: DNS brute-force, Wayback, Google dorks, CT logs, GitHub, KVK (NL)
+- **Network Security**: TLS/SSL analysis, SPF/DKIM/DMARC, DNSSEC, CAA
+- **Kernel/OS CVEs**: SSH-based audit for Copy Fail, Dirty Frag, Fragnesia (2026)
+- **OTAP/DTAP Discovery**: Find unprotected dev/test/staging environments
+- **Interactive Surface**: Login forms, file uploads, AJAX endpoints, hidden forms
+- **Supply Chain**: Dependency confusion, SBOM + OSV, CI/CD artifacts
 - **Progressive Maturity**: 5-level framework (learn → guide → guard → enforce)
-- **Vulnerability Detection**: SQLi, XSS, SSRF, Command Injection, CORS, LFI, Open Redirect
-- **CMS Detection**: 50+ platforms with version detection and outdated checks
-- **OSINT Intelligence**: Employee exposure, data breaches, leaked secrets, tech stack analysis
 - **Complete Audit Trail**: JSONL append-only history for trend analysis
 - **Compliance Mapping**: OWASP Top 10, CWE integration
 
@@ -51,6 +61,16 @@ make build
 
 # OSINT reconnaissance
 ./build/apex-cli example.com --osint
+
+# SSH-based kernel/OS audit
+./build/apex-cli example.com --ssh user@example.com --ssh-key ~/.ssh/id_ed25519
+
+# Skip specific scanners
+./build/apex-cli example.com --skip "DNS Brute-Force,Param Brute-Force"
+
+# Dry run (no packets sent)
+./build/apex-cli example.com --dry-run
+```
 
 # Configure maturity target
 cp apex.toml.example apex.toml

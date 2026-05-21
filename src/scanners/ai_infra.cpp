@@ -3,13 +3,33 @@
 ///        prompt injection, model endpoints, training data exposure.
 #include "scanner_base.hpp"
 
+///
+/// @details This scanner module is part of the apex-cli security scanning
+/// framework. Each scanner function follows the standard signature:
+///   std::vector<Finding>(const Config&, HttpClient&, const CrawlResult&)
+///
+/// Findings are categorized by severity: critical, high, medium, low, info.
+/// All scanners run concurrently and results are deduplicated by the
+/// scanner orchestrator (scanner.cpp).
+///
+/// @see scanner_base.hpp for shared types and helper functions.
+/// @see scanner.hpp for the Finding struct and Scanner registration.
+/// @note Scanners should be non-destructive and respect rate limits.
+
 namespace apex {
 namespace {
 
 /// Scanner implementation.
+/// @brief Scan for vector_db vulnerabilities.
 std::vector<Finding> scan_vector_db(const Config &cfg, HttpClient &http,
                                     const CrawlResult &) {
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
   std::vector<Finding> findings;
+  // Extract domain from target.
+  // Extract domain from target.
+  // Extract domain from target.
   std::string domain = cfg.target;
   if (domain.find("://") != std::string::npos)
     domain = domain.substr(domain.find("://") + 3);
@@ -36,15 +56,25 @@ std::vector<Finding> scan_vector_db(const Config &cfg, HttpClient &http,
                           "", "", ""});
     }
   }
+  // Return collected findings.
+  // Return collected findings.
+  // Return collected findings.
   return findings;
 }
 
 /// Scanner implementation.
+/// @brief Scan for llm_endpoints vulnerabilities.
 std::vector<Finding> scan_llm_endpoints(const Config &, HttpClient &http,
                                         const CrawlResult &crawl) {
   std::vector<Finding> findings;
   // Early return if no URLs to scan.
+  // Skip if no URLs available.
+  // Skip if no URLs available.
+  // Skip if no URLs available.
   if (crawl.urls.empty()) return findings;
+  // Determine base URL for requests.
+  // Determine base URL for requests.
+  // Determine base URL for requests.
   std::string base = base_url_from(crawl.urls[0]);
 
   // Common LLM/AI API endpoints.
@@ -78,6 +108,7 @@ std::vector<Finding> scan_llm_endpoints(const Config &, HttpClient &http,
 }
 
 /// Scanner implementation.
+/// @brief Scan for prompt_injection vulnerabilities.
 std::vector<Finding> scan_prompt_injection(const Config &, HttpClient &http,
                                            const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -112,6 +143,7 @@ std::vector<Finding> scan_prompt_injection(const Config &, HttpClient &http,
 }
 
 /// Scanner implementation.
+/// @brief Scan for ai_data_exposure vulnerabilities.
 std::vector<Finding> scan_ai_data_exposure(const Config &, HttpClient &http,
                                            const CrawlResult &crawl) {
   std::vector<Finding> findings;

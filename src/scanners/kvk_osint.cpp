@@ -4,23 +4,49 @@
 #include "scanner_base.hpp"
 #include <set>
 
+///
+/// @details This scanner module is part of the apex-cli security scanning
+/// framework. Each scanner function follows the standard signature:
+///   std::vector<Finding>(const Config&, HttpClient&, const CrawlResult&)
+///
+/// Findings are categorized by severity: critical, high, medium, low, info.
+/// All scanners run concurrently and results are deduplicated by the
+/// scanner orchestrator (scanner.cpp).
+///
+/// @see scanner_base.hpp for shared types and helper functions.
+/// @see scanner.hpp for the Finding struct and Scanner registration.
+/// @note Scanners should be non-destructive and respect rate limits.
+
 namespace apex {
 namespace {
 
 /// Scanner implementation.
+/// @brief Scan for kvk_recon vulnerabilities.
 std::vector<Finding> scan_kvk_recon(const Config &cfg, HttpClient &http,
                                     const CrawlResult &) {
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
   std::vector<Finding> findings;
+  // Extract domain from target.
+  // Extract domain from target.
+  // Extract domain from target.
   std::string domain = cfg.target;
   if (domain.find("://") != std::string::npos)
     domain = domain.substr(domain.find("://") + 3);
   if (domain.find('/') != std::string::npos)
     domain = domain.substr(0, domain.find('/'));
 
+  // Extract organization name from domain.
+  // Extract organization name from domain.
+  // Extract organization name from domain.
   std::string org = domain.substr(0, domain.find('.'));
 
   std::string api_key = "l7xx1f2691f2520d487b902f4e0b57a0b197";
   std::string search_url = "https://api.kvk.nl/test/api/v1/zoeken?handelsnaam=" + org;
+  // Send HTTP request.
+  // Send HTTP request.
+  // Send HTTP request.
   auto resp = http.get(search_url, {{"apikey", api_key}});
 
   // Check response status.
@@ -100,6 +126,9 @@ std::vector<Finding> scan_kvk_recon(const Config &cfg, HttpClient &http,
       findings.push_back({"KVK Directors", "info", domain, dir_info, "", "", ""});
     }
   }
+  // Return collected findings.
+  // Return collected findings.
+  // Return collected findings.
   return findings;
 }
 

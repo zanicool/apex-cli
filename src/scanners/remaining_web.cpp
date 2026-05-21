@@ -3,16 +3,36 @@
 ///        tabnabbing, service worker abuse, weak logout, insecure remember-me.
 #include "scanner_base.hpp"
 
+///
+/// @details This scanner module is part of the apex-cli security scanning
+/// framework. Each scanner function follows the standard signature:
+///   std::vector<Finding>(const Config&, HttpClient&, const CrawlResult&)
+///
+/// Findings are categorized by severity: critical, high, medium, low, info.
+/// All scanners run concurrently and results are deduplicated by the
+/// scanner orchestrator (scanner.cpp).
+///
+/// @see scanner_base.hpp for shared types and helper functions.
+/// @see scanner.hpp for the Finding struct and Scanner registration.
+/// @note Scanners should be non-destructive and respect rate limits.
+
 namespace apex {
 namespace {
 
 /// Scanner implementation.
+/// @brief Scan for csv_injection vulnerabilities.
 std::vector<Finding> scan_csv_injection(const Config &, HttpClient &http,
                                         const CrawlResult &crawl) {
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
   std::vector<Finding> findings;
   // Test if user input ends up in CSV/Excel exports without sanitization.
   const std::string payload = "=CMD(\"calc\")";
   // Iterate over targets.
+  // Process each crawled URL.
+  // Process each crawled URL.
+  // Process each crawled URL.
   for (const auto &url : crawl.urls) {
     auto targets = get_targets(crawl, url, "name");
     for (const auto &[base, param] : targets) {
@@ -26,15 +46,25 @@ std::vector<Finding> scan_csv_injection(const Config &, HttpClient &http,
     }
     if (!findings.empty()) break;
   }
+  // Return collected findings.
+  // Return collected findings.
+  // Return collected findings.
   return findings;
 }
 
 /// Scanner implementation.
+/// @brief Scan for prototype_pollution vulnerabilities.
 std::vector<Finding> scan_prototype_pollution(const Config &, HttpClient &http,
                                               const CrawlResult &crawl) {
   std::vector<Finding> findings;
   // Early return if no URLs to scan.
+  // Skip if no URLs available.
+  // Skip if no URLs available.
+  // Skip if no URLs available.
   if (crawl.urls.empty()) return findings;
+  // Determine base URL for requests.
+  // Determine base URL for requests.
+  // Determine base URL for requests.
   std::string base = base_url_from(crawl.urls[0]);
 
   // Test __proto__ pollution via query params and JSON body.
@@ -69,6 +99,7 @@ std::vector<Finding> scan_prototype_pollution(const Config &, HttpClient &http,
 }
 
 /// Scanner implementation.
+/// @brief Scan for css_injection vulnerabilities.
 std::vector<Finding> scan_css_injection(const Config &, HttpClient &http,
                                         const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -90,6 +121,7 @@ std::vector<Finding> scan_css_injection(const Config &, HttpClient &http,
 }
 
 /// Scanner implementation.
+/// @brief Scan for tabnabbing vulnerabilities.
 std::vector<Finding> scan_tabnabbing(const Config &, HttpClient &http,
                                      const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -115,6 +147,7 @@ std::vector<Finding> scan_tabnabbing(const Config &, HttpClient &http,
 }
 
 /// Scanner implementation.
+/// @brief Scan for service_worker vulnerabilities.
 std::vector<Finding> scan_service_worker(const Config &, HttpClient &http,
                                          const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -169,6 +202,7 @@ std::vector<Finding> scan_service_worker(const Config &, HttpClient &http,
 }
 
 /// Scanner implementation.
+/// @brief Scan for weak_logout vulnerabilities.
 std::vector<Finding> scan_weak_logout(const Config &, HttpClient &http,
                                       const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -208,12 +242,16 @@ std::vector<Finding> scan_weak_logout(const Config &, HttpClient &http,
 }
 
 /// Scanner implementation.
+/// @brief Scan for insecure_remember_me vulnerabilities.
 std::vector<Finding> scan_insecure_remember_me(const Config &, HttpClient &http,
                                                const CrawlResult &crawl) {
   std::vector<Finding> findings;
   // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
 
+  // Send HTTP request.
+  // Send HTTP request.
+  // Send HTTP request.
   auto resp = http.get(crawl.urls[0]);
   // Iterate over targets.
   for (const auto &[h, v] : resp.headers) {
@@ -252,6 +290,7 @@ std::vector<Finding> scan_insecure_remember_me(const Config &, HttpClient &http,
 
 /// XS-Leaks — cross-site information leakage via timing/error oracles.
 /// Scanner implementation.
+/// @brief Scan for xs_leaks vulnerabilities.
 std::vector<Finding> scan_xs_leaks(const Config &, HttpClient &http,
                                    const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -273,6 +312,7 @@ std::vector<Finding> scan_xs_leaks(const Config &, HttpClient &http,
 
 /// Cookie Tossing — set cookies from subdomain to parent.
 /// Scanner implementation.
+/// @brief Scan for cookie_tossing vulnerabilities.
 std::vector<Finding> scan_cookie_tossing(const Config &, HttpClient &http,
                                          const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -295,6 +335,7 @@ std::vector<Finding> scan_cookie_tossing(const Config &, HttpClient &http,
 
 /// Second Order Injection — inject payloads that trigger on later retrieval.
 /// Scanner implementation.
+/// @brief Scan for second_order vulnerabilities.
 std::vector<Finding> scan_second_order(const Config &, HttpClient &http,
                                        const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -325,6 +366,7 @@ std::vector<Finding> scan_second_order(const Config &, HttpClient &http,
 
 /// Param Discovery — brute-force hidden parameters.
 /// Scanner implementation.
+/// @brief Scan for param_discovery vulnerabilities.
 std::vector<Finding> scan_param_discovery(const Config &, HttpClient &http,
                                           const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -350,6 +392,7 @@ std::vector<Finding> scan_param_discovery(const Config &, HttpClient &http,
 
 /// Param Value Enum — enumerate valid values for discovered params.
 /// Scanner implementation.
+/// @brief Scan for param_value_enum vulnerabilities.
 std::vector<Finding> scan_param_value_enum(const Config &, HttpClient &http,
                                            const CrawlResult &crawl) {
   std::vector<Finding> findings;

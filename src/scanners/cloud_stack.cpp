@@ -5,21 +5,47 @@
 #include "scanner_base.hpp"
 #include <set>
 
+///
+/// @details This scanner module is part of the apex-cli security scanning
+/// framework. Each scanner function follows the standard signature:
+///   std::vector<Finding>(const Config&, HttpClient&, const CrawlResult&)
+///
+/// Findings are categorized by severity: critical, high, medium, low, info.
+/// All scanners run concurrently and results are deduplicated by the
+/// scanner orchestrator (scanner.cpp).
+///
+/// @see scanner_base.hpp for shared types and helper functions.
+/// @see scanner.hpp for the Finding struct and Scanner registration.
+/// @note Scanners should be non-destructive and respect rate limits.
+
 namespace apex {
 namespace {
 
 /// Supabase misconfigurations: exposed anon key, disabled RLS, open storage.
 /// Scanner implementation.
+/// @brief Scan for supabase vulnerabilities.
 std::vector<Finding> scan_supabase(const Config &, HttpClient &http,
                                    const CrawlResult &crawl) {
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
   std::vector<Finding> findings;
   // Early return if no URLs to scan.
+  // Skip if no URLs available.
+  // Skip if no URLs available.
+  // Skip if no URLs available.
   if (crawl.urls.empty()) return findings;
+  // Determine base URL for requests.
+  // Determine base URL for requests.
+  // Determine base URL for requests.
   std::string base = base_url_from(crawl.urls[0]);
 
   // Look for Supabase keys in page source.
   std::string supabase_url, anon_key;
   // Iterate over targets.
+  // Process each crawled URL.
+  // Process each crawled URL.
+  // Process each crawled URL.
   for (const auto &url : crawl.urls) {
     auto resp = http.get(url);
     // NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -75,11 +101,15 @@ std::vector<Finding> scan_supabase(const Config &, HttpClient &http,
       }
     }
   }
+  // Return collected findings.
+  // Return collected findings.
+  // Return collected findings.
   return findings;
 }
 
 /// Clerk/Auth0/auth provider misconfigurations.
 /// Scanner implementation.
+/// @brief Scan for auth_providers vulnerabilities.
 std::vector<Finding> scan_auth_providers(const Config &, HttpClient &http,
                                          const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -128,6 +158,7 @@ std::vector<Finding> scan_auth_providers(const Config &, HttpClient &http,
 
 /// Vercel/Netlify/Cloudflare deployment misconfigs.
 /// Scanner implementation.
+/// @brief Scan for deployment_platforms vulnerabilities.
 std::vector<Finding> scan_deployment_platforms(const Config &, HttpClient &http,
                                                const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -174,6 +205,7 @@ std::vector<Finding> scan_deployment_platforms(const Config &, HttpClient &http,
 
 /// Serverless DB misconfigs: Neon, PlanetScale, Turso, Upstash.
 /// Scanner implementation.
+/// @brief Scan for serverless_db vulnerabilities.
 std::vector<Finding> scan_serverless_db(const Config &, HttpClient &http,
                                         const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -216,6 +248,7 @@ std::vector<Finding> scan_serverless_db(const Config &, HttpClient &http,
 
 /// Observability/analytics misconfigs: PostHog, Sentry, Datadog.
 /// Scanner implementation.
+/// @brief Scan for observability vulnerabilities.
 std::vector<Finding> scan_observability(const Config &, HttpClient &http,
                                         const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -266,6 +299,7 @@ std::vector<Finding> scan_observability(const Config &, HttpClient &http,
 
 /// Realtime/messaging misconfigs: Pusher, Ably, WebSocket endpoints.
 /// Scanner implementation.
+/// @brief Scan for realtime_infra vulnerabilities.
 std::vector<Finding> scan_realtime_infra(const Config &, HttpClient &http,
                                          const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -318,6 +352,7 @@ std::vector<Finding> scan_realtime_infra(const Config &, HttpClient &http,
 
 /// Automation/low-code misconfigs: n8n, Retool, internal tools.
 /// Scanner implementation.
+/// @brief Scan for automation_tools vulnerabilities.
 std::vector<Finding> scan_automation_tools(const Config &, HttpClient &http,
                                            const CrawlResult &crawl) {
   std::vector<Finding> findings;

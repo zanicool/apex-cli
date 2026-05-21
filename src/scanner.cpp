@@ -59,6 +59,7 @@ std::vector<Scanner> get_scanners() {
   append(register_shadow_it_scanners());
   append(register_document_intel_scanners());
   append(register_version_fingerprint_scanners());
+  append(register_api_discovery_scanners());
 
   return all;
 }

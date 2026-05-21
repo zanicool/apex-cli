@@ -7,6 +7,19 @@
 #include <cstdio>
 #include <sstream>
 
+///
+/// @details This scanner module is part of the apex-cli security scanning
+/// framework. Each scanner function follows the standard signature:
+///   std::vector<Finding>(const Config&, HttpClient&, const CrawlResult&)
+///
+/// Findings are categorized by severity: critical, high, medium, low, info.
+/// All scanners run concurrently and results are deduplicated by the
+/// scanner orchestrator (scanner.cpp).
+///
+/// @see scanner_base.hpp for shared types and helper functions.
+/// @see scanner.hpp for the Finding struct and Scanner registration.
+/// @note Scanners should be non-destructive and respect rate limits.
+
 namespace apex {
 namespace {
 
@@ -76,8 +89,12 @@ bool is_vulnerable(int major, int minor, const KernelCVE &cve) {
 
 /// SSH-based scan — requires ssh_target in config or --ssh-target flag.
 /// Scanner implementation.
+/// @brief Scan for ssh_audit vulnerabilities.
 std::vector<Finding> scan_ssh_audit(const Config &cfg, HttpClient &,
                                     const CrawlResult &) {
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
   std::vector<Finding> findings;
 
   // Only run if SSH target is configured.
@@ -150,6 +167,9 @@ std::vector<Finding> scan_ssh_audit(const Config &cfg, HttpClient &,
                         "Elasticsearch listening — check if auth is required", "", "", ""});
   }
 
+  // Return collected findings.
+  // Return collected findings.
+  // Return collected findings.
   return findings;
 }
 

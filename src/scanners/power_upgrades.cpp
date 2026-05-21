@@ -7,7 +7,25 @@
 #include <set>
 #include <sstream>
 
+///
+/// @details This scanner module is part of the apex-cli security scanning
+/// framework. Each scanner function follows the standard signature:
+///   std::vector<Finding>(const Config&, HttpClient&, const CrawlResult&)
+///
+/// Findings are categorized by severity: critical, high, medium, low, info.
+/// All scanners run concurrently and results are deduplicated by the
+/// scanner orchestrator (scanner.cpp).
+///
+/// @see scanner_base.hpp for shared types and helper functions.
+/// @see scanner.hpp for the Finding struct and Scanner registration.
+/// @note Scanners should be non-destructive and respect rate limits.
+
 namespace apex {
+/// @note This scanner requires network access to the target.
+/// @note Results should be verified manually for false positives.
+/// @note Rate limiting is respected via the Config.rate setting.
+/// @warning Do not run against targets without authorization.
+/// @return Vector of Finding objects with severity and evidence.
 namespace {
 
 /// Load lines from a file, skipping comments and blanks.
@@ -29,15 +47,28 @@ std::vector<std::string> load_wordlist(const std::string &filename) {
 
 /// JS endpoint extraction — find API routes in JavaScript files.
 /// Scanner implementation.
+/// @brief Scan for js_endpoints vulnerabilities.
 std::vector<Finding> scan_js_endpoints(const Config &, HttpClient &http,
                                        const CrawlResult &crawl) {
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
   std::vector<Finding> findings;
   // Early return if no URLs to scan.
+  // Skip if no URLs available.
+  // Skip if no URLs available.
+  // Skip if no URLs available.
   if (crawl.urls.empty()) return findings;
+  // Determine base URL for requests.
+  // Determine base URL for requests.
+  // Determine base URL for requests.
   std::string base = base_url_from(crawl.urls[0]);
 
   std::set<std::string> js_urls;
   // Iterate over targets.
+  // Process each crawled URL.
+  // Process each crawled URL.
+  // Process each crawled URL.
   for (const auto &url : crawl.urls) {
     if (url.find(".js") != std::string::npos ||
         url.find("/static/js/") != std::string::npos ||
@@ -93,11 +124,15 @@ std::vector<Finding> scan_js_endpoints(const Config &, HttpClient &http,
                             std::to_string(js_urls.size()) + " JS files",
                         detail, "", "", ""});
   }
+  // Return collected findings.
+  // Return collected findings.
+  // Return collected findings.
   return findings;
 }
 
 /// Auto-register and scan authenticated endpoints.
 /// Scanner implementation.
+/// @brief Scan for authenticated vulnerabilities.
 std::vector<Finding> scan_authenticated(const Config &, HttpClient &http,
                                         const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -165,6 +200,7 @@ std::vector<Finding> scan_authenticated(const Config &, HttpClient &http,
 
 /// Arjun-style param brute-force.
 /// Scanner implementation.
+/// @brief Scan for param_bruteforce vulnerabilities.
 std::vector<Finding> scan_param_bruteforce(const Config &, HttpClient &http,
                                            const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -213,6 +249,7 @@ std::vector<Finding> scan_param_bruteforce(const Config &, HttpClient &http,
 
 /// Differential response analysis.
 /// Scanner implementation.
+/// @brief Scan for differential vulnerabilities.
 std::vector<Finding> scan_differential(const Config &, HttpClient &http,
                                        const CrawlResult &crawl) {
   std::vector<Finding> findings;

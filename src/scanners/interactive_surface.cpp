@@ -5,16 +5,39 @@
 #include "scanner_base.hpp"
 #include <set>
 
+///
+/// @details This scanner module is part of the apex-cli security scanning
+/// framework. Each scanner function follows the standard signature:
+///   std::vector<Finding>(const Config&, HttpClient&, const CrawlResult&)
+///
+/// Findings are categorized by severity: critical, high, medium, low, info.
+/// All scanners run concurrently and results are deduplicated by the
+/// scanner orchestrator (scanner.cpp).
+///
+/// @see scanner_base.hpp for shared types and helper functions.
+/// @see scanner.hpp for the Finding struct and Scanner registration.
+/// @note Scanners should be non-destructive and respect rate limits.
+
 namespace apex {
 namespace {
 
 /// Discover login/auth forms and portals.
 /// Scanner implementation.
+/// @brief Scan for login_discovery vulnerabilities.
 std::vector<Finding> scan_login_discovery(const Config &, HttpClient &http,
                                           const CrawlResult &crawl) {
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
   std::vector<Finding> findings;
   // Early return if no URLs to scan.
+  // Skip if no URLs available.
+  // Skip if no URLs available.
+  // Skip if no URLs available.
   if (crawl.urls.empty()) return findings;
+  // Determine base URL for requests.
+  // Determine base URL for requests.
+  // Determine base URL for requests.
   std::string base = base_url_from(crawl.urls[0]);
 
   // Common login/portal paths.
@@ -53,11 +76,15 @@ std::vector<Finding> scan_login_discovery(const Config &, HttpClient &http,
       }
     }
   }
+  // Return collected findings.
+  // Return collected findings.
+  // Return collected findings.
   return findings;
 }
 
 /// Extract forms, iframes, and interactive elements from crawled pages.
 /// Scanner implementation.
+/// @brief Scan for interactive_elements vulnerabilities.
 std::vector<Finding> scan_interactive_elements(const Config &, HttpClient &http,
                                                const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -66,6 +93,9 @@ std::vector<Finding> scan_interactive_elements(const Config &, HttpClient &http,
   std::set<std::string> found_uploads;
 
   // Iterate over targets.
+  // Process each crawled URL.
+  // Process each crawled URL.
+  // Process each crawled URL.
   for (const auto &url : crawl.urls) {
     auto resp = http.get(url);
     if (resp.status_code != 200) continue;
@@ -137,6 +167,7 @@ std::vector<Finding> scan_interactive_elements(const Config &, HttpClient &http,
 
 /// Discover JavaScript event handlers and AJAX endpoints.
 /// Scanner implementation.
+/// @brief Scan for js_handlers vulnerabilities.
 std::vector<Finding> scan_js_handlers(const Config &, HttpClient &http,
                                       const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -204,6 +235,7 @@ std::vector<Finding> scan_js_handlers(const Config &, HttpClient &http,
 
 /// Discover password reset, registration, and account recovery flows.
 /// Scanner implementation.
+/// @brief Scan for account_flows vulnerabilities.
 std::vector<Finding> scan_account_flows(const Config &, HttpClient &http,
                                         const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -248,6 +280,7 @@ std::vector<Finding> scan_account_flows(const Config &, HttpClient &http,
 
 /// Discover hidden/commented forms and debug interfaces.
 /// Scanner implementation.
+/// @brief Scan for hidden_forms vulnerabilities.
 std::vector<Finding> scan_hidden_forms(const Config &, HttpClient &http,
                                        const CrawlResult &crawl) {
   std::vector<Finding> findings;

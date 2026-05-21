@@ -88,6 +88,7 @@ std::vector<Scanner> register_leak_intel_scanners();
 std::vector<Scanner> register_shadow_it_scanners();
 std::vector<Scanner> register_document_intel_scanners();
 std::vector<Scanner> register_version_fingerprint_scanners();
+std::vector<Scanner> register_api_discovery_scanners();
 std::vector<Scanner> register_remaining_web_scanners();
 
 } // namespace apex

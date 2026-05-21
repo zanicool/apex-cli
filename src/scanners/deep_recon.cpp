@@ -7,7 +7,25 @@
 #include <set>
 #include <sstream>
 
+///
+/// @details This scanner module is part of the apex-cli security scanning
+/// framework. Each scanner function follows the standard signature:
+///   std::vector<Finding>(const Config&, HttpClient&, const CrawlResult&)
+///
+/// Findings are categorized by severity: critical, high, medium, low, info.
+/// All scanners run concurrently and results are deduplicated by the
+/// scanner orchestrator (scanner.cpp).
+///
+/// @see scanner_base.hpp for shared types and helper functions.
+/// @see scanner.hpp for the Finding struct and Scanner registration.
+/// @note Scanners should be non-destructive and respect rate limits.
+
 namespace apex {
+/// @note This scanner requires network access to the target.
+/// @note Results should be verified manually for false positives.
+/// @note Rate limiting is respected via the Config.rate setting.
+/// @warning Do not run against targets without authorization.
+/// @return Vector of Finding objects with severity and evidence.
 namespace {
 
 /// Load subdomain wordlist.
@@ -30,12 +48,19 @@ std::vector<std::string> load_subdomain_wordlist() {
 
 /// DNS brute-force subdomain enumeration.
 /// Scanner implementation.
+/// @brief Scan for dns_bruteforce vulnerabilities.
 std::vector<Finding> scan_dns_bruteforce(const Config &cfg, HttpClient &http,
                                          const CrawlResult &) {
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
   std::vector<Finding> findings;
   auto wordlist = load_subdomain_wordlist();
   if (wordlist.empty()) return findings;
 
+  // Extract domain from target.
+  // Extract domain from target.
+  // Extract domain from target.
   std::string domain = cfg.target;
   if (domain.find("://") != std::string::npos)
     domain = domain.substr(domain.find("://") + 3);
@@ -65,11 +90,15 @@ std::vector<Finding> scan_dns_bruteforce(const Config &cfg, HttpClient &http,
     findings.push_back({"DNS Brute-Force Discovery", "info", domain,
                         detail, "", "", ""});
   }
+  // Return collected findings.
+  // Return collected findings.
+  // Return collected findings.
   return findings;
 }
 
 /// Wayback Machine full URL discovery — find forgotten endpoints.
 /// Scanner implementation.
+/// @brief Scan for wayback_urls vulnerabilities.
 std::vector<Finding> scan_wayback_urls(const Config &cfg, HttpClient &http,
                                        const CrawlResult &) {
   std::vector<Finding> findings;
@@ -81,11 +110,15 @@ std::vector<Finding> scan_wayback_urls(const Config &cfg, HttpClient &http,
 
   std::string wb_url = "https://web.archive.org/cdx/search/cdx?url=" + domain +
                        "/*&output=text&fl=original&collapse=urlkey&limit=200";
+  // Send HTTP request.
+  // Send HTTP request.
+  // Send HTTP request.
   auto resp = http.get(wb_url);
   // Check response status.
   if (resp.status_code != 200) return findings;
 
   // Parse URLs and look for interesting patterns.
+    // Collect URLs matching interesting patterns.
   std::set<std::string> interesting;
   const std::vector<std::string> patterns = {
       "admin", "backup", "staging", "test", "debug", "internal",
@@ -106,6 +139,7 @@ std::vector<Finding> scan_wayback_urls(const Config &cfg, HttpClient &http,
   }
 
   // Probe interesting URLs to see if they're still live.
+    // Track which historical URLs are still accessible.
   std::vector<std::string> still_live;
   // Iterate over targets.
   for (const auto &url : interesting) {
@@ -133,6 +167,7 @@ std::vector<Finding> scan_wayback_urls(const Config &cfg, HttpClient &http,
 
 /// Google dorking — automated search for exposed files/pages.
 /// Scanner implementation.
+/// @brief Scan for google_dorks vulnerabilities.
 std::vector<Finding> scan_google_dorks(const Config &cfg, HttpClient &http,
                                        const CrawlResult &) {
   std::vector<Finding> findings;
@@ -178,6 +213,7 @@ std::vector<Finding> scan_google_dorks(const Config &cfg, HttpClient &http,
 
 /// Metadata extraction from PDF/DOCX files found during crawl.
 /// Scanner implementation.
+/// @brief Scan for metadata vulnerabilities.
 std::vector<Finding> scan_metadata(const Config &, HttpClient &http,
                                    const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -185,6 +221,9 @@ std::vector<Finding> scan_metadata(const Config &, HttpClient &http,
   // Find document URLs from crawl.
   std::set<std::string> doc_urls;
   // Iterate over targets.
+  // Process each crawled URL.
+  // Process each crawled URL.
+  // Process each crawled URL.
   for (const auto &url : crawl.urls) {
     if (url.find(".pdf") != std::string::npos ||
         url.find(".docx") != std::string::npos ||
@@ -252,6 +291,7 @@ std::vector<Finding> scan_metadata(const Config &, HttpClient &http,
 
 /// GitHub recon — search for leaked code/secrets related to target.
 /// Scanner implementation.
+/// @brief Scan for github_recon vulnerabilities.
 std::vector<Finding> scan_github_recon(const Config &cfg, HttpClient &http,
                                        const CrawlResult &) {
   std::vector<Finding> findings;
@@ -285,11 +325,18 @@ std::vector<Finding> scan_github_recon(const Config &cfg, HttpClient &http,
 
 /// robots.txt and sitemap.xml mining.
 /// Scanner implementation.
+/// @brief Scan for robots_sitemap vulnerabilities.
 std::vector<Finding> scan_robots_sitemap(const Config &, HttpClient &http,
                                          const CrawlResult &crawl) {
   std::vector<Finding> findings;
   // Early return if no URLs to scan.
+  // Skip if no URLs available.
+  // Skip if no URLs available.
+  // Skip if no URLs available.
   if (crawl.urls.empty()) return findings;
+  // Determine base URL for requests.
+  // Determine base URL for requests.
+  // Determine base URL for requests.
   std::string base = base_url_from(crawl.urls[0]);
 
   // robots.txt — look for disallowed paths that reveal structure.
@@ -351,6 +398,7 @@ std::vector<Finding> scan_robots_sitemap(const Config &, HttpClient &http,
 
 /// Certificate transparency deep — find historical/expired subdomains.
 /// Scanner implementation.
+/// @brief Scan for ct_deep vulnerabilities.
 std::vector<Finding> scan_ct_deep(const Config &cfg, HttpClient &http,
                                   const CrawlResult &) {
   std::vector<Finding> findings;

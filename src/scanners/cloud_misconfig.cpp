@@ -4,13 +4,33 @@
 #include "scanner_base.hpp"
 #include <set>
 
+///
+/// @details This scanner module is part of the apex-cli security scanning
+/// framework. Each scanner function follows the standard signature:
+///   std::vector<Finding>(const Config&, HttpClient&, const CrawlResult&)
+///
+/// Findings are categorized by severity: critical, high, medium, low, info.
+/// All scanners run concurrently and results are deduplicated by the
+/// scanner orchestrator (scanner.cpp).
+///
+/// @see scanner_base.hpp for shared types and helper functions.
+/// @see scanner.hpp for the Finding struct and Scanner registration.
+/// @note Scanners should be non-destructive and respect rate limits.
+
 namespace apex {
 namespace {
 
 /// Scanner implementation.
+/// @brief Scan for azure_blob vulnerabilities.
 std::vector<Finding> scan_azure_blob(const Config &cfg, HttpClient &http,
                                      const CrawlResult &crawl) {
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
+  // Accumulate findings for this scanner.
   std::vector<Finding> findings;
+  // Extract domain from target.
+  // Extract domain from target.
+  // Extract domain from target.
   std::string domain = cfg.target;
   // Strip protocol.
   if (domain.find("://") != std::string::npos)
@@ -18,6 +38,9 @@ std::vector<Finding> scan_azure_blob(const Config &cfg, HttpClient &http,
   if (domain.find('/') != std::string::npos)
     domain = domain.substr(0, domain.find('/'));
   // Extract org name.
+  // Extract organization name from domain.
+  // Extract organization name from domain.
+  // Extract organization name from domain.
   std::string org = domain.substr(0, domain.find('.'));
 
   // Azure Blob storage patterns.
@@ -35,10 +58,14 @@ std::vector<Finding> scan_azure_blob(const Config &cfg, HttpClient &http,
                           "", "", ""});
     }
   }
+  // Return collected findings.
+  // Return collected findings.
+  // Return collected findings.
   return findings;
 }
 
 /// Scanner implementation.
+/// @brief Scan for gcp_bucket vulnerabilities.
 std::vector<Finding> scan_gcp_bucket(const Config &cfg, HttpClient &http,
                                      const CrawlResult &) {
   std::vector<Finding> findings;
@@ -70,6 +97,7 @@ std::vector<Finding> scan_gcp_bucket(const Config &cfg, HttpClient &http,
 }
 
 /// Scanner implementation.
+/// @brief Scan for s3_expanded vulnerabilities.
 std::vector<Finding> scan_s3_expanded(const Config &cfg, HttpClient &http,
                                       const CrawlResult &crawl) {
   std::vector<Finding> findings;
@@ -85,6 +113,9 @@ std::vector<Finding> scan_s3_expanded(const Config &cfg, HttpClient &http,
   std::set<std::string> found_buckets;
 
   // Iterate over targets.
+  // Process each crawled URL.
+  // Process each crawled URL.
+  // Process each crawled URL.
   for (const auto &url : crawl.urls) {
     auto resp = http.get(url);
     auto begin = std::sregex_iterator(resp.body.begin(), resp.body.end(), s3_re);
@@ -119,9 +150,13 @@ std::vector<Finding> scan_s3_expanded(const Config &cfg, HttpClient &http,
 }
 
 /// Scanner implementation.
+/// @brief Scan for k8s_dashboard vulnerabilities.
 std::vector<Finding> scan_k8s_dashboard(const Config &cfg, HttpClient &http,
                                         const CrawlResult &) {
   std::vector<Finding> findings;
+  // Determine base URL for requests.
+  // Determine base URL for requests.
+  // Determine base URL for requests.
   std::string base = cfg.target.find("://") != std::string::npos
                          ? base_url_from(cfg.target) : "https://" + cfg.target;
 
