@@ -32,6 +32,52 @@ std::vector<Finding> scan_cms(const Config &, HttpClient &http,
     findings.push_back({"CMS Detection", severity, base, detail, "", "",
                         cms.name + "|" + cms.version + "|" + cms.latest_version});
   }
+
+  // WordPress plugin/theme version detection from page source.
+  auto resp = http.get(base + "/");
+  if (resp.body.find("wp-content") == std::string::npos) return findings;
+
+  // Extract plugin versions from ?ver= parameters.
+  std::regex plugin_re(
+      R"re(wp-content/plugins/([^/]+)/[^?]*\?ver=([0-9][0-9.]*))re");
+  std::regex theme_re(
+      R"re(wp-content/themes/([^/]+)/[^?]*\?ver=([0-9][0-9.]*))re");
+  std::set<std::string> seen;
+
+  auto extract = [&](const std::regex &re, const char *type) {
+    auto it = std::sregex_iterator(resp.body.begin(), resp.body.end(), re);
+    auto end = std::sregex_iterator();
+    for (; it != end; ++it) {
+      std::string name = (*it)[1].str();
+      std::string version = (*it)[2].str();
+      std::string key = name + "|" + version;
+      if (!seen.insert(key).second) continue;
+
+      // Check OSV for known vulnerabilities.
+      std::string osv_req = R"({"package":{"name":")" + name +
+                            R"(","ecosystem":"WordPress"},"version":")" +
+                            version + "\"}";
+      auto osv = http.post("https://api.osv.dev/v1/query", osv_req,
+                           "application/json");
+      bool has_vuln = osv.status_code == 200 &&
+                      osv.body.find("\"vulns\"") != std::string::npos &&
+                      osv.body.find("\"id\"") != std::string::npos;
+
+      std::string sev = has_vuln ? "high" : "info";
+      std::string detail = std::string(type) + ": " + name + " v" + version;
+      if (has_vuln) detail += " (KNOWN VULNERABILITIES)";
+
+      std::string evidence = base + "/wp-content/" +
+                             std::string(type[0] == 'P' ? "plugins/" : "themes/") +
+                             name + "/...?ver=" + version;
+      findings.push_back({"WP " + std::string(type), sev, base, detail, "",
+                          evidence, name + "|" + version});
+    }
+  };
+
+  extract(plugin_re, "Plugin");
+  extract(theme_re, "Theme");
+
   return findings;
 }
 
