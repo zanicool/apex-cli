@@ -98,3 +98,33 @@ Het verschil tussen een scriptkiddie en een hacker:
 
 Lees de PortSwigger labs niet alleen — **begrijp** waarom de payload werkt.
 Schrijf op wat je probeert, ook als het faalt. Dat is je logboek.
+
+## Spencer's Aanbevelingen (professioneel pad)
+
+Spencer (IT Security Lead) adviseert deze trainingen:
+
+| Platform | Training | Focus |
+|----------|----------|-------|
+| [Cybrary](https://www.cybrary.it/) | SSCP Certification Prep | Systems Security fundamentals |
+| [Cybrary](https://www.cybrary.it/skill-paths/application-security) | Application Security Skill Path | AppSec (direct relevant) |
+| Pluralsight | OWASP Top 10 with Burp Suite | Hands-on web vuln testing |
+| Pluralsight | Web App Pen Testing | Role-based training |
+| Pluralsight | CompTIA PenTest+ (PT0-003) | Certificering |
+
+### Certificeringen (langetermijn)
+
+```
+Beginner:   CompTIA Security+ → basis security kennis
+Intermediate: SSCP → systems security (Spencer's tip)
+Advanced:   CompTIA PenTest+ → officieel pentester
+Expert:     OSCP → de gouden standaard voor pentesters
+```
+
+### Combinatie met apex-cli
+
+Spencer noemde ook **Guard DAST** — dat is precies wat apex-cli is.
+De kennis uit deze trainingen maakt apex-cli beter:
+- OWASP Top 10 → betere scanner coverage
+- AppSec → begrijpen waarom vulns bestaan
+- PenTest+ → professionele methodology
+
