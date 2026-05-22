@@ -13,6 +13,7 @@
 #include "crawler.hpp"
 #include "http.hpp"
 #include "novelty.hpp"
+#include "owasp_intel.hpp"
 #include "scanner.hpp"
 #include "smart_mode.hpp"
 #include <chrono>
@@ -78,16 +79,7 @@ inline void print_pipeline_report(const PipelineResult &result) {
   if (!result.reportable.empty()) {
     std::cout << "\n  🟢 SUBMIT THESE (" << result.reportable.size() << "):\n\n";
     for (const auto &f : result.reportable) {
-      std::cout << "    [" << f.severity << "] " << f.type << "\n";
-      std::cout << "      " << f.url << "\n";
-      if (!f.param.empty())
-        std::cout << "      param=" << f.param;
-      if (!f.payload.empty())
-        std::cout << "  payload=" << f.payload.substr(0, 40);
-      std::cout << "\n";
-      if (!f.evidence.empty())
-        std::cout << "      evidence: " << f.evidence.substr(0, 60) << "\n";
-      std::cout << "\n";
+      print_enriched_finding(f);
     }
   }
 

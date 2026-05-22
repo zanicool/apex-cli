@@ -5,6 +5,7 @@
 #include "crawler.hpp"
 #include "http.hpp"
 #include "novelty.hpp"
+#include "owasp_intel.hpp"
 #include "pipeline.hpp"
 #include "profile_generator.hpp"
 #include "recon.hpp"
