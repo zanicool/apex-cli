@@ -3,6 +3,7 @@
 ///        concurrently, deduplicates findings.
 #include "scanner.hpp"
 #include "scanners/scanner_base.hpp"
+#include "wildcard.hpp"
 #include <algorithm>
 #include <future>
 #include <iostream>
@@ -62,6 +63,7 @@ std::vector<Scanner> get_scanners() {
   append(register_api_discovery_scanners());
   append(register_advanced_web_scanners());
   append(register_nuclei_scanners());
+  append(register_graphql_hunter());
   append(register_detection_gap_scanners());
 
   return all;
@@ -122,7 +124,32 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
       deduped.push_back(std::move(f));
   }
 
-  return deduped;
+  // Filter wildcard/SPA false positives.
+  // Get baseline for each unique host.
+  std::map<std::string, BaselineFingerprint> baselines;
+  auto get_host = [](const std::string &url) -> std::string {
+    auto pos = url.find("://");
+    if (pos == std::string::npos) return url;
+    auto start = pos + 3;
+    auto end = url.find('/', start);
+    return url.substr(0, end != std::string::npos ? end : url.size());
+  };
+
+  std::vector<Finding> filtered;
+  for (auto &f : deduped) {
+    std::string host = get_host(f.url);
+    if (baselines.find(host) == baselines.end()) {
+      baselines[host] = get_baseline(http, host);
+    }
+    auto &bp = baselines[host];
+    // Skip findings on wildcard hosts unless they have specific evidence
+    if (bp.is_wildcard && f.evidence.empty()) {
+      continue;
+    }
+    filtered.push_back(std::move(f));
+  }
+
+  return filtered;
 }
 
 } // namespace apex

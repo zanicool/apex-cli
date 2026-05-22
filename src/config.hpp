@@ -46,6 +46,8 @@ struct Config {
   std::string auth_cookie; // Cookie header value for authenticated scanning
   std::string auth_header; // Custom auth header (e.g. "Bearer token123")
   std::string auth_basic;  // Basic auth (user:pass)
+  std::string login_user;  // Username/email for auto-login
+  std::string login_pass;  // Password for auto-login
 };
 
 } // namespace apex

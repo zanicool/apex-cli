@@ -18,6 +18,8 @@
 #include "reporter.hpp"
 #include "sbom.hpp"
 #include "scanner.hpp"
+#include "origin_ip.hpp"
+#include "auto_login.hpp"
 #include "smart_mode.hpp"
 #include "toolchain.hpp"
 #include <chrono>
@@ -196,6 +198,10 @@ int main(int argc, char *argv[]) {
       cfg.auth_header = argv[++i];
     } else if (arg == "--auth" && i + 1 < argc) {
       cfg.auth_basic = argv[++i];
+    } else if (arg == "--user" && i + 1 < argc) {
+      cfg.login_user = argv[++i];
+    } else if (arg == "--pass" && i + 1 < argc) {
+      cfg.login_pass = argv[++i];
     } else if (arg[0] != '-') {
       target = arg;
     }
@@ -259,6 +265,36 @@ int main(int argc, char *argv[]) {
   // Phase 1: Recon.
   std::cout << "\n[Phase 1] Recon — Subdomain enumeration + probing\n";
   auto recon = apex::run_recon(cfg, http);
+
+  // Origin IP Discovery — find real server behind WAF
+  {
+    auto origins = apex::find_origin_ip(http, cfg.target);
+    if (!origins.empty()) {
+      std::cout << "  [!] Origin IPs found behind WAF:\n";
+      for (const auto &o : origins) {
+        std::cout << "      " << o.ip << " (" << o.source << ")"
+                  << (o.confirmed ? " ✓ CONFIRMED" : "") << "\n";
+        if (o.confirmed) {
+          // Add origin IP as scan target
+          recon.live_targets.push_back("http://" + o.ip);
+        }
+      }
+    }
+  }
+
+  // Auto-login if credentials provided
+  if (!cfg.login_user.empty() && !cfg.login_pass.empty()) {
+    std::string base = "https://" + cfg.target;
+    std::cout << "  [*] Auto-login as " << cfg.login_user << "...\n";
+    auto session = apex::auto_login(http, base, cfg.login_user, cfg.login_pass);
+    if (session.authenticated) {
+      std::cout << "  [✓] Logged in! Session acquired.\n";
+      if (!session.cookie.empty()) cfg.auth_cookie = session.cookie;
+      if (!session.auth_header.empty()) cfg.auth_header = session.auth_header;
+    } else {
+      std::cout << "  [✗] Login failed.\n";
+    }
+  }
 
   // Phase 2: Crawl.
   std::cout << "\n[Phase 2] Crawl — Spider + parameter discovery\n";
