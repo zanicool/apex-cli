@@ -1,0 +1,348 @@
+# docker-compose.battery50.yml — 50 vulnerable images for apex-cli validation.
+#
+# Usage:
+#   docker compose -f docker-compose.battery50.yml up -d
+#   ./scripts/scan-battery50.sh
+#   docker compose -f docker-compose.battery50.yml down
+#
+# Categories:
+#   4000-4009: Web injection (SQLi, XSS, CMDi, SSTI)
+#   4010-4019: API security (REST, GraphQL, gRPC)
+#   4020-4029: Auth & session (JWT, OAuth, IDOR)
+#   4030-4039: Infrastructure (misconfig, secrets, headers)
+#   4040-4049: CMS & frameworks (WordPress, Drupal, Rails)
+#   4050-4059: Modern stack (Node, Python, Go vulns)
+
+services:
+  # ═══ WEB INJECTION ═══════════════════════════════════════════════════════
+  # 1. DVWA - classic injection lab
+  t01-dvwa:
+    image: vulnerables/web-dvwa:latest
+    ports: ["4001:80"]
+    labels: { apex.expect: "SQLi,XSS,LFI,CMDi,CSRF,Upload" }
+
+  # 2. bWAPP - 100+ vulns
+  t02-bwapp:
+    image: raesene/bwapp:latest
+    ports: ["4002:80"]
+    labels: { apex.expect: "SQLi,XSS,CMDi,SSRF,XXE,LFI" }
+
+  # 3. Mutillidae II - OWASP Top 10
+  t03-mutillidae:
+    image: citizenstig/nowasp:latest
+    ports: ["4003:80"]
+    labels: { apex.expect: "SQLi,XSS,CMDi,LFI,CSRF" }
+
+  # 4. XVWA - Extremely Vulnerable Web App
+  t04-xvwa:
+    image: tuxotron/xvwa:latest
+    ports: ["4004:80"]
+    labels: { apex.expect: "SQLi,XSS,SSRF,SSTI,Upload" }
+
+  # 5. SQLi-labs
+  t05-sqli-labs:
+    image: c0ny1/sqli-labs:latest
+    ports: ["4005:80"]
+    labels: { apex.expect: "SQLi" }
+
+  # 6. XSS-game
+  t06-xss:
+    image: webgoat/webgoat:latest
+    ports: ["4006:8080"]
+    labels: { apex.expect: "XSS,SQLi,XXE,SSRF,JWT" }
+
+  # 7. Shellshock (CVE-2014-6271)
+  t07-shellshock:
+    image: vulnerables/cve-2014-6271:latest
+    ports: ["4007:80"]
+    labels: { apex.expect: "CMDi,Header" }
+
+  # 8. Hackazon - modern e-commerce vuln app
+  t08-hackazon:
+    image: ianwijaya/hackazon:latest
+    ports: ["4008:80"]
+    labels: { apex.expect: "SQLi,XSS,CSRF,Header" }
+
+  # 9. DSVW - Damn Small Vulnerable Web
+  t09-dsvw:
+    image: stamparm/dsvw:latest
+    ports: ["4009:65412"]
+    labels: { apex.expect: "SQLi,XSS,XXE,LFI,SSRF" }
+
+  # 10. Pixi - OWASP DevSlop
+  t10-pixi:
+    image: devslop/pixi:latest
+    ports: ["4010:8000"]
+    labels: { apex.expect: "SQLi,XSS,IDOR,Header" }
+
+  # ═══ API SECURITY ════════════════════════════════════════════════════════
+  # 11. VAmPI - Vulnerable API
+  t11-vampi:
+    image: erev0s/vampi:latest
+    ports: ["4011:5000"]
+    environment: [vulnerable=1]
+    labels: { apex.expect: "JWT,IDOR,Header,API" }
+
+  # 12. crAPI - Completely Ridiculous API
+  t12-crapi:
+    image: crapi/crapi-all:latest
+    ports: ["4012:8888"]
+    labels: { apex.expect: "IDOR,JWT,SSRF,API,Header" }
+
+  # 13. DVGA - Damn Vulnerable GraphQL
+  t13-dvga:
+    image: dolevf/dvga:latest
+    ports: ["4013:5013"]
+    environment: [WEB_HOST=0.0.0.0]
+    labels: { apex.expect: "GraphQL,IDOR,Header" }
+
+  # 14. vAPI - Vulnerable API
+  t14-vapi:
+    image: roottusk/vapi:latest
+    ports: ["4014:80"]
+    labels: { apex.expect: "IDOR,JWT,API,Header" }
+
+  # 15. Generic API with swagger exposed
+  t15-petstore:
+    image: swaggerapi/petstore:latest
+    ports: ["4015:8080"]
+    labels: { apex.expect: "Swagger,API,Header" }
+
+  # 16. Tiredful API
+  t16-tiredful:
+    image: tuxotron/tiredful-api:latest
+    ports: ["4016:8000"]
+    labels: { apex.expect: "IDOR,Header,API" }
+
+  # ═══ AUTH & SESSION ══════════════════════════════════════════════════════
+  # 17. Juice Shop
+  t17-juice:
+    image: bkimminich/juice-shop:latest
+    ports: ["4017:3000"]
+    labels: { apex.expect: "XSS,SQLi,IDOR,JWT,SSRF,Header" }
+
+  # 18. NodeGoat
+  t18-nodegoat:
+    image: owasp/nodegoat:latest
+    ports: ["4018:4000"]
+    labels: { apex.expect: "SQLi,XSS,IDOR,SSRF,Header" }
+
+  # 19. Keycloak (default creds)
+  t19-keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    ports: ["4019:8080"]
+    environment: [KEYCLOAK_ADMIN=admin, KEYCLOAK_ADMIN_PASSWORD=admin]
+    command: start-dev
+    labels: { apex.expect: "Header,OAuth,JWT" }
+
+  # 20. Vulnerable OAuth app
+  t20-oauth:
+    image: bkimminich/juice-shop:latest
+    ports: ["4020:3000"]
+    labels: { apex.expect: "JWT,XSS,IDOR" }
+
+  # ═══ INFRASTRUCTURE ══════════════════════════════════════════════════════
+  # 21. Exposed Redis
+  t21-redis:
+    image: redis:7-alpine
+    ports: ["4021:6379"]
+    labels: { apex.expect: "Redis,NoAuth" }
+
+  # 22. Exposed Elasticsearch
+  t22-elastic:
+    image: elasticsearch:7.17.9
+    ports: ["4022:9200"]
+    environment: ["discovery.type=single-node", "xpack.security.enabled=false"]
+    labels: { apex.expect: "Elastic,NoAuth,Header" }
+
+  # 23. Exposed MongoDB
+  t23-mongo:
+    image: mongo:6
+    ports: ["4023:27017"]
+    labels: { apex.expect: "MongoDB,NoAuth" }
+
+  # 24. Exposed Kibana
+  t24-kibana:
+    image: kibana:7.17.9
+    ports: ["4024:5601"]
+    environment: ["ELASTICSEARCH_HOSTS=http://t22-elastic:9200"]
+    depends_on: [t22-elastic]
+    labels: { apex.expect: "Header,NoAuth" }
+
+  # 25. Exposed Grafana (default admin/admin)
+  t25-grafana:
+    image: grafana/grafana:latest
+    ports: ["4025:3000"]
+    environment: [GF_SECURITY_ADMIN_PASSWORD=admin]
+    labels: { apex.expect: "Header,Default-Creds" }
+
+  # 26. Exposed Jenkins
+  t26-jenkins:
+    image: jenkins/jenkins:lts
+    ports: ["4026:8080"]
+    environment: [JAVA_OPTS=-Djenkins.install.runSetupWizard=false]
+    labels: { apex.expect: "Header,Default-Creds,RCE" }
+
+  # 27. Exposed phpMyAdmin
+  t27-phpmyadmin:
+    image: phpmyadmin:latest
+    ports: ["4027:80"]
+    environment: [PMA_ARBITRARY=1]
+    labels: { apex.expect: "Header,Default-Creds" }
+
+  # 28. Exposed Adminer
+  t28-adminer:
+    image: adminer:latest
+    ports: ["4028:8080"]
+    labels: { apex.expect: "Header,Info" }
+
+  # 29. Exposed MinIO (S3-compatible)
+  t29-minio:
+    image: minio/minio:latest
+    ports: ["4029:9000", "4129:9001"]
+    environment: [MINIO_ROOT_USER=minioadmin, MINIO_ROOT_PASSWORD=minioadmin]
+    command: server /data --console-address ":9001"
+    labels: { apex.expect: "Header,Default-Creds,S3" }
+
+  # 30. Exposed RabbitMQ (management)
+  t30-rabbitmq:
+    image: rabbitmq:3-management
+    ports: ["4030:15672"]
+    labels: { apex.expect: "Header,Default-Creds" }
+
+  # ═══ CMS & FRAMEWORKS ═══════════════════════════════════════════════════
+  # 31. WordPress (vulnerable)
+  t31-wordpress:
+    image: wordpress:latest
+    ports: ["4031:80"]
+    environment: [WORDPRESS_DB_HOST=t31-wp-db, WORDPRESS_DB_PASSWORD=pass]
+    depends_on: [t31-wp-db]
+    labels: { apex.expect: "CMS,WordPress,Header" }
+
+  t31-wp-db:
+    image: mysql:5.7
+    environment: [MYSQL_ROOT_PASSWORD=pass, MYSQL_DATABASE=wordpress]
+
+  # 32. Drupal
+  t32-drupal:
+    image: drupal:latest
+    ports: ["4032:80"]
+    labels: { apex.expect: "CMS,Drupal,Header" }
+
+  # 33. Joomla
+  t33-joomla:
+    image: joomla:latest
+    ports: ["4033:80"]
+    environment: [JOOMLA_DB_HOST=t33-joomla-db, JOOMLA_DB_PASSWORD=pass]
+    depends_on: [t33-joomla-db]
+    labels: { apex.expect: "CMS,Joomla,Header" }
+
+  t33-joomla-db:
+    image: mysql:5.7
+    environment: [MYSQL_ROOT_PASSWORD=pass, MYSQL_DATABASE=joomla]
+
+  # 34. Ghost CMS
+  t34-ghost:
+    image: ghost:latest
+    ports: ["4034:2368"]
+    labels: { apex.expect: "CMS,Ghost,Header" }
+
+  # 35. Strapi (headless CMS)
+  t35-strapi:
+    image: strapi/strapi:latest
+    ports: ["4035:1337"]
+    labels: { apex.expect: "API,Header,CMS" }
+
+  # 36. GitLab CE (heavy but realistic)
+  t36-gitlab:
+    image: gitlab/gitlab-ce:latest
+    ports: ["4036:80"]
+    environment: [GITLAB_ROOT_PASSWORD=password123]
+    labels: { apex.expect: "Header,Default-Creds,Git" }
+
+  # ═══ MODERN STACK ════════════════════════════════════════════════════════
+  # 37. Vulnerable Flask app
+  t37-flask:
+    image: stamparm/dsvw:latest
+    ports: ["4037:65412"]
+    labels: { apex.expect: "SQLi,XSS,SSTI,LFI" }
+
+  # 38. Vulnerable Django (CVE-2019-14234)
+  t38-django:
+    image: vulnerables/cve-2019-14234:latest
+    ports: ["4038:8000"]
+    labels: { apex.expect: "SQLi,Header" }
+
+  # 39. Vulnerable Spring Boot (Spring4Shell)
+  t39-spring:
+    image: vulfocus/spring-core-rce-2022-22965:latest
+    ports: ["4039:8080"]
+    labels: { apex.expect: "RCE,Header,Spring" }
+
+  # 40. Log4Shell (CVE-2021-44228)
+  t40-log4j:
+    image: ghcr.io/christophetd/log4shell-vulnerable-app:latest
+    ports: ["4040:8080"]
+    labels: { apex.expect: "Log4Shell,Header,RCE" }
+
+  # 41. Apache Struts (CVE-2017-5638)
+  t41-struts:
+    image: piesecurity/apache-struts2-cve-2017-5638:latest
+    ports: ["4041:8080"]
+    labels: { apex.expect: "RCE,CMDi,Header" }
+
+  # 42. Vulnerable Node.js (prototype pollution)
+  t42-node:
+    image: bkimminich/juice-shop:v14.5.1
+    ports: ["4042:3000"]
+    labels: { apex.expect: "XSS,SQLi,Prototype,Header" }
+
+  # 43. WebSocket vulnerable app
+  t43-websocket:
+    image: owasp/nodegoat:latest
+    ports: ["4043:4000"]
+    labels: { apex.expect: "XSS,IDOR,Header" }
+
+  # 44. Vulnerable Nginx misconfig
+  t44-nginx:
+    image: nginx:alpine
+    ports: ["4044:80"]
+    volumes: ["./tests/fixtures/nginx-misconfig.conf:/etc/nginx/conf.d/default.conf:ro"]
+    labels: { apex.expect: "Header,Directory" }
+
+  # 45. Exposed Docker Registry
+  t45-registry:
+    image: registry:2
+    ports: ["4045:5000"]
+    labels: { apex.expect: "Registry,NoAuth" }
+
+  # 46. Vulnerable Tomcat (default creds)
+  t46-tomcat:
+    image: tomcat:9
+    ports: ["4046:8080"]
+    labels: { apex.expect: "Header,Default-Creds,Tomcat" }
+
+  # 47. Exposed Prometheus
+  t47-prometheus:
+    image: prom/prometheus:latest
+    ports: ["4047:9090"]
+    labels: { apex.expect: "Header,NoAuth,Info" }
+
+  # 48. Exposed SonarQube
+  t48-sonarqube:
+    image: sonarqube:community
+    ports: ["4048:9000"]
+    labels: { apex.expect: "Header,Default-Creds" }
+
+  # 49. Vulnerable PHP app (file upload)
+  t49-upload:
+    image: vulnerables/web-dvwa:latest
+    ports: ["4049:80"]
+    labels: { apex.expect: "Upload,SQLi,XSS,LFI" }
+
+  # 50. Exposed Consul
+  t50-consul:
+    image: hashicorp/consul:latest
+    ports: ["4050:8500"]
+    command: agent -dev -client=0.0.0.0
+    labels: { apex.expect: "Header,NoAuth,Info" }

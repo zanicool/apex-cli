@@ -44,6 +44,7 @@ void test_dry_run_no_network() {
   apex::Config cfg;
   cfg.target = "example.com";
   cfg.dry_run = true;
+  cfg.quick = true;
   apex::HttpClient http(cfg);
   apex::CrawlResult crawl;
   crawl.urls = {"https://example.com"};
