@@ -33,6 +33,7 @@ struct Config {
   std::string watch_baseline; // Path to previous scan for diff
   int confidence_min = 0;   // Min confidence to report (0=all, 1=possible, 2=probable, 3=confirmed)
   bool bounty = false;      // Bug bounty mode: novelty scoring + dupe risk
+  bool pipeline = false;    // Full pipeline: recon → smart → deep → novelty → report
   std::string h1_program;   // HackerOne program handle for hacktivity check
   std::string wf_api_key;   // Wordfence Intelligence API key
   std::string ssh_target;   // SSH target (user@host) for agent-based scanning

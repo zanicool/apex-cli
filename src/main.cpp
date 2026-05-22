@@ -5,6 +5,7 @@
 #include "crawler.hpp"
 #include "http.hpp"
 #include "novelty.hpp"
+#include "pipeline.hpp"
 #include "profile_generator.hpp"
 #include "recon.hpp"
 #include "reporter.hpp"
@@ -70,6 +71,7 @@ void print_usage() {
   std::cout << "  --baseline PATH  Compare against previous scan report\n";
   std::cout << "  --confidence N   Min confidence (1=possible 2=probable 3=confirmed)\n";
   std::cout << "  --bounty       Bug bounty mode: novelty scoring + dupe risk\n";
+  std::cout << "  --pipeline     Full pipeline: recon → scan → verify → report\n";
   std::cout << "  --program NAME HackerOne program handle (enables hacktivity check)\n";
   std::cout << "  --help         Show this help\n";
 }
@@ -134,6 +136,11 @@ int main(int argc, char *argv[]) {
       cfg.bounty = true;
       if (cfg.confidence_min == 0) cfg.confidence_min = 2; // auto-filter noise
       if (!cfg.smart) cfg.smart = true; // auto-enable smart mode
+    } else if (arg == "--pipeline") {
+      cfg.pipeline = true;
+      cfg.bounty = true;
+      cfg.smart = true;
+      if (cfg.confidence_min == 0) cfg.confidence_min = 2;
     } else if (arg == "--program" && i + 1 < argc) {
       cfg.h1_program = argv[++i];
       cfg.bounty = true;
@@ -192,9 +199,13 @@ int main(int argc, char *argv[]) {
   std::filesystem::create_directories(cfg.output_dir);
 
   // Banner.
-  std::cout << kBanner;
-  std::cout << "                    v" << kVersion
-            << " — C++ Edition (high performance)\n";
+  if (cfg.pipeline) {
+    apex::print_pipeline_banner(target);
+  } else {
+    std::cout << kBanner;
+    std::cout << "                    v" << kVersion
+              << " — C++ Edition (high performance)\n";
+  }
   std::cout << "\n[*] Target: " << target << "\n";
   if (cfg.dry_run) {
     std::cout << "[*] Mode: DRY RUN\n";
@@ -792,6 +803,32 @@ int main(int argc, char *argv[]) {
     for (const auto& req : maturity.next_level_requirements) {
       std::cout << "   - " << req << "\n";
     }
+  }
+
+  // Pipeline final report
+  if (cfg.pipeline) {
+    apex::PipelineResult pipeline_result;
+    pipeline_result.total_findings = findings.size();
+    pipeline_result.total_seconds = elapsed.count();
+    pipeline_result.stages = {
+        {"Recon", (int)recon.live_targets.size(), 0},
+        {"Crawl", (int)crawl.urls.size(), 0},
+        {"Scan", (int)findings.size(), (double)elapsed.count()},
+    };
+
+    // Categorize by novelty
+    for (const auto &f : findings) {
+      auto n = apex::score_novelty(f);
+      auto c = apex::score_confidence(f);
+      if (n == apex::Novelty::High && c == apex::Confidence::Confirmed)
+        pipeline_result.reportable.push_back(f);
+      else if (static_cast<int>(n) >= 2)
+        pipeline_result.verify_first.push_back(f);
+      else
+        pipeline_result.skip.push_back(f);
+    }
+
+    apex::print_pipeline_report(pipeline_result);
   }
 
   std::cout << "\n[done] Scan complete in " << elapsed.count() << "s — "
