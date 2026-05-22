@@ -1,23 +1,25 @@
 /// @file main.cpp
 /// @brief Apex CLI entry point — CLI parsing and scan orchestration.
-#include "config.hpp"
+#include "brain.hpp"
 #include "chain.hpp"
+#include "cms_export.hpp"
 #include "confidence.hpp"
+#include "config.hpp"
 #include "crawler.hpp"
 #include "http.hpp"
+#include "impact.hpp"
+#include "maturity.hpp"
 #include "novelty.hpp"
 #include "owasp_intel.hpp"
 #include "pipeline.hpp"
 #include "profile_generator.hpp"
 #include "recon.hpp"
+#include "recon_logger.hpp"
 #include "reporter.hpp"
 #include "sbom.hpp"
 #include "scanner.hpp"
 #include "smart_mode.hpp"
 #include "toolchain.hpp"
-#include "cms_export.hpp"
-#include "recon_logger.hpp"
-#include "maturity.hpp"
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -69,13 +71,18 @@ void print_usage() {
   std::cout << "  --dry-run      Preview without sending packets\n";
   std::cout << "  --smart        Smart mode: auto-select scanners from crawl\n";
   std::cout << "  --watch        Watch mode: continuous monitoring\n";
-  std::cout << "  --watch-interval N  Seconds between watch scans (default: 3600)\n";
+  std::cout
+      << "  --watch-interval N  Seconds between watch scans (default: 3600)\n";
   std::cout << "  --baseline PATH  Compare against previous scan report\n";
-  std::cout << "  --confidence N   Min confidence (1=possible 2=probable 3=confirmed)\n";
-  std::cout << "  --bounty       Bug bounty mode: novelty scoring + dupe risk\n";
-  std::cout << "  --pipeline     Full pipeline: recon → scan → chain → verify → report\n";
+  std::cout << "  --confidence N   Min confidence (1=possible 2=probable "
+               "3=confirmed)\n";
+  std::cout
+      << "  --bounty       Bug bounty mode: novelty scoring + dupe risk\n";
+  std::cout << "  --pipeline     Full pipeline: recon → scan → chain → verify "
+               "→ report\n";
   std::cout << "  --chain        Escalate findings into full exploit chains\n";
-  std::cout << "  --program NAME HackerOne program handle (enables hacktivity check)\n";
+  std::cout << "  --program NAME HackerOne program handle (enables hacktivity "
+               "check)\n";
   std::cout << "  --help         Show this help\n";
 }
 
@@ -137,21 +144,26 @@ int main(int argc, char *argv[]) {
       cfg.confidence_min = std::stoi(argv[++i]);
     } else if (arg == "--bounty") {
       cfg.bounty = true;
-      if (cfg.confidence_min == 0) cfg.confidence_min = 2; // auto-filter noise
-      if (!cfg.smart) cfg.smart = true; // auto-enable smart mode
+      if (cfg.confidence_min == 0)
+        cfg.confidence_min = 2; // auto-filter noise
+      if (!cfg.smart)
+        cfg.smart = true; // auto-enable smart mode
     } else if (arg == "--pipeline") {
       cfg.pipeline = true;
       cfg.bounty = true;
       cfg.smart = true;
       cfg.chain = true;
-      if (cfg.confidence_min == 0) cfg.confidence_min = 2;
+      if (cfg.confidence_min == 0)
+        cfg.confidence_min = 2;
     } else if (arg == "--chain") {
       cfg.chain = true;
     } else if (arg == "--program" && i + 1 < argc) {
       cfg.h1_program = argv[++i];
       cfg.bounty = true;
-      if (cfg.confidence_min == 0) cfg.confidence_min = 2;
-      if (!cfg.smart) cfg.smart = true;
+      if (cfg.confidence_min == 0)
+        cfg.confidence_min = 2;
+      if (!cfg.smart)
+        cfg.smart = true;
     } else if (arg == "--wf-key" && i + 1 < argc) {
       cfg.wf_api_key = argv[++i];
     } else if (arg == "--threads" && i + 1 < argc) {
@@ -197,7 +209,8 @@ int main(int argc, char *argv[]) {
   cfg.target = target;
   if (cfg.wf_api_key.empty()) {
     const char *env = std::getenv("WORDFENCE_API_KEY");
-    if (env) cfg.wf_api_key = env;
+    if (env)
+      cfg.wf_api_key = env;
   }
   if (cfg.output_dir.empty()) {
     cfg.output_dir = make_output_dir(target);
@@ -222,12 +235,18 @@ int main(int argc, char *argv[]) {
   bool has_httpx = false, has_katana = false, has_sqlmap = false;
   bool has_dalfox = false, has_nuclei = false, has_ffuf = false;
   for (const auto &t : tools) {
-    if (t.name == "httpx" && t.available) has_httpx = true;
-    if (t.name == "katana" && t.available) has_katana = true;
-    if (t.name == "sqlmap" && t.available) has_sqlmap = true;
-    if (t.name == "dalfox" && t.available) has_dalfox = true;
-    if (t.name == "nuclei" && t.available) has_nuclei = true;
-    if (t.name == "ffuf" && t.available) has_ffuf = true;
+    if (t.name == "httpx" && t.available)
+      has_httpx = true;
+    if (t.name == "katana" && t.available)
+      has_katana = true;
+    if (t.name == "sqlmap" && t.available)
+      has_sqlmap = true;
+    if (t.name == "dalfox" && t.available)
+      has_dalfox = true;
+    if (t.name == "nuclei" && t.available)
+      has_nuclei = true;
+    if (t.name == "ffuf" && t.available)
+      has_ffuf = true;
   }
   apex::print_tool_status(tools);
 
@@ -251,9 +270,8 @@ int main(int argc, char *argv[]) {
       seeds.push_back("https://" + cfg.target);
   }
   auto crawl = apex::run_crawler(cfg, http, seeds);
-  std::cout << "  -> " << crawl.urls.size() << " URLs, "
-            << crawl.params.size() << " params, "
-            << crawl.forms.size() << " forms\n";
+  std::cout << "  -> " << crawl.urls.size() << " URLs, " << crawl.params.size()
+            << " params, " << crawl.forms.size() << " forms\n";
 
   // Phase 3: Scan.
   std::cout << "\n[Phase 3] Scan — ";
@@ -262,12 +280,9 @@ int main(int argc, char *argv[]) {
     auto selected = apex::smart_select_scanners(intel);
     std::cout << selected.size() << " smart-selected scanners\n";
     std::cout << "  -> Intel: params=" << intel.has_params
-              << " forms=" << intel.has_forms
-              << " login=" << intel.has_login
-              << " api=" << intel.has_api
-              << " graphql=" << intel.has_graphql
-              << " ids=" << intel.has_ids
-              << " cms=" << intel.has_cms << "\n";
+              << " forms=" << intel.has_forms << " login=" << intel.has_login
+              << " api=" << intel.has_api << " graphql=" << intel.has_graphql
+              << " ids=" << intel.has_ids << " cms=" << intel.has_cms << "\n";
     // Set skip list to everything NOT in selected
     auto all = apex::get_scanners();
     for (const auto &s : all) {
@@ -292,22 +307,23 @@ int main(int argc, char *argv[]) {
   // Confidence summary
   auto conf = apex::summarize_confidence(findings);
   std::cout << "  -> Confidence: " << conf.confirmed << " confirmed, "
-            << conf.probable << " probable, "
-            << conf.possible << " possible\n";
+            << conf.probable << " probable, " << conf.possible << " possible\n";
 
   // Bug bounty mode: novelty scoring
   if (cfg.bounty) {
     auto novelty_report = apex::assess_novelty(findings);
     std::cout << "\n[Bounty] Novelty assessment — duplicate risk analysis\n";
-    std::cout << "  -> " << novelty_report.high_novelty << " high novelty (submit) | "
-              << novelty_report.medium_novelty << " medium (verify) | "
-              << novelty_report.low_novelty << " low (skip)\n";
+    std::cout << "  -> " << novelty_report.high_novelty
+              << " high novelty (submit) | " << novelty_report.medium_novelty
+              << " medium (verify) | " << novelty_report.low_novelty
+              << " low (skip)\n";
 
     // Show top reportable findings
     std::cout << "\n  📋 REPORTABLE FINDINGS (sorted by novelty):\n\n";
     int shown = 0;
     for (const auto &[f, n] : novelty_report.scored) {
-      if (static_cast<int>(n) < 2) continue; // skip low novelty
+      if (static_cast<int>(n) < 2)
+        continue; // skip low novelty
       std::cout << "  " << apex::novelty_icon(n) << " [" << f.severity << "] "
                 << f.type << "\n";
       std::cout << "     URL: " << f.url << "\n";
@@ -317,8 +333,8 @@ int main(int argc, char *argv[]) {
         std::cout << "     Evidence: " << f.evidence.substr(0, 80) << "\n";
       std::cout << "     Novelty: " << apex::novelty_str(n) << "\n\n";
       if (++shown >= 15) {
-        auto remaining = novelty_report.high_novelty +
-                         novelty_report.medium_novelty - shown;
+        auto remaining =
+            novelty_report.high_novelty + novelty_report.medium_novelty - shown;
         if (remaining > 0)
           std::cout << "     ... and " << remaining << " more\n\n";
         break;
@@ -330,9 +346,11 @@ int main(int argc, char *argv[]) {
       std::cout << "  ⚠ LIKELY DUPLICATES (don't report these):\n";
       int dupe_shown = 0;
       for (const auto &[f, n] : novelty_report.scored) {
-        if (n != apex::Novelty::Low) continue;
+        if (n != apex::Novelty::Low)
+          continue;
         std::cout << "     🔴 " << f.type << " — " << f.url << "\n";
-        if (++dupe_shown >= 5) break;
+        if (++dupe_shown >= 5)
+          break;
       }
       std::cout << "\n";
     }
@@ -342,8 +360,10 @@ int main(int argc, char *argv[]) {
       std::cout << "  🔍 Checking hacktivity for " << cfg.h1_program << "...\n";
       std::set<std::string> checked_types;
       for (const auto &[f, n] : novelty_report.scored) {
-        if (static_cast<int>(n) < 2) continue;
-        if (!checked_types.insert(f.type).second) continue;
+        if (static_cast<int>(n) < 2)
+          continue;
+        if (!checked_types.insert(f.type).second)
+          continue;
         auto matches = apex::check_hacktivity(http, cfg.h1_program, f.type);
         if (!matches.empty()) {
           std::cout << "     ⚠ " << f.type << ": " << matches.size()
@@ -354,22 +374,24 @@ int main(int argc, char *argv[]) {
   }
 
   // Log all findings to JSONL
-  for (const auto& f : findings) {
+  for (const auto &f : findings) {
     logger.log_finding(f);
   }
 
   // Phase 4: Report.
   auto end = std::chrono::steady_clock::now();
-  auto elapsed =
-      std::chrono::duration_cast<std::chrono::seconds>(end - start);
+  auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(end - start);
   std::cout << "\n[Phase 4] Report\n";
   apex::generate_report(cfg, findings, elapsed);
 
-  // Phase 4b: Verify — reproduce high/critical findings with baseline comparison.
+  // Phase 4b: Verify — reproduce high/critical findings with baseline
+  // comparison.
   int verify_count = 0;
   for (const auto &f : findings) {
-    if (f.severity != "high" && f.severity != "critical") continue;
-    if (f.payload.empty()) continue;
+    if (f.severity != "high" && f.severity != "critical")
+      continue;
+    if (f.payload.empty())
+      continue;
     ++verify_count;
   }
   if (verify_count > 0 && !cfg.dry_run) {
@@ -381,8 +403,10 @@ int main(int argc, char *argv[]) {
     // Get baseline responses per URL (what does the page normally return?).
     std::map<std::string, std::string> baselines;
     for (auto &f : findings) {
-      if (f.severity != "high" && f.severity != "critical") continue;
-      if (f.payload.empty()) continue;
+      if (f.severity != "high" && f.severity != "critical")
+        continue;
+      if (f.payload.empty())
+        continue;
       if (baselines.find(f.url) == baselines.end()) {
         auto bl = http.get(f.url);
         baselines[f.url] = bl.body.substr(0, 500);
@@ -391,8 +415,10 @@ int main(int argc, char *argv[]) {
 
     int confirmed_count = 0;
     for (auto &f : findings) {
-      if (f.severity != "high" && f.severity != "critical") continue;
-      if (f.payload.empty()) continue;
+      if (f.severity != "high" && f.severity != "critical")
+        continue;
+      if (f.payload.empty())
+        continue;
 
       // Reproduce the request with payload.
       std::string test_url = f.url;
@@ -425,20 +451,21 @@ int main(int argc, char *argv[]) {
       }
 
       std::string status = confirmed ? "confirmed" : "unconfirmed";
-      if (confirmed) ++confirmed_count;
+      if (confirmed)
+        ++confirmed_count;
 
       if (proof_out.is_open()) {
         proof_out << "{\"type\":\"" << f.type << "\",\"severity\":\""
-                  << f.severity << "\",\"url\":\"" << f.url
-                  << "\",\"param\":\"" << f.param << "\",\"payload\":\""
-                  << f.payload << "\",\"status\":\"" << status
+                  << f.severity << "\",\"url\":\"" << f.url << "\",\"param\":\""
+                  << f.param << "\",\"payload\":\"" << f.payload
+                  << "\",\"status\":\"" << status
                   << "\",\"response_code\":" << resp.status_code
-                  << ",\"response_size\":" << resp.body.size()
-                  << "}\n";
+                  << ",\"response_size\":" << resp.body.size() << "}\n";
       }
       std::cout << "    [" << status << "] " << f.type << " — " << f.url
                 << "\n";
-      if (!confirmed) f.severity = "low"; // Downgrade unconfirmed.
+      if (!confirmed)
+        f.severity = "low"; // Downgrade unconfirmed.
     }
     std::cout << "  -> " << confirmed_count << "/" << verify_count
               << " confirmed\n";
@@ -449,8 +476,10 @@ int main(int argc, char *argv[]) {
   if (!cfg.dry_run) {
     bool ran_deep = false;
     for (auto &f : findings) {
-      if (f.severity != "high" && f.severity != "critical") continue;
-      if (f.param.empty()) continue;
+      if (f.severity != "high" && f.severity != "critical")
+        continue;
+      if (f.param.empty())
+        continue;
 
       if (f.type.find("SQLi") != std::string::npos && has_sqlmap) {
         if (!ran_deep) {
@@ -486,7 +515,7 @@ int main(int argc, char *argv[]) {
 
   // Export CMS inventory if any CMS findings exist.
   bool has_cms = false;
-  for (const auto& f : findings) {
+  for (const auto &f : findings) {
     if (f.type == "CMS Detection") {
       has_cms = true;
       break;
@@ -503,14 +532,15 @@ int main(int argc, char *argv[]) {
   if (!sbom_components.empty()) {
     std::string sbom_path = cfg.output_dir + "/sbom.cdx.json";
     apex::write_sbom(sbom_components, cfg.target, sbom_path);
-    std::cout << "  -> SBOM (" << sbom_components.size() << " components): "
-              << sbom_path << "\n";
+    std::cout << "  -> SBOM (" << sbom_components.size()
+              << " components): " << sbom_path << "\n";
 
     if (!cfg.dry_run) {
       std::cout << "  -> Checking OSV.dev for known vulnerabilities...\n";
       auto sbom_vulns = apex::check_osv(http, sbom_components);
       if (!sbom_vulns.empty()) {
-        std::cout << "  -> " << sbom_vulns.size() << " vulnerabilities found:\n";
+        std::cout << "  -> " << sbom_vulns.size()
+                  << " vulnerabilities found:\n";
         for (const auto &v : sbom_vulns) {
           std::cout << "    [" << v.severity << "] " << v.id << " — "
                     << v.component;
@@ -529,13 +559,15 @@ int main(int argc, char *argv[]) {
 
   // Phase 4d: Chain — escalate findings into full exploit chains.
   if (cfg.chain && !cfg.dry_run && !findings.empty()) {
-    std::cout << "\n[Phase 4d] Chain — escalating findings into exploit chains\n";
+    std::cout
+        << "\n[Phase 4d] Chain — escalating findings into exploit chains\n";
     apex::ChainExecutor chain_exec(cfg, http);
     auto chains = chain_exec.execute(findings);
 
     int complete = 0;
     for (const auto &c : chains) {
-      if (c.complete) ++complete;
+      if (c.complete)
+        ++complete;
       std::cout << "    [" << (c.complete ? "✓" : "…") << "] "
                 << c.initial_finding.type << " → " << c.steps.size()
                 << " steps";
@@ -551,14 +583,41 @@ int main(int argc, char *argv[]) {
     std::ofstream chain_out(chain_path);
     if (chain_out.is_open()) {
       for (const auto &c : chains) {
-        chain_out << "{\"type\":\"" << c.initial_finding.type
-                  << "\",\"url\":\"" << c.initial_finding.url
-                  << "\",\"depth\":" << c.depth
+        chain_out << "{\"type\":\"" << c.initial_finding.type << "\",\"url\":\""
+                  << c.initial_finding.url << "\",\"depth\":" << c.depth
                   << ",\"complete\":" << (c.complete ? "true" : "false")
                   << ",\"impact\":\"" << c.impact
                   << "\",\"steps\":" << c.steps.size() << "}\n";
       }
       std::cout << "  -> Chain log: " << chain_path << "\n";
+    }
+
+    // Phase 4e: Brain — LLM-guided exploitation (requires ollama).
+    if (system("command -v ollama >/dev/null 2>&1") == 0) {
+      std::cout << "\n[Phase 4e] Brain — LLM-guided attack planning\n";
+      apex::Brain brain(cfg, http);
+      auto brain_result = brain.think_and_act(findings, cfg.target);
+      std::cout << "  -> " << brain_result.actions_executed << " actions executed, "
+                << brain_result.chains_completed << " new chains\n";
+      for (auto &c : brain_result.chains)
+        chains.push_back(std::move(c));
+    }
+
+    // Phase 4f: Impact — generate exploitation proof + H1 report.
+    auto proofs = apex::prove_impact(chains);
+    if (!proofs.empty()) {
+      std::cout << "\n[Phase 4f] Impact — generating exploitation proof\n";
+      std::cout << "  -> " << proofs.size() << " proven exploits\n";
+      std::string h1 = apex::generate_h1_report(proofs, cfg.target, cfg.h1_program);
+      std::string h1_path = cfg.output_dir + "/h1_report.md";
+      std::ofstream h1_out(h1_path);
+      if (h1_out.is_open()) {
+        h1_out << h1;
+        std::cout << "  -> HackerOne report: " << h1_path << "\n";
+      }
+      for (const auto &p : proofs)
+        std::cout << "    [" << p.severity << "] " << p.chain_type
+                  << " — " << p.owasp << "\n";
     }
   }
 
@@ -572,17 +631,20 @@ int main(int argc, char *argv[]) {
       for (const auto &f : findings) {
         if (f.type == "CMS Detection") {
           std::string d = f.detail;
-          if (d.find("Joomla") != std::string::npos) cms_name = "joomla";
-          else if (d.find("WordPress") != std::string::npos) cms_name = "wordpress";
-          else if (d.find("Drupal") != std::string::npos) cms_name = "drupal";
-          else if (d.find("Magento") != std::string::npos) cms_name = "magento";
+          if (d.find("Joomla") != std::string::npos)
+            cms_name = "joomla";
+          else if (d.find("WordPress") != std::string::npos)
+            cms_name = "wordpress";
+          else if (d.find("Drupal") != std::string::npos)
+            cms_name = "drupal";
+          else if (d.find("Magento") != std::string::npos)
+            cms_name = "magento";
           break;
         }
       }
       std::string nuclei_out = cfg.output_dir + "/nuclei_findings.jsonl";
-      std::string cmd = "nuclei -u https://" + cfg.target +
-                        " -tags " + cms_name + ",cve" +
-                        " -severity critical,high,medium" +
+      std::string cmd = "nuclei -u https://" + cfg.target + " -tags " +
+                        cms_name + ",cve" + " -severity critical,high,medium" +
                         " -jsonl -output " + nuclei_out +
                         " -silent 2>/dev/null";
       int ret = system(cmd.c_str());
@@ -597,10 +659,12 @@ int main(int argc, char *argv[]) {
 
   // Close logger
   logger.close();
-  std::cout << "  -> JSONL logs: cms_recon.jsonl, osint_recon.jsonl, vuln_recon.jsonl\n";
+  std::cout << "  -> JSONL logs: cms_recon.jsonl, osint_recon.jsonl, "
+               "vuln_recon.jsonl\n";
 
   // Phase 6: ZAP — generate config from recon and launch active scan.
-  if (!cfg.dry_run && system("command -v zap-cli >/dev/null 2>&1 || command -v zap.sh >/dev/null 2>&1") == 0) {
+  if (!cfg.dry_run && system("command -v zap-cli >/dev/null 2>&1 || command -v "
+                             "zap.sh >/dev/null 2>&1") == 0) {
     std::cout << "\n[Phase 6] ZAP — Active scan with targeted policy\n";
 
     // Generate ZAP automation YAML from our findings.
@@ -611,8 +675,10 @@ int main(int argc, char *argv[]) {
       bool is_wordpress = false, has_forms = !crawl.forms.empty();
       bool has_api = false;
       for (const auto &f : findings) {
-        if (f.detail.find("WordPress") != std::string::npos) is_wordpress = true;
-        if (f.type == "API Schema Inference" || f.type == "GraphQL") has_api = true;
+        if (f.detail.find("WordPress") != std::string::npos)
+          is_wordpress = true;
+        if (f.type == "API Schema Inference" || f.type == "GraphQL")
+          has_api = true;
       }
 
       zap_out << "---\nenv:\n";
@@ -697,15 +763,19 @@ int main(int argc, char *argv[]) {
       // Check if we have a learned profile for the detected CMS/framework.
       std::string profile_config;
       for (const auto &f : findings) {
-        if (f.type != "CMS Detection") continue;
+        if (f.type != "CMS Detection")
+          continue;
         std::string fw = f.detail;
         size_t pos = fw.find("Detected: ");
-        if (pos != std::string::npos) fw = fw.substr(pos + 10);
+        if (pos != std::string::npos)
+          fw = fw.substr(pos + 10);
         pos = fw.find(" v");
-        if (pos != std::string::npos) fw = fw.substr(0, pos);
+        if (pos != std::string::npos)
+          fw = fw.substr(0, pos);
         // Normalize to directory name.
         std::string slug;
-        for (char c : fw) slug += (c == ' ' || c == '/') ? '-' : std::tolower(c);
+        for (char c : fw)
+          slug += (c == ' ' || c == '/') ? '-' : std::tolower(c);
         std::string profile_path = "profiles/" + slug + "/scan.yaml";
         if (std::filesystem::exists(profile_path)) {
           profile_config = profile_path;
@@ -715,21 +785,26 @@ int main(int argc, char *argv[]) {
       }
 
       // Launch ZAP: prefer learned profile, fallback to generated config.
-      std::string active_config = profile_config.empty() ? zap_config : profile_config;
+      std::string active_config =
+          profile_config.empty() ? zap_config : profile_config;
       std::string zap_cmd = "zap.sh -cmd -autorun " + active_config +
                             " -config target.url=https://" + cfg.target +
                             " -config api.disablekey=true 2>/dev/null";
       if (system("command -v zap-cli >/dev/null 2>&1") == 0) {
         zap_cmd = "zap-cli --zap-path $(which zap.sh) quick-scan -s xss,sqli "
-                  "https://" + cfg.target + " --output " + cfg.output_dir +
+                  "https://" +
+                  cfg.target + " --output " + cfg.output_dir +
                   "/zap-report.json 2>/dev/null";
       }
       std::cout << "  -> Launching ZAP active scan...\n";
       int ret = system(zap_cmd.c_str());
       if (ret == 0) {
-        std::cout << "  -> ZAP scan complete: " << cfg.output_dir << "/zap-report.json\n";
+        std::cout << "  -> ZAP scan complete: " << cfg.output_dir
+                  << "/zap-report.json\n";
       } else {
-        std::cout << "  -> ZAP automation config generated (run manually with: zap.sh -cmd -autorun " << active_config << ")\n";
+        std::cout << "  -> ZAP automation config generated (run manually with: "
+                     "zap.sh -cmd -autorun "
+                  << active_config << ")\n";
       }
     }
   }
@@ -737,21 +812,27 @@ int main(int argc, char *argv[]) {
   // Phase 7: Learn — auto-generate/update ZAP profiles for detected frameworks.
   {
     apex::ProfileGenerator profgen("profiles");
-    auto intel = apex::ProfileGenerator::build_intel(cfg.target, crawl, findings);
+    auto intel =
+        apex::ProfileGenerator::build_intel(cfg.target, crawl, findings);
 
     // Check each CMS/framework detection finding.
     for (const auto &f : findings) {
-      if (f.type != "CMS Detection") continue;
+      if (f.type != "CMS Detection")
+        continue;
       // Extract framework name from detail (e.g., "Detected: WordPress v6.4")
       std::string fw = f.detail;
       size_t pos = fw.find("Detected: ");
-      if (pos != std::string::npos) fw = fw.substr(pos + 10);
+      if (pos != std::string::npos)
+        fw = fw.substr(pos + 10);
       pos = fw.find(" v");
-      if (pos != std::string::npos) fw = fw.substr(0, pos);
-      if (fw.empty()) continue;
+      if (pos != std::string::npos)
+        fw = fw.substr(0, pos);
+      if (fw.empty())
+        continue;
 
       if (!profgen.has_profile(fw)) {
-        std::cout << "\n[Phase 7] Learn — New framework detected: " << fw << "\n";
+        std::cout << "\n[Phase 7] Learn — New framework detected: " << fw
+                  << "\n";
         profgen.generate_profile(fw, intel);
       } else {
         profgen.update_profile(fw, intel);
@@ -760,12 +841,16 @@ int main(int argc, char *argv[]) {
 
     // Also learn from tech detected in headers/JS.
     for (const auto &f : findings) {
-      if (f.type != "Technology Disclosure" && f.type != "Server Banner Disclosure")
+      if (f.type != "Technology Disclosure" &&
+          f.type != "Server Banner Disclosure")
         continue;
-      for (const auto &tech : {"Next.js", "Nuxt", "Laravel", "Django", "Rails",
-                                "Spring", "Express", "Flask", "FastAPI", "Symfony"}) {
-        if (f.detail.find(tech) != std::string::npos && !profgen.has_profile(tech)) {
-          std::cout << "\n[Phase 7] Learn — New framework detected: " << tech << "\n";
+      for (const auto &tech :
+           {"Next.js", "Nuxt", "Laravel", "Django", "Rails", "Spring",
+            "Express", "Flask", "FastAPI", "Symfony"}) {
+        if (f.detail.find(tech) != std::string::npos &&
+            !profgen.has_profile(tech)) {
+          std::cout << "\n[Phase 7] Learn — New framework detected: " << tech
+                    << "\n";
           profgen.generate_profile(tech, intel);
         }
       }
@@ -783,8 +868,8 @@ int main(int argc, char *argv[]) {
       if (!diff.new_findings.empty()) {
         std::cout << "\n  ⚠ NEW FINDINGS:\n";
         for (const auto &f : diff.new_findings) {
-          std::cout << "    [" << f.severity << "] " << f.type
-                    << " — " << f.url << "\n";
+          std::cout << "    [" << f.severity << "] " << f.type << " — " << f.url
+                    << "\n";
         }
       }
     }
@@ -793,10 +878,10 @@ int main(int argc, char *argv[]) {
   // Calculate maturity score
   std::cout << "\n[Maturity] Calculating score...\n";
   apex::MaturityCalculator maturity_calc;
-  
+
   // Collect CMS versions from findings
   std::vector<CMSVersion> cms_versions;
-  for (const auto& f : findings) {
+  for (const auto &f : findings) {
     if (f.type == "CMS Detection" && !f.evidence.empty()) {
       // Parse evidence: "CMS|version|latest"
       size_t pos1 = f.evidence.find('|');
@@ -811,19 +896,20 @@ int main(int argc, char *argv[]) {
       }
     }
   }
-  
+
   // Empty OSINT report for now (TODO: integrate when --osint flag is used)
   apex::OSINTReport osint_report;
-  
+
   auto maturity = maturity_calc.calculate(findings, cms_versions, osint_report);
-  
+
   std::cout << "\n╔══════════════════════════════════════╗\n";
   std::cout << "║   MATURITY SCORE                     ║\n";
   std::cout << "╚══════════════════════════════════════╝\n\n";
-  std::cout << "🎯 Level: " << maturity.level << " (" << maturity.percentage << "%)\n\n";
-  
+  std::cout << "🎯 Level: " << maturity.level << " (" << maturity.percentage
+            << "%)\n\n";
+
   std::cout << "📊 Dimensions:\n";
-  for (const auto& [name, dim] : maturity.dimensions) {
+  for (const auto &[name, dim] : maturity.dimensions) {
     std::cout << "   " << name << ": ";
     int bars = dim.score / 10;
     for (int i = 0; i < 10; i++) {
@@ -831,17 +917,18 @@ int main(int argc, char *argv[]) {
     }
     std::cout << " " << dim.score << "% (" << dim.status << ")\n";
   }
-  
+
   if (!maturity.recommendations.empty()) {
     std::cout << "\n📋 Recommendations:\n";
     for (size_t i = 0; i < maturity.recommendations.size() && i < 5; i++) {
-      std::cout << "   " << (i + 1) << ". " << maturity.recommendations[i] << "\n";
+      std::cout << "   " << (i + 1) << ". " << maturity.recommendations[i]
+                << "\n";
     }
   }
-  
+
   if (!maturity.next_level_requirements.empty()) {
     std::cout << "\n🎓 Next Level (" << (maturity.level + 1) << "):\n";
-    for (const auto& req : maturity.next_level_requirements) {
+    for (const auto &req : maturity.next_level_requirements) {
       std::cout << "   - " << req << "\n";
     }
   }
@@ -883,8 +970,9 @@ int main(int argc, char *argv[]) {
     while (true) {
       std::this_thread::sleep_for(std::chrono::seconds(cfg.watch_interval));
       std::cout << "\n[watch] Re-scanning at "
-                << std::put_time(std::localtime(&(
-                       *reinterpret_cast<const time_t *>(&elapsed))),
+                << std::put_time(
+                       std::localtime(
+                           &(*reinterpret_cast<const time_t *>(&elapsed))),
                        "%H:%M:%S")
                 << "...\n";
       // Load baseline from previous run
@@ -893,16 +981,19 @@ int main(int argc, char *argv[]) {
       auto new_crawl = apex::run_crawler(cfg, http, seeds);
       auto new_findings = apex::run_scanners(cfg, http, new_crawl);
       if (cfg.confidence_min > 0)
-        new_findings = apex::filter_by_confidence(new_findings, cfg.confidence_min);
+        new_findings =
+            apex::filter_by_confidence(new_findings, cfg.confidence_min);
       // Diff
       auto diff = apex::compute_diff(new_findings, baseline);
       if (diff.new_findings.empty()) {
-        std::cout << "  -> No new findings (unchanged: " << diff.unchanged << ")\n";
+        std::cout << "  -> No new findings (unchanged: " << diff.unchanged
+                  << ")\n";
       } else {
-        std::cout << "  -> ⚠ " << diff.new_findings.size() << " NEW findings:\n";
+        std::cout << "  -> ⚠ " << diff.new_findings.size()
+                  << " NEW findings:\n";
         for (const auto &f : diff.new_findings) {
-          std::cout << "    [" << f.severity << "] " << f.type
-                    << " — " << f.url << "\n";
+          std::cout << "    [" << f.severity << "] " << f.type << " — " << f.url
+                    << "\n";
         }
       }
       // Update report for next iteration
