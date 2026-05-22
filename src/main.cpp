@@ -4,6 +4,7 @@
 #include "confidence.hpp"
 #include "crawler.hpp"
 #include "http.hpp"
+#include "novelty.hpp"
 #include "profile_generator.hpp"
 #include "recon.hpp"
 #include "reporter.hpp"
@@ -68,6 +69,8 @@ void print_usage() {
   std::cout << "  --watch-interval N  Seconds between watch scans (default: 3600)\n";
   std::cout << "  --baseline PATH  Compare against previous scan report\n";
   std::cout << "  --confidence N   Min confidence (1=possible 2=probable 3=confirmed)\n";
+  std::cout << "  --bounty       Bug bounty mode: novelty scoring + dupe risk\n";
+  std::cout << "  --program NAME HackerOne program handle (enables hacktivity check)\n";
   std::cout << "  --help         Show this help\n";
 }
 
@@ -127,6 +130,15 @@ int main(int argc, char *argv[]) {
       cfg.watch_baseline = argv[++i];
     } else if (arg == "--confidence" && i + 1 < argc) {
       cfg.confidence_min = std::stoi(argv[++i]);
+    } else if (arg == "--bounty") {
+      cfg.bounty = true;
+      if (cfg.confidence_min == 0) cfg.confidence_min = 2; // auto-filter noise
+      if (!cfg.smart) cfg.smart = true; // auto-enable smart mode
+    } else if (arg == "--program" && i + 1 < argc) {
+      cfg.h1_program = argv[++i];
+      cfg.bounty = true;
+      if (cfg.confidence_min == 0) cfg.confidence_min = 2;
+      if (!cfg.smart) cfg.smart = true;
     } else if (arg == "--wf-key" && i + 1 < argc) {
       cfg.wf_api_key = argv[++i];
     } else if (arg == "--threads" && i + 1 < argc) {
@@ -265,6 +277,64 @@ int main(int argc, char *argv[]) {
   std::cout << "  -> Confidence: " << conf.confirmed << " confirmed, "
             << conf.probable << " probable, "
             << conf.possible << " possible\n";
+
+  // Bug bounty mode: novelty scoring
+  if (cfg.bounty) {
+    auto novelty_report = apex::assess_novelty(findings);
+    std::cout << "\n[Bounty] Novelty assessment — duplicate risk analysis\n";
+    std::cout << "  -> " << novelty_report.high_novelty << " high novelty (submit) | "
+              << novelty_report.medium_novelty << " medium (verify) | "
+              << novelty_report.low_novelty << " low (skip)\n";
+
+    // Show top reportable findings
+    std::cout << "\n  📋 REPORTABLE FINDINGS (sorted by novelty):\n\n";
+    int shown = 0;
+    for (const auto &[f, n] : novelty_report.scored) {
+      if (static_cast<int>(n) < 2) continue; // skip low novelty
+      std::cout << "  " << apex::novelty_icon(n) << " [" << f.severity << "] "
+                << f.type << "\n";
+      std::cout << "     URL: " << f.url << "\n";
+      if (!f.param.empty())
+        std::cout << "     Param: " << f.param << "\n";
+      if (!f.evidence.empty())
+        std::cout << "     Evidence: " << f.evidence.substr(0, 80) << "\n";
+      std::cout << "     Novelty: " << apex::novelty_str(n) << "\n\n";
+      if (++shown >= 15) {
+        auto remaining = novelty_report.high_novelty +
+                         novelty_report.medium_novelty - shown;
+        if (remaining > 0)
+          std::cout << "     ... and " << remaining << " more\n\n";
+        break;
+      }
+    }
+
+    // Dupe warnings
+    if (novelty_report.low_novelty > 0) {
+      std::cout << "  ⚠ LIKELY DUPLICATES (don't report these):\n";
+      int dupe_shown = 0;
+      for (const auto &[f, n] : novelty_report.scored) {
+        if (n != apex::Novelty::Low) continue;
+        std::cout << "     🔴 " << f.type << " — " << f.url << "\n";
+        if (++dupe_shown >= 5) break;
+      }
+      std::cout << "\n";
+    }
+
+    // Hacktivity check if program specified
+    if (!cfg.h1_program.empty()) {
+      std::cout << "  🔍 Checking hacktivity for " << cfg.h1_program << "...\n";
+      std::set<std::string> checked_types;
+      for (const auto &[f, n] : novelty_report.scored) {
+        if (static_cast<int>(n) < 2) continue;
+        if (!checked_types.insert(f.type).second) continue;
+        auto matches = apex::check_hacktivity(http, cfg.h1_program, f.type);
+        if (!matches.empty()) {
+          std::cout << "     ⚠ " << f.type << ": " << matches.size()
+                    << " similar disclosed reports found\n";
+        }
+      }
+    }
+  }
 
   // Log all findings to JSONL
   for (const auto& f : findings) {
