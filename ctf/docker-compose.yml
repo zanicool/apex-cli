@@ -119,5 +119,42 @@ services:
     ports: ["5012:5000"]
     labels: { level: "4", points: "150", hint: "Where does the login redirect to?" }
 
+  # ═══ LEVEL 5: EXPERT — Real HTB-style boxes ═════════════════════════════
+
+  # Challenge 13: HTB Headless — Info leak → SSRF → RCE chain
+  lvl5-headless:
+    build:
+      context: ./challenges/lvl5-headless
+    ports: ["5013:5000"]
+    labels: { level: "5", points: "200", hint: "Developers leave debug pages. What do stack traces reveal?" }
+
+  # Challenge 14: HTB Sau — Proxy SSRF → path traversal → command injection
+  lvl5-sau:
+    build:
+      context: ./challenges/lvl5-sau
+    ports: ["5014:5000"]
+    labels: { level: "5", points: "200", hint: "What services are running internally? Can you reach them?" }
+
+  # Challenge 15: HTB Clicker — Race condition → JWT forge → priv esc
+  lvl5-clicker:
+    build:
+      context: ./challenges/lvl5-clicker
+    ports: ["5015:5000"]
+    labels: { level: "5", points: "250", hint: "What happens if you click really fast? Is the JWT secret strong?" }
+
+  # Challenge 16: HTB Codify — Sandbox escape → credential leak → path traversal
+  lvl5-codify:
+    build:
+      context: ./challenges/lvl5-codify
+    ports: ["5016:5000"]
+    labels: { level: "5", points: "250", hint: "The sandbox blocks imports... but does it block everything?" }
+
+  # Challenge 17: BOSS — IDOR → password reset → WAF bypass → RCE
+  lvl5-megacorp:
+    build:
+      context: ./challenges/lvl5-megacorp
+    ports: ["5017:5000"]
+    labels: { level: "5", points: "300", hint: "Read the API docs. What can you access without auth?" }
+
 volumes:
   ctfd-data:
