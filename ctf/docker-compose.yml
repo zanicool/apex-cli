@@ -1,0 +1,123 @@
+# Hack the Kristelijn — Father-Son CTF Platform
+#
+# A chess game: Papa builds challenges, Zani breaks them.
+# Progressive difficulty. Scoreboard. Real tools.
+#
+# Usage:
+#   docker compose -f ctf/docker-compose.yml up -d
+#   Open http://localhost:8000 (CTFd scoreboard)
+#   Challenges run on ports 5001-5050
+#
+# Levels:
+#   🟢 Level 1: Beginner (find the flag in plain sight)
+#   🟡 Level 2: Easy (basic tools needed)
+#   🔵 Level 3: Medium (apex-cli helps)
+#   🟣 Level 4: Hard (chaining required)
+#   🔴 Level 5: Expert (creative thinking)
+
+services:
+  # ═══ SCOREBOARD ══════════════════════════════════════════════════════════
+  ctfd:
+    image: ctfd/ctfd:latest
+    ports: ["8000:8000"]
+    environment:
+      - DATABASE_URL=sqlite:////opt/CTFd/CTFd/ctfd.db
+      - SECRET_KEY=HackTheKristelijn2026!
+    volumes:
+      - ctfd-data:/opt/CTFd/CTFd
+    labels: { role: "scoreboard" }
+
+  # ═══ LEVEL 1: BEGINNER — Find the flag ══════════════════════════════════
+  
+  # Challenge 1: Flag in HTML comment
+  lvl1-html:
+    build:
+      context: ./challenges/lvl1-html
+    ports: ["5001:80"]
+    labels: { level: "1", points: "10", hint: "View source" }
+
+  # Challenge 2: Flag in robots.txt
+  lvl1-robots:
+    build:
+      context: ./challenges/lvl1-robots
+    ports: ["5002:80"]
+    labels: { level: "1", points: "10", hint: "Where do robots look?" }
+
+  # Challenge 3: Flag in HTTP headers
+  lvl1-headers:
+    build:
+      context: ./challenges/lvl1-headers
+    ports: ["5003:80"]
+    labels: { level: "1", points: "15", hint: "curl -v" }
+
+  # ═══ LEVEL 2: EASY — Basic tools needed ═════════════════════════════════
+
+  # Challenge 4: SQL injection login bypass
+  lvl2-sqli:
+    build:
+      context: ./challenges/lvl2-sqli
+    ports: ["5004:5000"]
+    labels: { level: "2", points: "25", hint: "What if the password is always true?" }
+
+  # Challenge 5: Directory traversal
+  lvl2-lfi:
+    build:
+      context: ./challenges/lvl2-lfi
+    ports: ["5005:5000"]
+    labels: { level: "2", points: "25", hint: "Can you read files outside the web root?" }
+
+  # Challenge 6: Exposed .git directory
+  lvl2-git:
+    build:
+      context: ./challenges/lvl2-git
+    ports: ["5006:80"]
+    labels: { level: "2", points: "20", hint: "Developers sometimes forget to hide things" }
+
+  # ═══ LEVEL 3: MEDIUM — apex-cli helps ═══════════════════════════════════
+
+  # Challenge 7: XSS to steal cookie with flag
+  lvl3-xss:
+    build:
+      context: ./challenges/lvl3-xss
+    ports: ["5007:5000"]
+    labels: { level: "3", points: "50", hint: "The admin visits every comment..." }
+
+  # Challenge 8: SSRF to internal service
+  lvl3-ssrf:
+    build:
+      context: ./challenges/lvl3-ssrf
+    ports: ["5008:5000"]
+    labels: { level: "3", points: "50", hint: "What's running on localhost:6379?" }
+
+  # Challenge 9: JWT none algorithm
+  lvl3-jwt:
+    build:
+      context: ./challenges/lvl3-jwt
+    ports: ["5009:5000"]
+    labels: { level: "3", points: "50", hint: "What if you don't need a signature?" }
+
+  # ═══ LEVEL 4: HARD — Chaining required ══════════════════════════════════
+
+  # Challenge 10: IDOR + privilege escalation
+  lvl4-idor:
+    build:
+      context: ./challenges/lvl4-idor
+    ports: ["5010:5000"]
+    labels: { level: "4", points: "100", hint: "User 1 is not the only user..." }
+
+  # Challenge 11: SSTI to RCE
+  lvl4-ssti:
+    build:
+      context: ./challenges/lvl4-ssti
+    ports: ["5011:5000"]
+    labels: { level: "4", points: "100", hint: "Templates can do more than display text" }
+
+  # Challenge 12: Chain: open redirect → OAuth token theft
+  lvl4-chain:
+    build:
+      context: ./challenges/lvl4-chain
+    ports: ["5012:5000"]
+    labels: { level: "4", points: "150", hint: "Where does the login redirect to?" }
+
+volumes:
+  ctfd-data:
