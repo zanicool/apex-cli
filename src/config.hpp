@@ -27,9 +27,19 @@ struct Config {
   int max_urls = 500;
   bool osint_mode = false;  // Enable OSINT reconnaissance
   bool quick = false;       // Quick mode: only high-value scanners
+  bool smart = false;       // Smart mode: crawl-first scanner selection
+  bool watch = false;       // Watch mode: continuous monitoring
+  int watch_interval = 3600; // Watch interval in seconds (default 1h)
+  std::string watch_baseline; // Path to previous scan for diff
+  int confidence_min = 0;   // Min confidence to report (0=all, 1=possible, 2=probable, 3=confirmed)
   std::string wf_api_key;   // Wordfence Intelligence API key
   std::string ssh_target;   // SSH target (user@host) for agent-based scanning
   std::string ssh_key;      // SSH private key path
+
+  // Authentication
+  std::string auth_cookie;  // Cookie header value for authenticated scanning
+  std::string auth_header;  // Custom auth header (e.g. "Bearer token123")
+  std::string auth_basic;   // Basic auth (user:pass)
 };
 
 } // namespace apex

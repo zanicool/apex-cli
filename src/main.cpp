@@ -1,6 +1,7 @@
 /// @file main.cpp
 /// @brief Apex CLI entry point — CLI parsing and scan orchestration.
 #include "config.hpp"
+#include "confidence.hpp"
 #include "crawler.hpp"
 #include "http.hpp"
 #include "profile_generator.hpp"
@@ -8,6 +9,7 @@
 #include "reporter.hpp"
 #include "sbom.hpp"
 #include "scanner.hpp"
+#include "smart_mode.hpp"
 #include "toolchain.hpp"
 #include "cms_export.hpp"
 #include "recon_logger.hpp"
@@ -21,6 +23,7 @@
 #include <iostream>
 #include <map>
 #include <sstream>
+#include <thread>
 
 namespace {
 
@@ -56,7 +59,15 @@ void print_usage() {
   std::cout << "  --max-urls N   Max URLs to crawl (default: 500)\n";
   std::cout << "  --ssh TARGET   SSH target (user@host) for kernel/OS audit\n";
   std::cout << "  --ssh-key PATH SSH private key path\n";
+  std::cout << "  --cookie STR   Cookie header for authenticated scanning\n";
+  std::cout << "  --auth USER:PASS  HTTP Basic authentication\n";
+  std::cout << "  --auth-header STR Authorization header (e.g. 'Bearer tok')\n";
   std::cout << "  --dry-run      Preview without sending packets\n";
+  std::cout << "  --smart        Smart mode: auto-select scanners from crawl\n";
+  std::cout << "  --watch        Watch mode: continuous monitoring\n";
+  std::cout << "  --watch-interval N  Seconds between watch scans (default: 3600)\n";
+  std::cout << "  --baseline PATH  Compare against previous scan report\n";
+  std::cout << "  --confidence N   Min confidence (1=possible 2=probable 3=confirmed)\n";
   std::cout << "  --help         Show this help\n";
 }
 
@@ -106,6 +117,16 @@ int main(int argc, char *argv[]) {
       cfg.no_oob = true;
     } else if (arg == "--quick") {
       cfg.quick = true;
+    } else if (arg == "--smart") {
+      cfg.smart = true;
+    } else if (arg == "--watch") {
+      cfg.watch = true;
+    } else if (arg == "--watch-interval" && i + 1 < argc) {
+      cfg.watch_interval = std::stoi(argv[++i]);
+    } else if (arg == "--baseline" && i + 1 < argc) {
+      cfg.watch_baseline = argv[++i];
+    } else if (arg == "--confidence" && i + 1 < argc) {
+      cfg.confidence_min = std::stoi(argv[++i]);
     } else if (arg == "--wf-key" && i + 1 < argc) {
       cfg.wf_api_key = argv[++i];
     } else if (arg == "--threads" && i + 1 < argc) {
@@ -132,6 +153,12 @@ int main(int argc, char *argv[]) {
       cfg.ssh_target = argv[++i];
     } else if (arg == "--ssh-key" && i + 1 < argc) {
       cfg.ssh_key = argv[++i];
+    } else if (arg == "--cookie" && i + 1 < argc) {
+      cfg.auth_cookie = argv[++i];
+    } else if (arg == "--auth-header" && i + 1 < argc) {
+      cfg.auth_header = argv[++i];
+    } else if (arg == "--auth" && i + 1 < argc) {
+      cfg.auth_basic = argv[++i];
     } else if (arg[0] != '-') {
       target = arg;
     }
@@ -189,7 +216,10 @@ int main(int argc, char *argv[]) {
   std::cout << "\n[Phase 2] Crawl — Spider + parameter discovery\n";
   auto seeds = recon.live_targets;
   if (seeds.empty()) {
-    seeds.push_back("https://" + cfg.target);
+    if (cfg.target.find("://") != std::string::npos)
+      seeds.push_back(cfg.target);
+    else
+      seeds.push_back("https://" + cfg.target);
   }
   auto crawl = apex::run_crawler(cfg, http, seeds);
   std::cout << "  -> " << crawl.urls.size() << " URLs, "
@@ -197,10 +227,44 @@ int main(int argc, char *argv[]) {
             << crawl.forms.size() << " forms\n";
 
   // Phase 3: Scan.
-  std::cout << "\n[Phase 3] Scan — " << apex::get_scanners().size()
-            << " scanners\n";
+  std::cout << "\n[Phase 3] Scan — ";
+  if (cfg.smart) {
+    auto intel = apex::analyze_crawl(crawl, http);
+    auto selected = apex::smart_select_scanners(intel);
+    std::cout << selected.size() << " smart-selected scanners\n";
+    std::cout << "  -> Intel: params=" << intel.has_params
+              << " forms=" << intel.has_forms
+              << " login=" << intel.has_login
+              << " api=" << intel.has_api
+              << " graphql=" << intel.has_graphql
+              << " ids=" << intel.has_ids
+              << " cms=" << intel.has_cms << "\n";
+    // Set skip list to everything NOT in selected
+    auto all = apex::get_scanners();
+    for (const auto &s : all) {
+      if (selected.find(s.name) == selected.end())
+        cfg.skip.push_back(s.name);
+    }
+  } else {
+    std::cout << apex::get_scanners().size() << " scanners\n";
+  }
   auto findings = apex::run_scanners(cfg, http, crawl);
-  std::cout << "  -> " << findings.size() << " findings\n";
+
+  // Apply confidence filtering
+  if (cfg.confidence_min > 0) {
+    auto before = findings.size();
+    findings = apex::filter_by_confidence(findings, cfg.confidence_min);
+    std::cout << "  -> " << findings.size() << " findings (filtered from "
+              << before << " by confidence >= " << cfg.confidence_min << ")\n";
+  } else {
+    std::cout << "  -> " << findings.size() << " findings\n";
+  }
+
+  // Confidence summary
+  auto conf = apex::summarize_confidence(findings);
+  std::cout << "  -> Confidence: " << conf.confirmed << " confirmed, "
+            << conf.probable << " probable, "
+            << conf.possible << " possible\n";
 
   // Log all findings to JSONL
   for (const auto& f : findings) {
@@ -586,6 +650,24 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  // Watch mode: diff against baseline
+  if (!cfg.watch_baseline.empty()) {
+    auto baseline = apex::load_baseline(cfg.watch_baseline);
+    if (!baseline.empty()) {
+      auto diff = apex::compute_diff(findings, baseline);
+      std::cout << "\n[Watch] Diff against " << cfg.watch_baseline << "\n";
+      std::cout << "  -> " << diff.new_findings.size() << " NEW findings\n";
+      std::cout << "  -> " << diff.unchanged << " unchanged\n";
+      if (!diff.new_findings.empty()) {
+        std::cout << "\n  ⚠ NEW FINDINGS:\n";
+        for (const auto &f : diff.new_findings) {
+          std::cout << "    [" << f.severity << "] " << f.type
+                    << " — " << f.url << "\n";
+        }
+      }
+    }
+  }
+
   // Calculate maturity score
   std::cout << "\n[Maturity] Calculating score...\n";
   apex::MaturityCalculator maturity_calc;
@@ -644,5 +726,41 @@ int main(int argc, char *argv[]) {
 
   std::cout << "\n[done] Scan complete in " << elapsed.count() << "s — "
             << findings.size() << " findings\n";
+
+  // Watch mode: loop
+  if (cfg.watch) {
+    std::string prev_report = cfg.output_dir + "/report.json";
+    std::cout << "\n[watch] Monitoring every " << cfg.watch_interval
+              << "s. Ctrl+C to stop.\n";
+    while (true) {
+      std::this_thread::sleep_for(std::chrono::seconds(cfg.watch_interval));
+      std::cout << "\n[watch] Re-scanning at "
+                << std::put_time(std::localtime(&(
+                       *reinterpret_cast<const time_t *>(&elapsed))),
+                       "%H:%M:%S")
+                << "...\n";
+      // Load baseline from previous run
+      auto baseline = apex::load_baseline(prev_report);
+      // Re-crawl and re-scan
+      auto new_crawl = apex::run_crawler(cfg, http, seeds);
+      auto new_findings = apex::run_scanners(cfg, http, new_crawl);
+      if (cfg.confidence_min > 0)
+        new_findings = apex::filter_by_confidence(new_findings, cfg.confidence_min);
+      // Diff
+      auto diff = apex::compute_diff(new_findings, baseline);
+      if (diff.new_findings.empty()) {
+        std::cout << "  -> No new findings (unchanged: " << diff.unchanged << ")\n";
+      } else {
+        std::cout << "  -> ⚠ " << diff.new_findings.size() << " NEW findings:\n";
+        for (const auto &f : diff.new_findings) {
+          std::cout << "    [" << f.severity << "] " << f.type
+                    << " — " << f.url << "\n";
+        }
+      }
+      // Update report for next iteration
+      apex::generate_report(cfg, new_findings, elapsed);
+    }
+  }
+
   return 0;
 }
