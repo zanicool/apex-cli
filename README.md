@@ -56,8 +56,30 @@ make build
 # Basic scan with maturity score
 ./build/apex-cli example.com
 
+# Bug bounty pipeline (recommended)
+./build/apex-cli example.com --pipeline
+
+# Pipeline with HackerOne program check
+./build/apex-cli example.com --pipeline --program shopify
+
+# Smart mode (14x faster, only relevant scanners)
+./build/apex-cli example.com --smart
+
+# Only confirmed findings (no noise)
+./build/apex-cli example.com --smart --confidence 3
+
+# Continuous monitoring (diff against previous scan)
+./build/apex-cli example.com --watch --watch-interval 21600
+
+# Compare against baseline
+./build/apex-cli example.com --smart --baseline scans/previous/report.json
+
 # Deep scan with CMS detection
 ./build/apex-cli example.com --deep --threads 200
+
+# Authenticated scanning
+./build/apex-cli example.com --pipeline --cookie "session=abc123"
+./build/apex-cli example.com --pipeline --auth-header "Bearer tok"
 
 # OSINT reconnaissance
 ./build/apex-cli example.com --osint
@@ -71,6 +93,50 @@ make build
 # Dry run (no packets sent)
 ./build/apex-cli example.com --dry-run
 ```
+
+## Bug Bounty Workflow
+
+```bash
+# Step 1: Pre-hunt intelligence
+./scripts/bounty-recon.sh shopify
+
+# Step 2: Daily security briefing
+./scripts/security-digest.sh
+
+# Step 3: Scan with duplicate detection
+./build/apex-cli https://target.com --pipeline --program shopify
+
+# Step 4: Audit open source repos
+git clone https://github.com/Shopify/hydrogen.git
+cd hydrogen && cpm
+
+# Step 5: Continuous monitoring
+./build/apex-cli https://target.com --watch --watch-interval 21600
+```
+
+### Pipeline Output
+
+```
+🟢 SUBMIT THESE (3):
+    [critical] SSRF → Cloud Metadata
+      URL: https://app.target.com/proxy?url=
+      OWASP: A10:2021 SSRF
+      Impact: Internal network access, cloud credential theft
+      Chain: SSRF → AWS metadata → IAM creds → full account takeover
+      Ref: PortSwigger SSRF Labs, WAHH Ch.10
+
+🟡 VERIFY FIRST (2) — check hacktivity before submitting
+🔴 SKIP (5) — likely duplicates
+```
+
+### Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/bounty-recon.sh` | Pre-hunt intelligence (tech stack, CVEs, repos) |
+| `scripts/security-digest.sh` | Daily CVE + news + YouTube digest |
+| `scripts/scan-all.sh` | Parallel scan of vulnerability battery |
+| `scripts/scan-battery50.sh` | 50-image validation suite |
 
 # Configure maturity target
 cp apex.toml.example apex.toml
@@ -105,6 +171,14 @@ frameworks = ["OWASP", "CWE"]
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--pipeline` | false | Full bounty pipeline: recon → scan → verify → report |
+| `--bounty` | false | Novelty scoring + duplicate risk assessment |
+| `--smart` | false | Smart mode: auto-select scanners from crawl intel |
+| `--confidence N` | 0 | Min confidence (1=possible, 2=probable, 3=confirmed) |
+| `--program NAME` | | HackerOne program handle (enables hacktivity check) |
+| `--watch` | false | Continuous monitoring with diff |
+| `--watch-interval N` | 3600 | Seconds between watch scans |
+| `--baseline PATH` | | Compare against previous report.json |
 | `--deep` | false | More payloads, wider ports |
 | `--osint` | false | OSINT mode (employees, breaches, tech stack) |
 | `--threads` | 100 | Concurrent workers |
@@ -115,6 +189,8 @@ frameworks = ["OWASP", "CWE"]
 | `--report` | json,terminal | Report formats |
 | `--scope` | | Restrict to matching targets |
 | `--skip` | | Skip scanners (comma-separated) |
+| `--cookie` | | Cookie header for authenticated scanning |
+| `--auth-header` | | Authorization header (e.g. 'Bearer tok') |
 | `--no-oob` | false | Disable OOB confirmation |
 | `--dry-run` | false | Preview without sending packets |
 
