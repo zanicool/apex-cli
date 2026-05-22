@@ -38,6 +38,7 @@ struct Config {
   std::string wf_api_key;   // Wordfence Intelligence API key
   std::string ssh_target;   // SSH target (user@host) for agent-based scanning
   std::string ssh_key;      // SSH private key path
+  bool chain = false;       // Chain executor: escalate findings into full exploits
 
   // Authentication
   std::string auth_cookie;  // Cookie header value for authenticated scanning

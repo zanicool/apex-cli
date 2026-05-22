@@ -1,6 +1,7 @@
 /// @file main.cpp
 /// @brief Apex CLI entry point — CLI parsing and scan orchestration.
 #include "config.hpp"
+#include "chain.hpp"
 #include "confidence.hpp"
 #include "crawler.hpp"
 #include "http.hpp"
@@ -72,7 +73,8 @@ void print_usage() {
   std::cout << "  --baseline PATH  Compare against previous scan report\n";
   std::cout << "  --confidence N   Min confidence (1=possible 2=probable 3=confirmed)\n";
   std::cout << "  --bounty       Bug bounty mode: novelty scoring + dupe risk\n";
-  std::cout << "  --pipeline     Full pipeline: recon → scan → verify → report\n";
+  std::cout << "  --pipeline     Full pipeline: recon → scan → chain → verify → report\n";
+  std::cout << "  --chain        Escalate findings into full exploit chains\n";
   std::cout << "  --program NAME HackerOne program handle (enables hacktivity check)\n";
   std::cout << "  --help         Show this help\n";
 }
@@ -141,7 +143,10 @@ int main(int argc, char *argv[]) {
       cfg.pipeline = true;
       cfg.bounty = true;
       cfg.smart = true;
+      cfg.chain = true;
       if (cfg.confidence_min == 0) cfg.confidence_min = 2;
+    } else if (arg == "--chain") {
+      cfg.chain = true;
     } else if (arg == "--program" && i + 1 < argc) {
       cfg.h1_program = argv[++i];
       cfg.bounty = true;
@@ -519,6 +524,41 @@ int main(int argc, char *argv[]) {
       } else {
         std::cout << "  -> No known vulnerabilities in OSV.dev\n";
       }
+    }
+  }
+
+  // Phase 4d: Chain — escalate findings into full exploit chains.
+  if (cfg.chain && !cfg.dry_run && !findings.empty()) {
+    std::cout << "\n[Phase 4d] Chain — escalating findings into exploit chains\n";
+    apex::ChainExecutor chain_exec(cfg, http);
+    auto chains = chain_exec.execute(findings);
+
+    int complete = 0;
+    for (const auto &c : chains) {
+      if (c.complete) ++complete;
+      std::cout << "    [" << (c.complete ? "✓" : "…") << "] "
+                << c.initial_finding.type << " → " << c.steps.size()
+                << " steps";
+      if (c.complete)
+        std::cout << " → " << c.impact;
+      std::cout << "\n";
+    }
+    std::cout << "  -> " << complete << "/" << chains.size()
+              << " chains completed\n";
+
+    // Write chain results to JSONL
+    std::string chain_path = cfg.output_dir + "/chains.jsonl";
+    std::ofstream chain_out(chain_path);
+    if (chain_out.is_open()) {
+      for (const auto &c : chains) {
+        chain_out << "{\"type\":\"" << c.initial_finding.type
+                  << "\",\"url\":\"" << c.initial_finding.url
+                  << "\",\"depth\":" << c.depth
+                  << ",\"complete\":" << (c.complete ? "true" : "false")
+                  << ",\"impact\":\"" << c.impact
+                  << "\",\"steps\":" << c.steps.size() << "}\n";
+      }
+      std::cout << "  -> Chain log: " << chain_path << "\n";
     }
   }
 
