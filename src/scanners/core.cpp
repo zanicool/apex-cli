@@ -244,18 +244,23 @@ std::vector<Finding> scan_open_redirect(const Config &, HttpClient &http,
 std::vector<Finding> scan_ssti(const Config &, HttpClient &http,
                                const CrawlResult &crawl) {
   std::vector<Finding> findings;
-  const std::vector<std::pair<std::string, std::string>> payloads = {
-      {"{{7*7}}", "49"}, {"${7*7}", "49"}, {"<%=7*7%>", "49"}, {"#{7*7}", "49"}};
+  // Differential canary pairs: {payload_a, expect_a, payload_b, expect_b}
+  const std::vector<std::tuple<std::string, std::string, std::string, std::string>> canaries = {
+      {"{{7*7}}", "49", "{{9*9}}", "81"},
+      {"${7*7}", "49", "${9*9}", "81"},
+      {"<%=7*7%>", "49", "<%=9*9%>", "81"},
+      {"#{7*7}", "49", "#{9*9}", "81"}};
   for (const auto &url : crawl.urls) {
     for (const auto &p : crawl.params) {
       if (p.url != url) continue;
-      for (const auto &[payload, detect] : payloads) {
-        auto resp = http.get(p.url + "?" + p.name + "=" + payload);
-        auto baseline = http.get(p.url + "?" + p.name + "=test");
-        if (resp.body.find(detect) != std::string::npos &&
-            baseline.body.find(detect) == std::string::npos) {
-          findings.push_back({"SSTI", "high", url, "Template Injection",
-                              p.name, payload, detect});
+      for (const auto &[payload_a, expect_a, payload_b, expect_b] : canaries) {
+        auto resp_a = http.get(p.url + "?" + p.name + "=" + payload_a);
+        if (resp_a.body.find(expect_a) == std::string::npos) continue;
+        auto resp_b = http.get(p.url + "?" + p.name + "=" + payload_b);
+        if (resp_b.body.find(expect_b) != std::string::npos) {
+          findings.push_back({"SSTI", "high", url,
+                              "Differential confirmed: " + expect_a + " AND " + expect_b,
+                              p.name, payload_a, expect_a});
           break;
         }
       }

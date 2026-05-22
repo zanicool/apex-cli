@@ -81,26 +81,29 @@ std::vector<Finding> scan_xpath(const Config &, HttpClient &http,
 }
 
 /// Expression Language injection (Java EL, Spring SpEL).
+/// Uses differential canary: two different math expressions must both resolve.
 std::vector<Finding> scan_el_injection(const Config &, HttpClient &http,
                                        const CrawlResult &crawl) {
   std::vector<Finding> findings;
-  const std::vector<std::pair<std::string, std::string>> payloads = {
-      {"${7*7}", "49"},
-      {"#{7*7}", "49"},
-      {"${T(java.lang.Runtime)}", "java.lang.Runtime"},
-      {"${applicationScope}", "applicationScope"}};
+  // Pairs: {payload_a, expect_a, payload_b, expect_b}
+  const std::vector<std::tuple<std::string, std::string, std::string, std::string>> canaries = {
+      {"${7*7}", "49", "${8*8}", "64"},
+      {"#{7*7}", "49", "#{8*8}", "64"},
+      {"${T(java.lang.Runtime)}", "java.lang.Runtime", "${T(java.lang.Math)}", "java.lang.Math"}};
 
   for (const auto &url : crawl.urls) {
     auto targets = get_targets(crawl, url);
     for (const auto &[base, param] : targets) {
-      auto baseline = http.get(base + "test");
-      for (const auto &[payload, detect] : payloads) {
-        auto resp = http.get(base + payload);
-        if (resp.body.find(detect) != std::string::npos &&
-            baseline.body.find(detect) == std::string::npos) {
+      for (const auto &[payload_a, expect_a, payload_b, expect_b] : canaries) {
+        auto resp_a = http.get(base + payload_a);
+        if (resp_a.body.find(expect_a) == std::string::npos) continue;
+        // First canary matched — now verify with second
+        auto resp_b = http.get(base + payload_b);
+        if (resp_b.body.find(expect_b) != std::string::npos) {
+          // Both canaries confirmed — real injection
           findings.push_back({"EL Injection", "critical", url,
-                              "Expression Language injection", param,
-                              payload, detect});
+                              "Differential canary confirmed: " + expect_a + " AND " + expect_b,
+                              param, payload_a, expect_a});
           break;
         }
       }
