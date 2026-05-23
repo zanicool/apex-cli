@@ -57,9 +57,22 @@ echo ""
 # PHASE 2: Ensure vulnerability pattern rules exist
 # ═══════════════════════════════════════════════════════
 if ! step_done "rules-ready"; then
-  log "Phase 2: Preparing vulnerability pattern rules..."
-  # Generate semgrep rules from known CVE patterns
-  "$SCRIPT_DIR/vuln-patterns-gen.sh" "$RULES_DIR"
+  log "Phase 2: Validating pattern rules..."
+  # Semgrep rules (AST-aware, precise)
+  if [ -d "$RULES_DIR" ]; then
+    RULE_COUNT=$(find "$RULES_DIR" -name "*.yml" | wc -l | tr -d ' ')
+    ok "  Semgrep: $RULE_COUNT rules"
+  else
+    err "  No semgrep rules in $RULES_DIR"
+  fi
+  # cpm zero-day patterns (grep-based, fast, broad)
+  CPM_CHECK="$SCRIPT_DIR/../../cpm/checks/universal/security/check-zero-day-patterns.sh"
+  if [ -f "$CPM_CHECK" ]; then
+    ok "  cpm: zero-day pattern checker available"
+  else
+    CPM_CHECK=""
+    warn "  cpm checker not found (semgrep-only mode)"
+  fi
   mark_done "rules-ready"
 fi
 echo ""
@@ -98,6 +111,12 @@ while IFS='|' read -r repo stars lang branch; do
   mkdir -p "$WORKDIR/findings"
   semgrep --config "$RULES_DIR" --json --quiet --timeout 30 \
     --max-target-bytes 500000 "$clone_dir" > "$results_file" 2>/dev/null || true
+
+  # Also run cpm's grep-based zero-day patterns (faster, catches different things)
+  cpm_results="$WORKDIR/findings/$(echo "$repo" | tr '/' '_').cpm.txt"
+  if [ -n "${CPM_CHECK:-}" ]; then
+    (cd "$clone_dir" && bash "$CPM_CHECK" > "$cpm_results" 2>/dev/null) || true
+  fi
 
   # Count findings
   count=$(python3 -c "
