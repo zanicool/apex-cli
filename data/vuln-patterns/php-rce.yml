@@ -1,0 +1,31 @@
+rules:
+  - id: php-command-injection
+    patterns:
+      - pattern-either:
+          - pattern: system($CMD)
+          - pattern: exec($CMD, ...)
+          - pattern: shell_exec($CMD)
+          - pattern: passthru($CMD)
+          - pattern: popen($CMD, ...)
+          - pattern: proc_open($CMD, ...)
+      - metavariable-pattern:
+          metavariable: $CMD
+          patterns:
+            - pattern-not: "..."
+    message: >
+      Command injection: shell function with variable input.
+      Use escapeshellarg() or avoid shell entirely.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      bounty-range: "$2000-$15000"
+
+  - id: php-unsafe-unserialize
+    pattern: unserialize($INPUT, ...)
+    message: >
+      Unsafe deserialization: unserialize() can trigger __wakeup/__destruct gadgets.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      cve-examples: [CVE-2022-31679]
+      bounty-range: "$1000-$10000"

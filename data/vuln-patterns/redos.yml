@@ -1,0 +1,15 @@
+rules:
+  - id: regex-dos-pattern
+    patterns:
+      - pattern-either:
+          - pattern: new RegExp($PATTERN)
+          - pattern: re.compile($PATTERN)
+          - pattern: Pattern.compile($PATTERN)
+    message: >
+      Review regex for catastrophic backtracking (ReDoS).
+      Patterns with nested quantifiers like (a+)+ or (a|a)* are vulnerable.
+    languages: [javascript, typescript, python, java]
+    severity: WARNING
+    metadata:
+      cve-examples: [CVE-2022-25883, CVE-2021-27292]
+      bounty-range: "$200-$2000"

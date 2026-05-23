@@ -1,0 +1,18 @@
+rules:
+  - id: python-ssrf
+    patterns:
+      - pattern-either:
+          - pattern: requests.get($URL, ...)
+          - pattern: requests.post($URL, ...)
+          - pattern: urllib.request.urlopen($URL)
+          - pattern: httpx.get($URL, ...)
+      - metavariable-pattern:
+          metavariable: $URL
+          patterns:
+            - pattern-not: "..."
+    message: >
+      Potential SSRF: HTTP request with variable URL. Verify input validation.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      bounty-range: "$1000-$10000"

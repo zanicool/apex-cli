@@ -1,0 +1,26 @@
+rules:
+  - id: command-injection-exec
+    patterns:
+      - pattern-either:
+          - pattern: child_process.exec($CMD, ...)
+          - pattern: child_process.execSync($CMD, ...)
+          - pattern: exec($CMD, ...)
+          - pattern: execSync($CMD, ...)
+      - metavariable-pattern:
+          metavariable: $CMD
+          patterns:
+            - pattern-either:
+                - pattern: |
+                    `...${$INPUT}...`
+                - pattern: |
+                    $A + $INPUT + ...
+                - pattern: |
+                    $A + $INPUT
+    message: >
+      Command injection: shell exec with string interpolation.
+      Use execFile/spawn with array args instead.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cve-examples: [CVE-2021-21315, CVE-2022-25883]
+      bounty-range: "$2000-$15000"

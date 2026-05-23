@@ -1,0 +1,24 @@
+rules:
+  - id: path-traversal-join
+    patterns:
+      - pattern-either:
+          - pattern: path.join(..., $INPUT, ...)
+          - pattern: path.resolve(..., $INPUT, ...)
+          - pattern: fs.readFile($PATH, ...)
+          - pattern: fs.readFileSync($PATH, ...)
+      - pattern-not-inside: |
+          if ($INPUT.includes("..")) { ... }
+      - metavariable-pattern:
+          metavariable: $INPUT
+          patterns:
+            - pattern-either:
+                - pattern: $REQ.query.$X
+                - pattern: $REQ.params.$X
+                - pattern: $REQ.body.$X
+    message: >
+      Path traversal: file operation with user input without ../ sanitization.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cve-examples: [CVE-2021-21315, CVE-2022-29078]
+      bounty-range: "$500-$5000"

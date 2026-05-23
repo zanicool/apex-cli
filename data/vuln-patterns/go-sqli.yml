@@ -1,0 +1,18 @@
+rules:
+  - id: go-sql-injection
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $DB.Query(fmt.Sprintf("...", $INPUT, ...))
+          - pattern: |
+              $DB.Exec(fmt.Sprintf("...", $INPUT, ...))
+          - pattern: |
+              $DB.Query("..." + $INPUT + "...")
+          - pattern: |
+              $DB.QueryRow(fmt.Sprintf("...", $INPUT, ...))
+    message: >
+      SQL injection in Go: use parameterized queries ($1, $2) instead of Sprintf.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      bounty-range: "$1000-$10000"

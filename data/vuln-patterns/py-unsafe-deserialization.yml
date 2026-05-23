@@ -1,0 +1,32 @@
+rules:
+  - id: unsafe-pickle-load
+    patterns:
+      - pattern-either:
+          - pattern: pickle.loads(...)
+          - pattern: pickle.load(...)
+          - pattern: yaml.load($DATA)
+          - pattern: yaml.unsafe_load(...)
+          - pattern: marshal.loads(...)
+    message: >
+      Unsafe deserialization: pickle/yaml.load can execute arbitrary code.
+      Use yaml.safe_load() or restrict pickle with RestrictedUnpickler.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cve-examples: [CVE-2020-1747, CVE-2022-42969]
+      bounty-range: "$1000-$10000"
+
+  - id: unsafe-eval-input
+    patterns:
+      - pattern-either:
+          - pattern: eval($INPUT)
+          - pattern: exec($INPUT)
+          - pattern: compile($INPUT, ...)
+      - pattern-not-inside: |
+          $INPUT = "..."
+    message: >
+      Code injection via eval/exec with potentially user-controlled input.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      bounty-range: "$2000-$15000"
