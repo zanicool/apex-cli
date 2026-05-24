@@ -1,0 +1,54 @@
+{
+  "langflow-ai/langflow": {
+    "version": "unknown",
+    "checked": "2026-05-24T08:11:30Z"
+  },
+  "open-webui/open-webui": {
+    "version": "v0.9.5",
+    "checked": "2026-05-24T08:11:30Z"
+  },
+  "langgenius/dify": {
+    "version": "unknown",
+    "checked": "2026-05-24T08:11:31Z"
+  },
+  "hoppscotch/hoppscotch": {
+    "version": "unknown",
+    "checked": "2026-05-24T08:11:31Z"
+  },
+  "n8n-io/n8n": {
+    "version": "unknown",
+    "checked": "2026-05-24T08:11:32Z"
+  },
+  "FlowiseAI/Flowise": {
+    "version": "unknown",
+    "checked": "2026-05-24T08:11:32Z"
+  },
+  "calcom/cal.com": {
+    "version": "unknown",
+    "checked": "2026-05-24T08:11:40Z"
+  },
+  "nocodb/nocodb": {
+    "version": "unknown",
+    "checked": "2026-05-24T08:11:51Z"
+  },
+  "directus/directus": {
+    "version": "unknown",
+    "checked": "2026-05-24T08:12:02Z"
+  },
+  "strapi/strapi": {
+    "version": "unknown",
+    "checked": "2026-05-24T08:12:14Z"
+  },
+  "makeplane/plane": {
+    "version": "v1.3.1",
+    "checked": "2026-05-24T08:12:14Z"
+  },
+  "twentyhq/twenty": {
+    "version": "unknown",
+    "checked": "2026-05-24T08:12:25Z"
+  },
+  "appsmithorg/appsmith": {
+    "version": "unknown",
+    "checked": "2026-05-24T08:12:37Z"
+  }
+}
