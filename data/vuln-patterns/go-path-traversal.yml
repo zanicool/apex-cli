@@ -1,0 +1,17 @@
+rules:
+  - id: go-path-traversal
+    patterns:
+      - pattern-either:
+          - pattern: filepath.Join(..., $INPUT, ...)
+          - pattern: os.Open($PATH)
+          - pattern: os.ReadFile($PATH)
+      - pattern-not-inside: |
+          if strings.Contains($INPUT, "..") { ... }
+      - pattern-not-inside: |
+          $INPUT = filepath.Clean($INPUT)
+    message: >
+      Path traversal: file access without ../ sanitization in Go.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      bounty-range: "$500-$5000"

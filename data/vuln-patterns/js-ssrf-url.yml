@@ -1,0 +1,25 @@
+rules:
+  - id: ssrf-user-controlled-url
+    patterns:
+      - pattern-either:
+          - pattern: fetch($URL, ...)
+          - pattern: axios.get($URL, ...)
+          - pattern: axios.post($URL, ...)
+          - pattern: http.get($URL, ...)
+          - pattern: request($URL, ...)
+          - pattern: got($URL, ...)
+      - metavariable-pattern:
+          metavariable: $URL
+          patterns:
+            - pattern-either:
+                - pattern: $REQ.query.$PARAM
+                - pattern: $REQ.body.$PARAM
+                - pattern: $REQ.params.$PARAM
+    message: >
+      SSRF: HTTP request with user-controlled URL without allowlist validation.
+      Common in webhook features, URL preview, image proxy.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cve-examples: [CVE-2021-26855, CVE-2022-41040]
+      bounty-range: "$1000-$10000"

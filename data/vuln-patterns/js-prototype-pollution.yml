@@ -1,0 +1,20 @@
+rules:
+  - id: prototype-pollution-merge
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $OBJ[$KEY] = $VAL
+          - pattern: |
+              Object.assign($DEST, ..., $SRC)
+      - pattern-not-inside: |
+          if ($KEY === "__proto__" || ...) { ... }
+      - pattern-not-inside: |
+          if ($KEY === "constructor" || ...) { ... }
+    message: >
+      Potential prototype pollution: object property assignment without
+      __proto__/constructor check. CVE pattern from lodash, minimist, etc.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cve-examples: [CVE-2019-10744, CVE-2020-7598, CVE-2021-25928]
+      bounty-range: "$500-$5000"

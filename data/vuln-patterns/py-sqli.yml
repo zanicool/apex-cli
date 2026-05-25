@@ -1,0 +1,18 @@
+rules:
+  - id: sql-injection-format
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $CURSOR.execute(f"...{$INPUT}...")
+          - pattern: |
+              $CURSOR.execute("..." + $INPUT + "...")
+          - pattern: |
+              $CURSOR.execute($QUERY % $INPUT)
+          - pattern: |
+              $CURSOR.execute($QUERY.format(...))
+    message: >
+      SQL injection: query built with string formatting instead of parameterized query.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      bounty-range: "$1000-$10000"

@@ -1,0 +1,84 @@
+# Apex CLI — IoT OUI Database
+# Format: OUI|Vendor|DeviceType
+001788|Philips|Hue Bridge
+ECBB01|Philips|Hue Bridge
+B8E937|Sonos|Speaker
+5CAAFD|Sonos|Speaker
+949F3E|Sonos|Speaker
+48A6B8|Sonos|Speaker
+F0F0A4|Amazon|Echo
+74C246|Amazon|Echo
+A002DC|Amazon|Echo/Fire
+FC65DE|Amazon|Fire TV
+44650D|Amazon|Echo Dot
+68543A|Amazon|Ring
+5C4779|Amazon|Ring Doorbell
+F4F5D8|Google|Nest/Home
+A47733|Google|Chromecast
+54609A|Google|Nest Hub
+30FD38|Google|Nest Cam
+6C2483|Google|Nest Thermostat
+1C12B0|Google|Nest Protect
+64167F|Google|Nest Doorbell
+240AC4|Espressif|ESP32/ESP8266
+BCDDC2|Espressif|ESP32
+245A4C|Espressif|ESP8266
+7CDFA1|Espressif|ESP32-S3
+A4CF12|Espressif|ESP32-C3
+D8BFC0|Espressif|ESP32
+B4E62D|Espressif|ESP32
+C44F33|Espressif|ESP8266
+807D3A|Espressif|ESP32
+3CE90E|Espressif|ESP32
+CC50E3|Espressif|ESP32-S2
+483FDA|Espressif|ESP32
+E0E2E6|Espressif|ESP32-C6
+50C7BF|TP-Link|Smart Plug/Bulb
+B09575|TP-Link|Kasa
+C006C3|TP-Link|Tapo
+1C3BF3|TP-Link|Deco
+60A4B7|TP-Link|Tapo Cam
+B0A7B9|TP-Link|Smart Switch
+D80D17|TP-Link|Kasa Cam
+409F38|Shelly|Relay/Plug
+E868E7|Shelly|Relay
+C45BBE|Shelly|Plus
+3494CF|Shelly|Pro
+E8DB84|Shelly|Mini
+DC4F22|Espressif|Shelly/Tasmota
+D8F15B|Ikea|TRADFRI
+90FD9F|Ikea|DIRIGERA Hub
+000B57|Silicon Labs|Zigbee Device
+B0CE18|Tuya|Smart Device
+D4A651|Tuya|Smart Device
+10D561|Tuya|WiFi Module
+7CB94C|Tuya|Smart Plug
+843835|Tuya|Camera
+C82E18|Tuya|Doorbell
+F09FC2|Ubiquiti|UniFi Protect Cam
+44D9E7|Ubiquiti|UniFi Doorbell
+B4FBE4|Ubiquiti|UniFi Cam
+D4F547|Wemo|Smart Plug
+EC1A59|Wemo|Switch
+94103E|Wemo|Insight
+B47C9C|Amazon|Blink Cam
+34AF1C|Amazon|Eero
+F0D2F1|Amazon|Eero
+D021F9|Roku|Streaming
+B0A737|Roku|TV
+8CDB4E|Tado|Thermostat
+00124E|iRobot|Roomba
+501479|iRobot|Roomba
+D03745|Aqara|Hub
+54EF44|Aqara|Sensor
+04CF8C|Xiaomi|Smart Home
+78117F|Xiaomi|Yeelight
+7C49EB|Xiaomi|Mi Home
+64A2F9|Xiaomi|Roborock
+E0798D|Meross|Smart Plug
+48E1E9|Meross|Smart Strip
+D073D5|Lifx|Bulb
+001DCB|Eufy|Camera
+18B905|Eufy|Doorbell
+F4928B|Shenzhen|Generic IoT
+F492BF|Shenzhen|Generic IoT

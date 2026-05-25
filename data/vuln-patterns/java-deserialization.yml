@@ -1,0 +1,29 @@
+rules:
+  - id: java-unsafe-deserialization
+    patterns:
+      - pattern-either:
+          - pattern: new ObjectInputStream(...).readObject()
+          - pattern: $OIS.readObject()
+          - pattern: XMLDecoder(...).readObject()
+    message: >
+      Java deserialization: ObjectInputStream.readObject() without type filtering.
+      Use ObjectInputFilter or allowlist-based deserialization.
+    languages: [java]
+    severity: ERROR
+    metadata:
+      cve-examples: [CVE-2015-4852, CVE-2021-44228]
+      bounty-range: "$5000-$50000"
+
+  - id: java-sqli
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $STMT.executeQuery("..." + $INPUT + "...")
+          - pattern: |
+              $CONN.createStatement().executeQuery($QUERY)
+    message: >
+      SQL injection: string concatenation in query. Use PreparedStatement.
+    languages: [java]
+    severity: ERROR
+    metadata:
+      bounty-range: "$1000-$10000"

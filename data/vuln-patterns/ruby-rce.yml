@@ -1,0 +1,26 @@
+rules:
+  - id: ruby-command-injection
+    patterns:
+      - pattern-either:
+          - pattern: system($CMD)
+          - pattern: exec($CMD)
+          - pattern: |
+              `#{$CMD}`
+          - pattern: IO.popen($CMD, ...)
+          - pattern: Open3.capture2($CMD, ...)
+    message: >
+      Command injection in Ruby. Use array form of system() or Open3.
+    languages: [ruby]
+    severity: ERROR
+    metadata:
+      bounty-range: "$2000-$15000"
+
+  - id: ruby-unsafe-yaml
+    pattern: YAML.load($INPUT)
+    message: >
+      Unsafe YAML deserialization. Use YAML.safe_load instead.
+    languages: [ruby]
+    severity: ERROR
+    metadata:
+      cve-examples: [CVE-2013-0156]
+      bounty-range: "$1000-$10000"
