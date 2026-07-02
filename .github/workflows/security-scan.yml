@@ -57,8 +57,20 @@ jobs:
             ghcr.io/zaproxy/zaproxy:stable \
             zap.sh -daemon -host 0.0.0.0 -port 8080 -config api.disablekey=true
           
-          # Wait for ZAP to start
-          sleep 30
+          # Wait for ZAP API to be ready (up to 90s)
+          echo "Waiting for ZAP to start..."
+          for i in $(seq 1 30); do
+            if curl -s http://127.0.0.1:8080/JSON/core/view/version/ > /dev/null 2>&1; then
+              echo "ZAP is ready (after ~${i}x3s)"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "::error::ZAP failed to start within 90s"
+              docker logs zap
+              exit 1
+            fi
+            sleep 3
+          done
       
       - name: Setup Python
         uses: actions/setup-python@v5
