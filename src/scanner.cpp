@@ -73,6 +73,8 @@ std::vector<Scanner> get_scanners() {
   append(register_ssrf_deep_scanners());
   append(register_file_upload_scanners());
   append(register_race_condition_scanners());
+  append(register_request_smuggling_scanners());
+  append(register_cache_poison_scanners());
   append(register_infra_misconfig_scanners());
   append(register_advanced_injection_scanners());
   append(register_auth_advanced2_scanners());

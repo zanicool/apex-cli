@@ -117,3 +117,5 @@ namespace apex { std::vector<Scanner> register_app_discovery_scanners(); }
 namespace apex { std::vector<Scanner> register_ssrf_deep_scanners(); }
 namespace apex { std::vector<Scanner> register_file_upload_scanners(); }
 namespace apex { std::vector<Scanner> register_race_condition_scanners(); }
+namespace apex { std::vector<Scanner> register_request_smuggling_scanners(); }
+namespace apex { std::vector<Scanner> register_cache_poison_scanners(); }
