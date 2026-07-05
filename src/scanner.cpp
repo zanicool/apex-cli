@@ -78,6 +78,9 @@ std::vector<Scanner> get_scanners() {
   append(register_jwt_attack_scanners());
   append(register_graphql_deep_scanners());
   append(register_subdomain_takeover_scanners());
+  append(register_oauth_sso_scanners());
+  append(register_injection_advanced_scanners());
+  append(register_info_disclosure_scanners());
   append(register_infra_misconfig_scanners());
   append(register_advanced_injection_scanners());
   append(register_auth_advanced2_scanners());

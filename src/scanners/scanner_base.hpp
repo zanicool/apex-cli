@@ -122,3 +122,6 @@ namespace apex { std::vector<Scanner> register_cache_poison_scanners(); }
 namespace apex { std::vector<Scanner> register_jwt_attack_scanners(); }
 namespace apex { std::vector<Scanner> register_graphql_deep_scanners(); }
 namespace apex { std::vector<Scanner> register_subdomain_takeover_scanners(); }
+namespace apex { std::vector<Scanner> register_oauth_sso_scanners(); }
+namespace apex { std::vector<Scanner> register_injection_advanced_scanners(); }
+namespace apex { std::vector<Scanner> register_info_disclosure_scanners(); }
