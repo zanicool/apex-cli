@@ -132,3 +132,4 @@ namespace apex { std::vector<Scanner> register_payload_mutator_scanners(); }
 namespace apex { std::vector<Scanner> register_behavioral_analysis_scanners(); }
 namespace apex { std::vector<Scanner> register_path_traversal_scanners(); }
 namespace apex { std::vector<Scanner> register_browser_engine_scanners(); }
+namespace apex { std::vector<Scanner> register_critical_hunter_scanners(); }
