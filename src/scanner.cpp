@@ -12,6 +12,9 @@
 
 namespace apex {
 
+// Global findings accessible by the Attack Chain Engine
+std::vector<Finding> g_all_findings;
+
 std::vector<Scanner> get_scanners() {
   std::vector<Scanner> all;
   auto append = [&](std::vector<Scanner> &&scanners) {
@@ -275,6 +278,16 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
       continue;
     }
     final_filtered.push_back(std::move(f));
+  }
+
+  // Run Attack Chain Engine — combines findings into multi-step exploits
+  g_all_findings = final_filtered;
+  auto chain_scanners = register_attack_chain_scanners();
+  for (const auto &cs : chain_scanners) {
+    auto chains = cs.func(cfg, http, crawl);
+    for (auto &c : chains) {
+      final_filtered.push_back(std::move(c));
+    }
   }
 
   return final_filtered;

@@ -125,3 +125,4 @@ namespace apex { std::vector<Scanner> register_subdomain_takeover_scanners(); }
 namespace apex { std::vector<Scanner> register_oauth_sso_scanners(); }
 namespace apex { std::vector<Scanner> register_injection_advanced_scanners(); }
 namespace apex { std::vector<Scanner> register_info_disclosure_scanners(); }
+namespace apex { std::vector<Scanner> register_attack_chain_scanners(); }
