@@ -114,3 +114,6 @@ std::vector<Scanner> register_recon_advanced_scanners();
 #endif // APEX_SCANNERS_BASE_HPP
 namespace apex { std::vector<Scanner> register_wordpress_deep_scanners(); }
 namespace apex { std::vector<Scanner> register_app_discovery_scanners(); }
+namespace apex { std::vector<Scanner> register_ssrf_deep_scanners(); }
+namespace apex { std::vector<Scanner> register_file_upload_scanners(); }
+namespace apex { std::vector<Scanner> register_race_condition_scanners(); }
