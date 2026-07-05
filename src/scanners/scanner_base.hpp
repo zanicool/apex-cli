@@ -126,3 +126,6 @@ namespace apex { std::vector<Scanner> register_oauth_sso_scanners(); }
 namespace apex { std::vector<Scanner> register_injection_advanced_scanners(); }
 namespace apex { std::vector<Scanner> register_info_disclosure_scanners(); }
 namespace apex { std::vector<Scanner> register_attack_chain_scanners(); }
+namespace apex { std::vector<Scanner> register_waf_evasion_scanners(); }
+namespace apex { std::vector<Scanner> register_exploit_gen_scanners(); }
+namespace apex { std::vector<Scanner> register_payload_mutator_scanners(); }

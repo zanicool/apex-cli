@@ -84,6 +84,8 @@ std::vector<Scanner> get_scanners() {
   append(register_oauth_sso_scanners());
   append(register_injection_advanced_scanners());
   append(register_info_disclosure_scanners());
+  append(register_waf_evasion_scanners());
+  append(register_payload_mutator_scanners());
   append(register_infra_misconfig_scanners());
   append(register_advanced_injection_scanners());
   append(register_auth_advanced2_scanners());
@@ -287,6 +289,16 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
     auto chains = cs.func(cfg, http, crawl);
     for (auto &c : chains) {
       final_filtered.push_back(std::move(c));
+    }
+  }
+
+  // Run Exploit Generator — creates PoC scripts for confirmed vulns
+  g_all_findings = final_filtered;
+  auto exploit_scanners = register_exploit_gen_scanners();
+  for (const auto &es : exploit_scanners) {
+    auto pocs = es.func(cfg, http, crawl);
+    for (auto &p : pocs) {
+      final_filtered.push_back(std::move(p));
     }
   }
 
