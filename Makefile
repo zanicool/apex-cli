@@ -113,3 +113,10 @@ clean:
 	rm -rf $(OUT_DIR)
 
 -include $(OUT_DIR)/*.d
+
+bounty: ## Hunt bounties: make bounty PROGRAM=yahoo
+	python3 scripts/apex-bounty.py $${PROGRAM:-yahoo}
+
+bounty-scope: ## Hunt with scope file: make bounty-scope FILE=scope.txt
+	python3 scripts/apex-bounty.py --scope $${FILE} -j 10
+
