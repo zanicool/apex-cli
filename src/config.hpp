@@ -17,12 +17,15 @@ struct Config {
   int timeout = 10;
   std::string proxy;
   std::string output_dir;
+  std::string install_dir = "."; // Path to apex-cli installation (for scripts/)
   std::string report = "json,terminal";
   std::string scope;
   std::vector<std::string> skip;
   bool dry_run = false;
   std::string oob_server = "http://jarvis.local:9877";
   bool no_oob = false;
+  int rate_limit = 0;          // Max requests per second (0 = unlimited)
+  std::string custom_ua;       // Custom User-Agent header
   int crawl_depth = 3;
   int max_urls = 500;
   bool osint_mode = false;    // Enable OSINT reconnaissance

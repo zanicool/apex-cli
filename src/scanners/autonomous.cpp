@@ -9,7 +9,7 @@ namespace apex {
 namespace {
 
 /// Wayback Machine seeding — discover historical endpoints.
-std::vector<Finding> scan_wayback_seed(const Config &cfg, HttpClient &http,
+std::vector<Finding> scan_wayback_seed(const Config &cfg [[maybe_unused]], HttpClient &http,
                                        const CrawlResult &crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;

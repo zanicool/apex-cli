@@ -10,13 +10,14 @@ ChainExecutor::ChainExecutor(const Config &cfg, HttpClient &http)
     : cfg_(cfg), http_(http) {}
 
 bool ChainExecutor::in_scope(const std::string &url) const {
-  if (cfg_.scope.empty()) return true;
+  if (cfg_.scope.empty())
+    return true;
   return url.find(cfg_.scope) != std::string::npos ||
          url.find(cfg_.target) != std::string::npos;
 }
 
-std::vector<AttackChain> ChainExecutor::execute(
-    const std::vector<Finding> &findings) {
+std::vector<AttackChain>
+ChainExecutor::execute(const std::vector<Finding> &findings) {
   std::vector<AttackChain> chains;
 
   for (const auto &f : findings) {
@@ -53,7 +54,8 @@ AttackChain ChainExecutor::chain_idor(const Finding &f) {
   std::string base_url = f.url;
   std::smatch match;
 
-  if (!std::regex_search(base_url, match, id_re)) return chain;
+  if (!std::regex_search(base_url, match, id_re))
+    return chain;
 
   std::string prefix = match.prefix().str();
   std::string suffix = match.suffix().str();
@@ -77,7 +79,8 @@ AttackChain ChainExecutor::chain_idor(const Finding &f) {
           resp.body.find("secret") != std::string::npos ||
           resp.body.find("admin") != std::string::npos) {
         chain.impact = "Access to other users' sensitive data via IDOR";
-        chain.proof = "User ID " + std::to_string(id) + " contains sensitive fields";
+        chain.proof =
+            "User ID " + std::to_string(id) + " contains sensitive fields";
         chain.complete = true;
         break;
       }
@@ -142,7 +145,8 @@ AttackChain ChainExecutor::chain_sqli(const Finding &f) {
 
   // Step 1: Try UNION-based extraction
   std::string base = f.url;
-  if (f.param.empty()) return chain;
+  if (f.param.empty())
+    return chain;
 
   std::vector<std::string> payloads = {
       "' UNION SELECT NULL,NULL,NULL--",

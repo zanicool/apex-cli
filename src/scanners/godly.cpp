@@ -38,15 +38,36 @@ std::vector<Finding> scan_multi_step(const Config &, HttpClient &http,
       "/admin", "/admin/", "/dashboard", "/panel", "/settings",
       "/api/admin/users", "/api/users", "/internal/config"};
 
+  // Indicators that a page is truly protected (contains user-specific data)
+  const std::vector<std::string> auth_indicators = {
+      "\"email\"", "\"username\"", "\"user_id\"", "\"account\"",
+      "\"session\"", "\"token\"", "\"api_key\"", "admin",
+      "\"users\":[", "\"password\"", "\"role\""};
+
+  // Indicators that a page is just a public landing/redirect
+  const std::vector<std::string> public_indicators = {
+      "<html", "<!DOCTYPE", "welcome", "homepage", "landing",
+      "\"error\"", "\"message\"", "not found", "403", "401"};
+
   for (const auto &path : protected_paths) {
     auto resp = http.get(base + path);
-    if (resp.status_code == 200 &&
-        resp.body.find("login") == std::string::npos &&
-        resp.body.find("sign in") == std::string::npos &&
-        resp.body.size() > 100) {
+    if (resp.status_code != 200) continue;
+    if (resp.body.size() <= 100) continue;
+
+    // Skip if response contains login/redirect indicators
+    if (resp.body.find("login") != std::string::npos ||
+        resp.body.find("sign in") != std::string::npos ||
+        resp.body.find("redirect") != std::string::npos) continue;
+
+    // Must contain actual sensitive/admin content, not just a public page
+    bool has_sensitive = contains_any(resp.body, auth_indicators);
+    bool looks_public = contains_any(resp.body, public_indicators) &&
+                        !has_sensitive;
+
+    if (has_sensitive && !looks_public) {
       findings.push_back({"Auth Bypass", "critical", base + path,
-                          "Protected resource accessible without auth",
-                          "", "", ""});
+                          "Admin/protected resource with sensitive data accessible without auth",
+                          "", "", resp.body.substr(0, 200)});
     }
   }
   return findings;

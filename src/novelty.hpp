@@ -31,35 +31,46 @@ enum class Novelty {
 
 inline const char *novelty_str(Novelty n) {
   switch (n) {
-  case Novelty::High: return "HIGH (likely unique)";
-  case Novelty::Medium: return "MEDIUM (check hacktivity)";
-  case Novelty::Low: return "LOW (likely duplicate)";
+  case Novelty::High:
+    return "HIGH (likely unique)";
+  case Novelty::Medium:
+    return "MEDIUM (check hacktivity)";
+  case Novelty::Low:
+    return "LOW (likely duplicate)";
   }
   return "?";
 }
 
 inline const char *novelty_icon(Novelty n) {
   switch (n) {
-  case Novelty::High: return "🟢";
-  case Novelty::Medium: return "🟡";
-  case Novelty::Low: return "🔴";
+  case Novelty::High:
+    return "🟢";
+  case Novelty::Medium:
+    return "🟡";
+  case Novelty::Low:
+    return "🔴";
   }
   return "?";
 }
 
-/// Common endpoints that everyone scans — findings here are almost always dupes.
+/// Common endpoints that everyone scans — findings here are almost always
+/// dupes.
 inline bool is_common_endpoint(const std::string &url) {
   static const std::vector<std::string> common = {
-      "/.env", "/.git/config", "/admin", "/login", "/wp-admin",
-      "/wp-login.php", "/phpinfo.php", "/.DS_Store", "/server-status",
-      "/swagger.json", "/openapi.json", "/graphql", "/api/v1",
-      "/robots.txt", "/.well-known", "/sitemap.xml", "/crossdomain.xml",
-      "/elmah.axd", "/trace.axd", "/actuator", "/actuator/health",
-      "/debug", "/console", "/.htaccess", "/backup", "/config",
-      "/wp-json", "/xmlrpc.php", "/readme.html",
+      "/.env",         "/.git/config",     "/admin",
+      "/login",        "/wp-admin",        "/wp-login.php",
+      "/phpinfo.php",  "/.DS_Store",       "/server-status",
+      "/swagger.json", "/openapi.json",    "/graphql",
+      "/api/v1",       "/robots.txt",      "/.well-known",
+      "/sitemap.xml",  "/crossdomain.xml", "/elmah.axd",
+      "/trace.axd",    "/actuator",        "/actuator/health",
+      "/debug",        "/console",         "/.htaccess",
+      "/backup",       "/config",          "/wp-json",
+      "/xmlrpc.php",   "/readme.html",
   };
   for (const auto &c : common) {
-    if (url.find(c) != std::string::npos) return true;
+    if (url.find(c) != std::string::npos)
+      return true;
   }
   return false;
 }
@@ -76,9 +87,9 @@ inline int type_commonality(const std::string &type) {
       {"CORS", 7},
       {"CORS Misconfiguration", 7},
       {"Open Redirect", 7},
-      {"XSS", 6},          // common but depends on endpoint
+      {"XSS", 6}, // common but depends on endpoint
       {"CSRF", 6},
-      {"SQLi", 5},         // less common = more valuable
+      {"SQLi", 5}, // less common = more valuable
       {"SSRF", 4},
       {"SSTI", 3},
       {"CMDi", 3},
@@ -105,13 +116,16 @@ inline Novelty score_novelty(const Finding &f) {
   dupe_risk += commonality;
 
   // Factor 2: endpoint predictability
-  if (is_common_endpoint(f.url)) dupe_risk += 4;
+  if (is_common_endpoint(f.url))
+    dupe_risk += 4;
 
   // Factor 3: severity (low sev = more likely already reported and ignored)
-  if (f.severity == "low" || f.severity == "info") dupe_risk += 3;
+  if (f.severity == "low" || f.severity == "info")
+    dupe_risk += 3;
 
   // Factor 4: generic vs specific evidence
-  if (f.evidence.empty() && f.payload.empty()) dupe_risk += 2;
+  if (f.evidence.empty() && f.payload.empty())
+    dupe_risk += 2;
 
   // Factor 5: parameter specificity
   if (f.param.empty() || f.param == "id" || f.param == "q" ||
@@ -119,13 +133,18 @@ inline Novelty score_novelty(const Finding &f) {
     dupe_risk += 1;
 
   // Reduce risk for complex/chained findings
-  if (f.type.find("Blind") != std::string::npos) dupe_risk -= 2;
-  if (f.type.find("Second Order") != std::string::npos) dupe_risk -= 3;
-  if (f.type.find("Race") != std::string::npos) dupe_risk -= 2;
+  if (f.type.find("Blind") != std::string::npos)
+    dupe_risk -= 2;
+  if (f.type.find("Second Order") != std::string::npos)
+    dupe_risk -= 3;
+  if (f.type.find("Race") != std::string::npos)
+    dupe_risk -= 2;
 
   // Classify
-  if (dupe_risk >= 12) return Novelty::Low;
-  if (dupe_risk >= 7) return Novelty::Medium;
+  if (dupe_risk >= 12)
+    return Novelty::Low;
+  if (dupe_risk >= 7)
+    return Novelty::Medium;
   return Novelty::High;
 }
 
@@ -143,35 +162,40 @@ check_hacktivity(HttpClient &http, const std::string &program,
   std::vector<HacktivityMatch> matches;
 
   // HackerOne hacktivity search via public GraphQL
-  std::string query = R"({"query":"query { hacktivity_items(first:10, )"
-                      R"(where:{report:{disclosed:true, severity:{rating:{}}, )"
-                      R"(team:{handle:{_eq:\")" +
-                      program +
-                      R"(\"}}}}) { edges { node { ... on HacktivityItemInterface )"
-                      R"({ id, votes { total_count }, report { title, url, )"
-                      R"(severity_rating, disclosed_at }}}}}}"})";
+  std::string query =
+      R"({"query":"query { hacktivity_items(first:10, )"
+      R"(where:{report:{disclosed:true, severity:{rating:{}}, )"
+      R"(team:{handle:{_eq:\")" +
+      program +
+      R"(\"}}}}) { edges { node { ... on HacktivityItemInterface )"
+      R"({ id, votes { total_count }, report { title, url, )"
+      R"(severity_rating, disclosed_at }}}}}}"})";
 
   // Fallback: search via public hacktivity page scraping
-  std::string search_url = "https://hackerone.com/hacktivity?queryString=" +
-                           vuln_type + "+program:" + program +
-                           "&sortField=latest_disclosable_activity_at&filter=type:public";
+  std::string search_url =
+      "https://hackerone.com/hacktivity?queryString=" + vuln_type +
+      "+program:" + program +
+      "&sortField=latest_disclosable_activity_at&filter=type:public";
 
   auto resp = http.get(search_url);
-  if (resp.status_code != 200) return matches;
+  if (resp.status_code != 200)
+    return matches;
 
   // Parse titles from response (simplified)
   size_t pos = 0;
   while ((pos = resp.body.find("\"title\":\"", pos)) != std::string::npos) {
     pos += 9;
     size_t end = resp.body.find("\"", pos);
-    if (end == std::string::npos) break;
+    if (end == std::string::npos)
+      break;
     std::string title = resp.body.substr(pos, end - pos);
     if (title.find(vuln_type) != std::string::npos ||
         title.find("XSS") != std::string::npos ||
         title.find("SQL") != std::string::npos) {
       matches.push_back({title, "", "", ""});
     }
-    if (matches.size() >= 5) break;
+    if (matches.size() >= 5)
+      break;
   }
 
   return matches;
@@ -191,9 +215,15 @@ inline NoveltyReport assess_novelty(const std::vector<Finding> &findings) {
     auto n = score_novelty(f);
     report.scored.push_back({f, n});
     switch (n) {
-    case Novelty::High: ++report.high_novelty; break;
-    case Novelty::Medium: ++report.medium_novelty; break;
-    case Novelty::Low: ++report.low_novelty; break;
+    case Novelty::High:
+      ++report.high_novelty;
+      break;
+    case Novelty::Medium:
+      ++report.medium_novelty;
+      break;
+    case Novelty::Low:
+      ++report.low_novelty;
+      break;
     }
   }
   // Sort: high novelty first

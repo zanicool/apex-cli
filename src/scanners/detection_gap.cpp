@@ -85,6 +85,15 @@ std::vector<Finding> scan_nosql(const Config &, HttpClient &http,
 std::vector<Finding> scan_idor(const Config &, HttpClient &http,
                                const CrawlResult &crawl) {
   std::vector<Finding> findings;
+
+  // PII indicators — only flag IDOR if response contains private user data
+  const std::vector<std::string> pii_indicators = {
+      "\"email\"", "\"phone\"", "\"address\"", "\"ssn\"", "\"password\"",
+      "\"credit_card\"", "\"card_number\"", "\"dob\"", "\"date_of_birth\"",
+      "\"social_security\"", "\"bank_account\"", "\"private\"",
+      "\"booking\"", "\"order_total\"", "\"payment\"", "\"billing\"",
+      "@gmail.com", "@yahoo.com", "@hotmail.com", "@outlook.com"};
+
   // Look for URLs with numeric IDs
   std::regex id_re(R"([\?&](id|user_id|uid|account|profile)=(\d+))");
 
@@ -100,19 +109,23 @@ std::vector<Finding> scan_idor(const Config &, HttpClient &http,
     auto resp1 = http.get(base_path + std::to_string(id));
     if (resp1.status_code != 200) continue;
 
-    // Try adjacent IDs — if we get different data, IDOR likely
+    // Try adjacent IDs — if we get different data with PII, IDOR likely
     for (int other : {id + 1, id - 1, id + 100}) {
       if (other <= 0) continue;
       auto resp2 = http.get(base_path + std::to_string(other));
       if (resp2.status_code == 200 && !resp2.body.empty() &&
           resp2.body != resp1.body &&
           resp2.body.size() > 10) {
-        findings.push_back({"IDOR", "high", url,
-                            "Sequential ID access without auth check", param,
-                            std::to_string(other),
-                            "Different data returned for ID " +
-                                std::to_string(other)});
-        break;
+        // Check if response contains PII — not just different public data
+        bool has_pii = contains_any(resp2.body, pii_indicators);
+        if (has_pii) {
+          findings.push_back({"IDOR", "high", url,
+                              "Private user data accessible via sequential ID",
+                              param, std::to_string(other),
+                              "Response contains PII for ID " +
+                                  std::to_string(other)});
+          break;
+        }
       }
     }
   }
@@ -127,9 +140,15 @@ std::vector<Finding> scan_idor(const Config &, HttpClient &http,
     auto r2 = http.get(prefix + "2");
     if (r1.status_code == 200 && r2.status_code == 200 &&
         r1.body != r2.body && r1.body.size() > 10 && r2.body.size() > 10) {
-      findings.push_back({"IDOR", "high", url,
-                          "Enumerable resource path", "path_id", "1,2",
-                          "Both IDs return different valid data"});
+      // Only flag if responses contain PII
+      bool r1_pii = contains_any(r1.body, pii_indicators);
+      bool r2_pii = contains_any(r2.body, pii_indicators);
+      if (r1_pii || r2_pii) {
+        findings.push_back({"IDOR", "high", url,
+                            "Enumerable resource path exposes private data",
+                            "path_id", "1,2",
+                            "Both IDs return PII-containing responses"});
+      }
     }
   }
   return findings;

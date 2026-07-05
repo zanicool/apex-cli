@@ -36,15 +36,15 @@ public:
 
   /// Generate a new profile from scan intelligence.
   std::string generate_profile(const std::string &framework,
-                                const ScanIntel &intel);
+                               const ScanIntel &intel);
 
   /// Update existing profile with new paths/intel (learning).
   void update_profile(const std::string &framework, const ScanIntel &intel);
 
   /// Build ScanIntel from crawl results and findings.
   static ScanIntel build_intel(const std::string &target,
-                                const CrawlResult &crawl,
-                                const std::vector<Finding> &findings);
+                               const CrawlResult &crawl,
+                               const std::vector<Finding> &findings);
 
 private:
   std::string profiles_dir_;

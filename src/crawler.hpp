@@ -1,5 +1,6 @@
 /// @file crawler.hpp
-/// @brief Web crawler: link extraction, form/parameter discovery, scope enforcement.
+/// @brief Web crawler: link extraction, form/parameter discovery, scope
+/// enforcement.
 #ifndef APEX_CRAWLER_HPP
 #define APEX_CRAWLER_HPP
 
@@ -34,7 +35,7 @@ struct CrawlResult {
 
 /// Run the crawler starting from seed URLs.
 CrawlResult run_crawler(const Config &cfg, HttpClient &http,
-                         const std::vector<std::string> &seeds);
+                        const std::vector<std::string> &seeds);
 
 /// Check if a URL is within the configured scope.
 bool in_scope(const std::string &url, const Config &cfg);

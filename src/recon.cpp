@@ -12,15 +12,13 @@ ReconResult run_recon(const Config &cfg, HttpClient &http) {
   std::set<std::string> subs;
 
   // Passive: crt.sh certificate transparency.
-  std::string crt_url =
-      "https://crt.sh/?q=%25." + cfg.target + "&output=json";
+  std::string crt_url = "https://crt.sh/?q=%25." + cfg.target + "&output=json";
   auto resp = http.get(crt_url);
 
   if (resp.status_code == 200 && !resp.body.empty()) {
     // Extract common_name values from JSON.
     std::regex name_re(R"x("common_name"\s*:\s*"([^"]+)")x");
-    auto it = std::sregex_iterator(resp.body.begin(), resp.body.end(),
-                                   name_re);
+    auto it = std::sregex_iterator(resp.body.begin(), resp.body.end(), name_re);
     auto it_end = std::sregex_iterator();
     for (; it != it_end; ++it) {
       std::string sub = (*it)[1].str();

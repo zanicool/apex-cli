@@ -101,8 +101,8 @@ void generate_report(const Config &cfg, const std::vector<Finding> &findings,
     auto c = count_severity(findings);
     std::cout << "\n";
     std::cout << "  Scan Results — " << cfg.target << "\n";
-    std::cout << "  Duration: " << elapsed.count() << "s | Findings: "
-              << findings.size() << "\n";
+    std::cout << "  Duration: " << elapsed.count()
+              << "s | Findings: " << findings.size() << "\n";
     std::cout << "  Critical: " << c.critical << "  High: " << c.high
               << "  Medium: " << c.medium << "  Low: " << c.low << "\n";
 
@@ -112,6 +112,20 @@ void generate_report(const Config &cfg, const std::vector<Finding> &findings,
       if (!f.detail.empty()) {
         std::cout << "    " << f.detail << "\n";
       }
+    }
+  }
+
+  // PDF report (requires python3 + reportlab).
+  if (cfg.report.find("pdf") != std::string::npos) {
+    std::string json_path = cfg.output_dir + "/report.json";
+    std::string pdf_path = cfg.output_dir + "/report.pdf";
+    std::string script = cfg.install_dir + "/scripts/pdf-report.py";
+    std::string cmd = "python3 " + script + " " + json_path + " " + pdf_path +
+                      " 2>/dev/null";
+    int ret = system(cmd.c_str());
+    if (ret != 0) {
+      std::cout << "  [!] PDF generation failed. Install: pip3 install "
+                   "reportlab\n";
     }
   }
 }

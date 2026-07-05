@@ -1,15 +1,18 @@
 /// @file main.cpp
 /// @brief Apex CLI entry point — CLI parsing and scan orchestration.
+#include "auto_login.hpp"
 #include "brain.hpp"
 #include "chain.hpp"
 #include "cms_export.hpp"
 #include "confidence.hpp"
 #include "config.hpp"
 #include "crawler.hpp"
+#include "h1_dupecheck.hpp"
 #include "http.hpp"
 #include "impact.hpp"
 #include "maturity.hpp"
 #include "novelty.hpp"
+#include "origin_ip.hpp"
 #include "owasp_intel.hpp"
 #include "pipeline.hpp"
 #include "profile_generator.hpp"
@@ -18,8 +21,6 @@
 #include "reporter.hpp"
 #include "sbom.hpp"
 #include "scanner.hpp"
-#include "origin_ip.hpp"
-#include "auto_login.hpp"
 #include "smart_mode.hpp"
 #include "toolchain.hpp"
 #include <chrono>
@@ -32,6 +33,7 @@
 #include <map>
 #include <sstream>
 #include <thread>
+#include <unistd.h>
 
 namespace {
 
@@ -134,6 +136,14 @@ int main(int argc, char *argv[]) {
       cfg.no_oob = true;
     } else if (arg == "--quick") {
       cfg.quick = true;
+    } else if (arg == "--dupecheck" && i + 2 < argc) {
+      // --dupecheck <program> <finding>
+      std::string program = argv[++i];
+      std::string finding = argv[++i];
+      apex::Config dcfg;
+      apex::HttpClient dhttp(dcfg);
+      apex::print_dupe_check(program, finding, dhttp);
+      return 0;
     } else if (arg == "--smart") {
       cfg.smart = true;
     } else if (arg == "--watch") {
@@ -198,6 +208,10 @@ int main(int argc, char *argv[]) {
       cfg.auth_header = argv[++i];
     } else if (arg == "--auth" && i + 1 < argc) {
       cfg.auth_basic = argv[++i];
+    } else if (arg == "--rate" && i + 1 < argc) {
+      cfg.rate_limit = std::stoi(argv[++i]);
+    } else if (arg == "--ua" && i + 1 < argc) {
+      cfg.custom_ua = argv[++i];
     } else if (arg == "--user" && i + 1 < argc) {
       cfg.login_user = argv[++i];
     } else if (arg == "--pass" && i + 1 < argc) {
@@ -213,6 +227,24 @@ int main(int argc, char *argv[]) {
   }
 
   cfg.target = target;
+
+  // Detect install directory from binary path
+  {
+    char buf[4096] = {};
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (len > 0) {
+      std::string exe(buf, len);
+      auto slash = exe.rfind('/');
+      if (slash != std::string::npos) {
+        cfg.install_dir = exe.substr(0, slash) + "/..";
+        // Also check APEX_HOME env var
+        const char *apex_home = std::getenv("APEX_HOME");
+        if (apex_home)
+          cfg.install_dir = apex_home;
+      }
+    }
+  }
+
   if (cfg.wf_api_key.empty()) {
     const char *env = std::getenv("WORDFENCE_API_KEY");
     if (env)
@@ -238,8 +270,10 @@ int main(int argc, char *argv[]) {
 
   // Detect external tools.
   auto tools = apex::detect_tools();
-  bool has_httpx = false, has_katana = false, has_sqlmap = false;
-  bool has_dalfox = false, has_nuclei = false, has_ffuf = false;
+  [[maybe_unused]] bool has_httpx = false, has_katana = false,
+                        has_sqlmap = false;
+  [[maybe_unused]] bool has_dalfox = false, has_nuclei = false,
+                        has_ffuf = false;
   for (const auto &t : tools) {
     if (t.name == "httpx" && t.available)
       has_httpx = true;
@@ -289,8 +323,10 @@ int main(int argc, char *argv[]) {
     auto session = apex::auto_login(http, base, cfg.login_user, cfg.login_pass);
     if (session.authenticated) {
       std::cout << "  [✓] Logged in! Session acquired.\n";
-      if (!session.cookie.empty()) cfg.auth_cookie = session.cookie;
-      if (!session.auth_header.empty()) cfg.auth_header = session.auth_header;
+      if (!session.cookie.empty())
+        cfg.auth_cookie = session.cookie;
+      if (!session.auth_header.empty())
+        cfg.auth_header = session.auth_header;
     } else {
       std::cout << "  [✗] Login failed.\n";
     }
@@ -308,6 +344,70 @@ int main(int argc, char *argv[]) {
   auto crawl = apex::run_crawler(cfg, http, seeds);
   std::cout << "  -> " << crawl.urls.size() << " URLs, " << crawl.params.size()
             << " params, " << crawl.forms.size() << " forms\n";
+
+  // Phase 2b: Browser Deep Crawl — if regular crawl found little (WAF/SPA) or
+  // deep mode
+  if (crawl.urls.size() <= 5 || crawl.params.empty() || cfg.deep) {
+    std::cout << "\n[Phase 2b] Browser Deep Crawl — Playwright Firefox\n";
+    std::string browser_target =
+        seeds.empty() ? "https://" + cfg.target : seeds[0];
+    std::string browser_script;
+    std::vector<std::string> search_paths = {
+        cfg.install_dir + "/scripts/browser-scan.py",
+        std::string(getenv("HOME") ? getenv("HOME") : ".") + "/git/apex-cli/scripts/browser-scan.py",
+        "./scripts/browser-scan.py",
+    };
+    for (const auto &p : search_paths) {
+      if (access(p.c_str(), F_OK) == 0) { browser_script = p; break; }
+    }
+    if (browser_script.empty()) {
+      std::cout << "  -> Browser scan skipped (script not found)\n";
+    } else {
+    std::string browser_cmd = "timeout 30 python3 " + browser_script + " " + browser_target +
+                              " -o /tmp/apex_browser_scan.json";
+    if (!cfg.auth_cookie.empty())
+      browser_cmd += " --cookie \"" + cfg.auth_cookie + "\"";
+    if (!cfg.login_user.empty() && !cfg.login_pass.empty())
+      browser_cmd +=
+          " --login \"" + cfg.login_user + ":" + cfg.login_pass + "\"";
+    browser_cmd += " 2>/dev/null";
+
+    int ret = system(browser_cmd.c_str());
+    if (ret == 0) {
+      // Parse browser results and merge into crawl + findings
+      std::ifstream bf("/tmp/apex_browser_scan.json");
+      if (bf.is_open()) {
+        std::string json_str((std::istreambuf_iterator<char>(bf)),
+                             std::istreambuf_iterator<char>());
+        // Extract API URLs from browser scan
+        size_t pos = 0;
+        int browser_urls = 0;
+        while ((pos = json_str.find("\"url\": \"", pos)) != std::string::npos) {
+          pos += 8;
+          auto end = json_str.find("\"", pos);
+          if (end != std::string::npos) {
+            std::string url = json_str.substr(pos, end - pos);
+            if (url.find(cfg.target) != std::string::npos) {
+              crawl.urls.push_back(url);
+              browser_urls++;
+            }
+          }
+        }
+        // Count browser findings for summary
+        int browser_findings = 0;
+        pos = 0;
+        while ((pos = json_str.find("\"severity\":", pos)) != std::string::npos) {
+          browser_findings++;
+          pos += 10;
+        }
+        std::cout << "  -> Browser found " << browser_urls
+                  << " API endpoints, " << browser_findings << " findings\n";
+      }
+    } else {
+      std::cout << "  -> Browser scan skipped (playwright not available)\n";
+    }
+  }
+  }
 
   // Phase 3: Scan.
   std::cout << "\n[Phase 3] Scan — ";
@@ -417,6 +517,47 @@ int main(int argc, char *argv[]) {
   // Phase 4: Report.
   auto end = std::chrono::steady_clock::now();
   auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(end - start);
+
+  // Phase 3b: External Modules (wayback, nuclei, dns, email, github)
+  if (cfg.deep) {
+    std::cout << "\n[Phase 3b] Modules — external intelligence\n";
+    std::string mod_dir = cfg.install_dir + "/scripts/modules";
+    std::string target_domain = cfg.target;
+
+    auto run_mod = [&](const char *name, const std::string &cmd) {
+      std::string full = cmd + " 2>/dev/null";
+      FILE *fp = popen(full.c_str(), "r");
+      if (!fp)
+        return;
+      char buf[256];
+      bool printed_header = false;
+      while (fgets(buf, sizeof(buf), fp)) {
+        if (!printed_header) {
+          std::cout << "    [->] " << name << "\n";
+          printed_header = true;
+        }
+        std::string line(buf);
+        if (line.find("[!]") != std::string::npos ||
+            line.find("CVE") != std::string::npos)
+          std::cout << "      " << line;
+      }
+      pclose(fp);
+    };
+
+    run_mod("Wayback URLs", "bash " + mod_dir + "/wayback.sh " + target_domain);
+    run_mod("DNS Zone Transfer",
+            "bash " + mod_dir + "/dns-transfer.sh " + target_domain);
+    run_mod("Email Security",
+            "bash " + mod_dir + "/email-security.sh " + target_domain);
+    run_mod("GitHub Dorks",
+            "bash " + mod_dir + "/github-dork.sh " + target_domain);
+    run_mod("Nuclei",
+            "bash " + mod_dir + "/run-nuclei.sh https://" + target_domain);
+    run_mod("AI Discovery", "python3 " + cfg.install_dir +
+                                "/scripts/modules/ai-discover.py " +
+                                target_domain);
+  }
+
   std::cout << "\n[Phase 4] Report\n";
   apex::generate_report(cfg, findings, elapsed);
 
@@ -633,8 +774,9 @@ int main(int argc, char *argv[]) {
       std::cout << "\n[Phase 4e] Brain — LLM-guided attack planning\n";
       apex::Brain brain(cfg, http);
       auto brain_result = brain.think_and_act(findings, cfg.target);
-      std::cout << "  -> " << brain_result.actions_executed << " actions executed, "
-                << brain_result.chains_completed << " new chains\n";
+      std::cout << "  -> " << brain_result.actions_executed
+                << " actions executed, " << brain_result.chains_completed
+                << " new chains\n";
       for (auto &c : brain_result.chains)
         chains.push_back(std::move(c));
     }
@@ -644,7 +786,8 @@ int main(int argc, char *argv[]) {
     if (!proofs.empty()) {
       std::cout << "\n[Phase 4f] Impact — generating exploitation proof\n";
       std::cout << "  -> " << proofs.size() << " proven exploits\n";
-      std::string h1 = apex::generate_h1_report(proofs, cfg.target, cfg.h1_program);
+      std::string h1 =
+          apex::generate_h1_report(proofs, cfg.target, cfg.h1_program);
       std::string h1_path = cfg.output_dir + "/h1_report.md";
       std::ofstream h1_out(h1_path);
       if (h1_out.is_open()) {
@@ -652,8 +795,8 @@ int main(int argc, char *argv[]) {
         std::cout << "  -> HackerOne report: " << h1_path << "\n";
       }
       for (const auto &p : proofs)
-        std::cout << "    [" << p.severity << "] " << p.chain_type
-                  << " — " << p.owasp << "\n";
+        std::cout << "    [" << p.severity << "] " << p.chain_type << " — "
+                  << p.owasp << "\n";
     }
   }
 
@@ -997,6 +1140,43 @@ int main(int argc, char *argv[]) {
 
   std::cout << "\n[done] Scan complete in " << elapsed.count() << "s — "
             << findings.size() << " findings\n";
+
+  // Phase 5: H1 Dupe Check — run Python script for high/critical findings
+  if (!findings.empty() && !cfg.target.empty()) {
+    bool has_reportable = false;
+    for (const auto &f : findings) {
+      if (f.severity == "high" || f.severity == "critical") {
+        has_reportable = true;
+        break;
+      }
+    }
+    if (has_reportable) {
+      // Extract program name from target (best guess)
+      std::string program = cfg.target;
+      auto dot = program.find('.');
+      if (dot != std::string::npos)
+        program = program.substr(0, dot);
+
+      std::cout << "\n[Phase 5] H1 Dupe Check\n";
+      for (const auto &f : findings) {
+        if (f.severity != "high" && f.severity != "critical")
+          continue;
+        std::string cmd = "python3 " +
+                          std::string(getenv("HOME") ? getenv("HOME") : ".") +
+                          "/git/apex-cli/scripts/h1check.py \"" + program +
+                          "\" \"" + f.type + "\" 2>/dev/null";
+        std::cout << "  [→] Checking: " << f.type << "\n";
+        FILE *pipe = popen(cmd.c_str(), "r");
+        if (pipe) {
+          char buf[256];
+          while (fgets(buf, sizeof(buf), pipe))
+            std::cout << "      " << buf;
+          pclose(pipe);
+        }
+        break; // Only check first high/critical to save time
+      }
+    }
+  }
 
   // Watch mode: loop
   if (cfg.watch) {

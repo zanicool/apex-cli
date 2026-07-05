@@ -9,7 +9,7 @@ namespace apex {
 namespace {
 
 /// Detect WAF presence by sending malicious payloads and checking responses.
-bool detect_waf(HttpClient &http, const std::string &url) {
+[[maybe_unused]] static bool detect_waf(HttpClient &http, const std::string &url) {
   auto resp = http.get(url + "?test=<script>alert(1)</script>' OR 1=1--");
   if (resp.status_code == 403 || resp.status_code == 406) return true;
   const std::vector<std::string> waf_sigs = {

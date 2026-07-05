@@ -13,7 +13,7 @@ namespace apex {
 
 /// A single step in an attack chain.
 struct ChainStep {
-  std::string action;   // http_get, http_post, extract, verify
+  std::string action; // http_get, http_post, extract, verify
   std::string url;
   std::string method;
   std::string body;
@@ -26,8 +26,8 @@ struct ChainStep {
 struct AttackChain {
   Finding initial_finding;
   std::vector<ChainStep> steps;
-  std::string impact;       // "Read all user data", "RCE as root"
-  std::string proof;        // Evidence of exploitation
+  std::string impact; // "Read all user data", "RCE as root"
+  std::string proof;  // Evidence of exploitation
   int depth = 0;
   bool complete = false;
 };

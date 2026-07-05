@@ -11,10 +11,10 @@
 namespace apex {
 
 struct FindingIntel {
-  std::string owasp;       // OWASP category
-  std::string impact;      // Business impact
-  std::string chain;       // Attack chain suggestion
-  std::string ref;         // Reference (book/lab)
+  std::string owasp;  // OWASP category
+  std::string impact; // Business impact
+  std::string chain;  // Attack chain suggestion
+  std::string ref;    // Reference (book/lab)
 };
 
 inline FindingIntel get_intel(const Finding &f) {
@@ -115,7 +115,8 @@ inline void print_enriched_finding(const Finding &f) {
   auto intel = get_intel(f);
   std::cout << "    [" << f.severity << "] " << f.type << "\n";
   std::cout << "      URL: " << f.url << "\n";
-  if (!f.param.empty()) std::cout << "      Param: " << f.param << "\n";
+  if (!f.param.empty())
+    std::cout << "      Param: " << f.param << "\n";
   if (!f.payload.empty())
     std::cout << "      Payload: " << f.payload.substr(0, 50) << "\n";
   if (!f.evidence.empty())

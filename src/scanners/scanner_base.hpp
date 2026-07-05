@@ -29,11 +29,15 @@ inline std::vector<std::pair<std::string, std::string>>
 get_targets(const CrawlResult &crawl, const std::string &url,
             const std::string &default_param = "id") {
   std::vector<std::pair<std::string, std::string>> targets;
+  // Strip query string for comparison (crawl.params stores base URL only)
+  std::string base_url = url;
+  auto qpos = base_url.find('?');
+  if (qpos != std::string::npos) base_url = base_url.substr(0, qpos);
   for (const auto &p : crawl.params) {
-    if (p.url == url) targets.push_back({p.url + "?" + p.name + "=", p.name});
+    if (p.url == base_url) targets.push_back({p.url + "?" + p.name + "=", p.name});
   }
   if (targets.empty())
-    targets.push_back({url + "?" + default_param + "=", default_param});
+    targets.push_back({base_url + "?" + default_param + "=", default_param});
   return targets;
 }
 
@@ -90,11 +94,22 @@ std::vector<Scanner> register_document_intel_scanners();
 std::vector<Scanner> register_version_fingerprint_scanners();
 std::vector<Scanner> register_api_discovery_scanners();
 std::vector<Scanner> register_advanced_web_scanners();
+std::vector<Scanner> register_recon_extra_scanners();
 std::vector<Scanner> register_nuclei_scanners();
 std::vector<Scanner> register_graphql_hunter();
 std::vector<Scanner> register_remaining_web_scanners();
 std::vector<Scanner> register_detection_gap_scanners();
+std::vector<Scanner> register_bounty_hunter_scanners();
+std::vector<Scanner> register_mobile_api_scanners();
+std::vector<Scanner> register_infra_misconfig_scanners();
+std::vector<Scanner> register_advanced_injection_scanners();
+std::vector<Scanner> register_auth_advanced2_scanners();
+std::vector<Scanner> register_modern_stack_scanners();
+std::vector<Scanner> register_business_logic_scanners();
+std::vector<Scanner> register_compliance_scanners();
+std::vector<Scanner> register_recon_advanced_scanners();
 
 } // namespace apex
 
 #endif // APEX_SCANNERS_BASE_HPP
+namespace apex { std::vector<Scanner> register_wordpress_deep_scanners(); }

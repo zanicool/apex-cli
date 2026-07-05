@@ -12,13 +12,13 @@ namespace apex {
 
 /// Evidence of exploitation impact.
 struct ImpactProof {
-  std::string chain_type;     // IDOR, SSRF, SQLi, etc.
-  std::string severity;       // critical, high, medium
-  std::string description;    // Human-readable impact
-  std::string evidence;       // Raw proof (response data)
-  std::string repro_steps;    // Step-by-step reproduction
-  std::string fix;            // Suggested remediation
-  std::string owasp;          // OWASP Top 10 mapping
+  std::string chain_type;  // IDOR, SSRF, SQLi, etc.
+  std::string severity;    // critical, high, medium
+  std::string description; // Human-readable impact
+  std::string evidence;    // Raw proof (response data)
+  std::string repro_steps; // Step-by-step reproduction
+  std::string fix;         // Suggested remediation
+  std::string owasp;       // OWASP Top 10 mapping
 };
 
 /// Generate impact proofs from completed attack chains.

@@ -22,7 +22,7 @@ inline bool is_cdn_ip(const std::string &ip);
 
 /// Find origin IPs behind WAF for a given domain.
 inline std::vector<OriginResult> find_origin_ip(HttpClient &http,
-                                                 const std::string &domain) {
+                                                const std::string &domain) {
   std::vector<OriginResult> results;
   std::set<std::string> seen_ips;
 
@@ -46,7 +46,8 @@ inline std::vector<OriginResult> find_origin_ip(HttpClient &http,
         // Validate IP format
         int dots = 0;
         for (char c : ip)
-          if (c == '.') dots++;
+          if (c == '.')
+            dots++;
         if (dots == 3 && ip.size() >= 7 && seen_ips.insert(ip).second) {
           results.push_back({ip, "DNS History (ViewDNS)", false});
         }
@@ -71,8 +72,10 @@ inline std::vector<OriginResult> find_origin_ip(HttpClient &http,
           int dots = 0;
           bool all_digits = true;
           for (char c : cn) {
-            if (c == '.') dots++;
-            else if (c < '0' || c > '9') all_digits = false;
+            if (c == '.')
+              dots++;
+            else if (c < '0' || c > '9')
+              all_digits = false;
           }
           if (dots == 3 && all_digits && seen_ips.insert(cn).second) {
             results.push_back({cn, "Certificate Transparency", false});
@@ -85,9 +88,9 @@ inline std::vector<OriginResult> find_origin_ip(HttpClient &http,
   // 3. Subdomain IPs — mail, ftp, direct, cpanel often bypass WAF
   {
     std::vector<std::string> bypass_subs = {
-        "mail", "ftp",    "direct", "origin", "old",    "dev",
+        "mail",   "ftp",     "direct", "origin", "old",    "dev",
         "cpanel", "webmail", "smtp",   "pop",    "imap",   "mx",
-        "ns1",   "ns2",    "vpn",    "ssh",    "staging"};
+        "ns1",    "ns2",     "vpn",    "ssh",    "staging"};
     for (const auto &sub : bypass_subs) {
       std::string host = sub + "." + domain;
       // Resolve via DNS-over-HTTPS
@@ -95,7 +98,8 @@ inline std::vector<OriginResult> find_origin_ip(HttpClient &http,
           http.get("https://dns.google/resolve?name=" + host + "&type=A");
       if (resp.status_code == 200) {
         size_t pos = 0;
-        while ((pos = resp.body.find("\"data\":\"", pos)) != std::string::npos) {
+        while ((pos = resp.body.find("\"data\":\"", pos)) !=
+               std::string::npos) {
           pos += 8;
           auto end = resp.body.find("\"", pos);
           if (end != std::string::npos) {
@@ -103,8 +107,10 @@ inline std::vector<OriginResult> find_origin_ip(HttpClient &http,
             int dots = 0;
             bool valid = true;
             for (char c : ip) {
-              if (c == '.') dots++;
-              else if (c < '0' || c > '9') valid = false;
+              if (c == '.')
+                dots++;
+              else if (c < '0' || c > '9')
+                valid = false;
             }
             if (dots == 3 && valid && seen_ips.insert(ip).second) {
               // Skip known CDN ranges
@@ -120,7 +126,8 @@ inline std::vector<OriginResult> find_origin_ip(HttpClient &http,
 
   // 4. Shodan/Censys — search for the SSL cert fingerprint
   {
-    auto resp = http.get("https://www.shodan.io/search?query=ssl.cert.subject.cn:" + domain);
+    auto resp = http.get(
+        "https://www.shodan.io/search?query=ssl.cert.subject.cn:" + domain);
     if (resp.status_code == 200) {
       size_t pos = 0;
       while ((pos = resp.body.find("/host/", pos)) != std::string::npos) {
@@ -131,8 +138,10 @@ inline std::vector<OriginResult> find_origin_ip(HttpClient &http,
           int dots = 0;
           bool valid = true;
           for (char c : ip) {
-            if (c == '.') dots++;
-            else if (c < '0' || c > '9') valid = false;
+            if (c == '.')
+              dots++;
+            else if (c < '0' || c > '9')
+              valid = false;
           }
           if (dots == 3 && valid && seen_ips.insert(ip).second) {
             if (!is_cdn_ip(ip)) {
@@ -146,8 +155,7 @@ inline std::vector<OriginResult> find_origin_ip(HttpClient &http,
 
   // 5. Verify — check if found IPs serve the same site
   for (auto &r : results) {
-    auto resp = http.get("http://" + r.ip,
-                         {{"Host", domain}});
+    auto resp = http.get("http://" + r.ip, {{"Host", domain}});
     if (resp.status_code == 200 && resp.body.size() > 500) {
       // Compare with a known element from the real site
       auto real = http.get("https://" + domain);
@@ -155,9 +163,11 @@ inline std::vector<OriginResult> find_origin_ip(HttpClient &http,
         // Check if title or key content matches
         auto get_title = [](const std::string &body) -> std::string {
           auto pos = body.find("<title>");
-          if (pos == std::string::npos) return "";
+          if (pos == std::string::npos)
+            return "";
           auto end = body.find("</title>", pos);
-          if (end == std::string::npos) return "";
+          if (end == std::string::npos)
+            return "";
           return body.substr(pos + 7, end - pos - 7);
         };
         if (get_title(resp.body) == get_title(real.body) &&
@@ -175,19 +185,20 @@ inline std::vector<OriginResult> find_origin_ip(HttpClient &http,
 inline bool is_cdn_ip(const std::string &ip) {
   // Cloudflare ranges (simplified first octets)
   std::vector<std::string> cf_prefixes = {
-      "104.16.", "104.17.", "104.18.", "104.19.", "104.20.",
-      "104.21.", "104.22.", "104.23.", "104.24.", "104.25.",
-      "172.64.", "172.65.", "172.66.", "172.67.",
-      "173.245.", "103.21.", "103.22.", "103.31.",
-      "141.101.", "108.162.", "190.93.", "188.114.",
-      "197.234.", "198.41.", "162.158."};
+      "104.16.", "104.17.",  "104.18.",  "104.19.",  "104.20.",
+      "104.21.", "104.22.",  "104.23.",  "104.24.",  "104.25.",
+      "172.64.", "172.65.",  "172.66.",  "172.67.",  "173.245.",
+      "103.21.", "103.22.",  "103.31.",  "141.101.", "108.162.",
+      "190.93.", "188.114.", "197.234.", "198.41.",  "162.158."};
   // Akamai
-  std::vector<std::string> akamai_prefixes = {"23.32.", "23.33.", "23.64.",
-                                               "23.65.", "104.64.", "104.65."};
+  std::vector<std::string> akamai_prefixes = {"23.32.", "23.33.",  "23.64.",
+                                              "23.65.", "104.64.", "104.65."};
   for (const auto &p : cf_prefixes)
-    if (ip.substr(0, p.size()) == p) return true;
+    if (ip.substr(0, p.size()) == p)
+      return true;
   for (const auto &p : akamai_prefixes)
-    if (ip.substr(0, p.size()) == p) return true;
+    if (ip.substr(0, p.size()) == p)
+      return true;
   return false;
 }
 

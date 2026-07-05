@@ -59,8 +59,9 @@ BrainResult Brain::think_and_act(const std::vector<Finding> &findings,
   return result;
 }
 
-std::vector<PlannedAction> Brain::plan(const std::vector<Finding> & /*findings*/,
-                                       const std::string &context) {
+std::vector<PlannedAction>
+Brain::plan(const std::vector<Finding> & /*findings*/,
+            const std::string &context) {
   std::vector<PlannedAction> actions;
 
   // Build prompt
@@ -84,7 +85,8 @@ std::vector<PlannedAction> Brain::plan(const std::vector<Finding> & /*findings*/
   // Parse JSON array from response
   auto start = response.find('[');
   auto end = response.rfind(']');
-  if (start == std::string::npos || end == std::string::npos) return actions;
+  if (start == std::string::npos || end == std::string::npos)
+    return actions;
 
   std::string json = response.substr(start, end - start + 1);
 
@@ -100,11 +102,16 @@ std::vector<PlannedAction> Brain::plan(const std::vector<Finding> & /*findings*/
   while (std::getline(stream, obj, '}')) {
     PlannedAction a;
     std::smatch m;
-    if (std::regex_search(obj, m, url_re)) a.url = m[1].str();
-    if (std::regex_search(obj, m, method_re)) a.method = m[1].str();
-    if (std::regex_search(obj, m, reason_re)) a.reason = m[1].str();
-    if (std::regex_search(obj, m, body_re)) a.body = m[1].str();
-    if (!a.url.empty() && !a.method.empty()) actions.push_back(a);
+    if (std::regex_search(obj, m, url_re))
+      a.url = m[1].str();
+    if (std::regex_search(obj, m, method_re))
+      a.method = m[1].str();
+    if (std::regex_search(obj, m, reason_re))
+      a.reason = m[1].str();
+    if (std::regex_search(obj, m, body_re))
+      a.body = m[1].str();
+    if (!a.url.empty() && !a.method.empty())
+      actions.push_back(a);
   }
 
   return actions;
@@ -120,7 +127,8 @@ std::string Brain::execute_action(const PlannedAction &action) {
   Response resp;
   if (action.method == "POST") {
     std::string ct = "application/x-www-form-urlencoded";
-    if (action.body.find('{') == 0) ct = "application/json";
+    if (action.body.find('{') == 0)
+      ct = "application/json";
     resp = http_.post(action.url, action.body, ct);
   } else {
     resp = http_.get(action.url);
@@ -137,12 +145,16 @@ std::string Brain::build_context(const std::vector<Finding> &findings,
 
   int shown = 0;
   for (const auto &f : findings) {
-    if (f.severity == "info" && shown > 5) continue;
+    if (f.severity == "info" && shown > 5)
+      continue;
     ctx << "- [" << f.severity << "] " << f.type << " at " << f.url;
-    if (!f.param.empty()) ctx << " (param: " << f.param << ")";
-    if (!f.evidence.empty()) ctx << " evidence: " << f.evidence.substr(0, 100);
+    if (!f.param.empty())
+      ctx << " (param: " << f.param << ")";
+    if (!f.evidence.empty())
+      ctx << " evidence: " << f.evidence.substr(0, 100);
     ctx << "\n";
-    if (++shown >= 15) break;
+    if (++shown >= 15)
+      break;
   }
 
   return ctx.str();
@@ -157,17 +169,19 @@ std::string Brain::call_llm(const std::string &prompt) {
   }
 
   // Call ollama
-  std::string model = "llama3.2:3b"; // Fast, good enough for planning
+  std::string model = "qwen3:14b"; // Fast, good enough for planning
   std::string cmd = "ollama run " + model + " < " + tmp + " 2>/dev/null";
 
   std::array<char, 4096> buffer;
   std::string result;
   FILE *pipe = popen(cmd.c_str(), "r");
-  if (!pipe) return "";
+  if (!pipe)
+    return "";
 
   while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
     result += buffer.data();
-    if (result.size() > 8000) break; // Cap output
+    if (result.size() > 8000)
+      break; // Cap output
   }
   pclose(pipe);
 

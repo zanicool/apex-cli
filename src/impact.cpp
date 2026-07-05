@@ -17,28 +17,37 @@ struct ImpactTemplate {
 
 const ImpactTemplate kTemplates[] = {
     {"IDOR", "high",
-     "Unauthorized access to other users' data via insecure direct object reference",
-     "Implement proper authorization checks on all object references. Use indirect references or verify ownership.",
+     "Unauthorized access to other users' data via insecure direct object "
+     "reference",
+     "Implement proper authorization checks on all object references. Use "
+     "indirect references or verify ownership.",
      "A01:2021 Broken Access Control"},
     {"SSRF", "critical",
-     "Server-side request forgery allowing access to internal services and cloud metadata",
-     "Validate and whitelist allowed URLs. Block internal IP ranges. Use network segmentation.",
+     "Server-side request forgery allowing access to internal services and "
+     "cloud metadata",
+     "Validate and whitelist allowed URLs. Block internal IP ranges. Use "
+     "network segmentation.",
      "A10:2021 SSRF"},
     {"SQLi", "critical",
-     "SQL injection allowing database extraction and potential remote code execution",
-     "Use parameterized queries/prepared statements. Never concatenate user input into SQL.",
+     "SQL injection allowing database extraction and potential remote code "
+     "execution",
+     "Use parameterized queries/prepared statements. Never concatenate user "
+     "input into SQL.",
      "A03:2021 Injection"},
     {"JWT", "high",
      "JWT authentication bypass via weak secret or algorithm confusion",
-     "Use strong secrets (256+ bits). Explicitly specify allowed algorithms. Validate all claims.",
+     "Use strong secrets (256+ bits). Explicitly specify allowed algorithms. "
+     "Validate all claims.",
      "A07:2021 Identification and Authentication Failures"},
     {"LFI", "high",
      "Local file inclusion allowing arbitrary file read from the server",
-     "Validate file paths against a whitelist. Use chroot or containerization. Never pass user input to file operations.",
+     "Validate file paths against a whitelist. Use chroot or containerization. "
+     "Never pass user input to file operations.",
      "A01:2021 Broken Access Control"},
     {"SSTI", "critical",
      "Server-side template injection leading to remote code execution",
-     "Never pass user input directly to template engines. Use sandboxed rendering. Escape all output.",
+     "Never pass user input directly to template engines. Use sandboxed "
+     "rendering. Escape all output.",
      "A03:2021 Injection"},
 };
 
@@ -48,7 +57,8 @@ std::vector<ImpactProof> prove_impact(const std::vector<AttackChain> &chains) {
   std::vector<ImpactProof> proofs;
 
   for (const auto &chain : chains) {
-    if (!chain.complete) continue;
+    if (!chain.complete)
+      continue;
 
     ImpactProof proof;
     proof.chain_type = chain.initial_finding.type;
@@ -93,7 +103,8 @@ std::vector<ImpactProof> prove_impact(const std::vector<AttackChain> &chains) {
 std::string generate_h1_report(const std::vector<ImpactProof> &proofs,
                                const std::string &target,
                                const std::string &program) {
-  if (proofs.empty()) return "";
+  if (proofs.empty())
+    return "";
 
   std::ostringstream report;
 
@@ -113,15 +124,16 @@ std::string generate_h1_report(const std::vector<ImpactProof> &proofs,
     report << "## Impact\n\n";
     report << proof.description << " This could allow an attacker to ";
     if (proof.severity == "critical")
-      report << "gain full control of the application or access all user data.\n\n";
+      report << "gain full control of the application or access all user "
+                "data.\n\n";
     else if (proof.severity == "high")
       report << "access unauthorized data or escalate privileges.\n\n";
     else
       report << "obtain sensitive information.\n\n";
 
     if (!proof.evidence.empty()) {
-      report << "## Evidence\n\n```\n" << proof.evidence.substr(0, 1000)
-             << "\n```\n\n";
+      report << "## Evidence\n\n```\n"
+             << proof.evidence.substr(0, 1000) << "\n```\n\n";
     }
 
     report << "## Remediation\n\n" << proof.fix << "\n\n";

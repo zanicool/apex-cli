@@ -62,9 +62,20 @@ std::vector<Scanner> get_scanners() {
   append(register_version_fingerprint_scanners());
   append(register_api_discovery_scanners());
   append(register_advanced_web_scanners());
+  append(register_recon_extra_scanners());
   append(register_nuclei_scanners());
+  append(register_wordpress_deep_scanners());
   append(register_graphql_hunter());
   append(register_detection_gap_scanners());
+  append(register_bounty_hunter_scanners());
+  append(register_mobile_api_scanners());
+  append(register_infra_misconfig_scanners());
+  append(register_advanced_injection_scanners());
+  append(register_auth_advanced2_scanners());
+  append(register_modern_stack_scanners());
+  append(register_business_logic_scanners());
+  append(register_compliance_scanners());
+  append(register_recon_advanced_scanners());
 
   return all;
 }
@@ -82,15 +93,50 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
     // Quick mode: only run high-value scanners.
     if (cfg.quick) {
       static const std::vector<std::string> quick_scanners = {
-          "CMS Detection", "SQLi", "XSS", "SSRF", "CMDi", "LFI",
-          "Security Headers", "Open Redirect", "SSTI", "XXE",
-          "CORS", "Clickjacking", "Info Disclosure",
-          "WAF Detection", "Login Security", "Header Analysis",
-          "Content Discovery", "Forced Browsing",
-          "Supply Chain: Self-Hosted Tools", "Supply Chain: Cloud Storage",
-          "Supply Chain: Integrations", "Supply Chain: Management Panels",
-          "Supply Chain: SSO Config", "Supply Chain: API Keys",
-          "WP Plugin", "WP Theme"};
+          "CMS Detection",
+          "SQLi",
+          "XSS",
+          "SSRF",
+          "CMDi",
+          "LFI",
+          "Security Headers",
+          "Open Redirect",
+          "SSTI",
+          "XXE",
+          "CORS",
+          "Clickjacking",
+          "Info Disclosure",
+          "WAF Detection",
+          "Login Security",
+          "Header Analysis",
+          "Content Discovery",
+          "Forced Browsing",
+          "GraphQL Hunter",
+          "IDOR",
+          "JWT",
+          "OAuth Misconfig",
+          "Password Reset",
+          "Race Condition",
+          "API Version Bypass",
+          "Secrets Exposure",
+          "Supply Chain: Self-Hosted Tools",
+          "Supply Chain: Cloud Storage",
+          "Supply Chain: Integrations",
+          "Supply Chain: Management Panels",
+          "Supply Chain: SSO Config",
+          "Supply Chain: API Keys",
+          "WP Plugin",
+          "WP Theme",
+          "Password Reset Poisoning",
+          "Account Takeover (Email Change)",
+          "JWT Key Confusion",
+          "GraphQL Abuse",
+          "Rate Limit Bypass",
+          "File Upload Abuse",
+          "HTTP Parameter Pollution",
+          "CRLF Response Splitting",
+          "Method Override Bypass",
+          "API Version Bypass"};
       return std::none_of(quick_scanners.begin(), quick_scanners.end(),
                           [&](const std::string &q) { return q == name; });
     }
@@ -104,9 +150,9 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
       continue;
     }
     std::cout << "    [->] " << scanner.name << "\n";
-    futures.push_back(
-        std::async(std::launch::async, scanner.func, std::cref(cfg),
-                   std::ref(http), std::cref(crawl)));
+    futures.push_back(std::async(std::launch::async, scanner.func,
+                                 std::cref(cfg), std::ref(http),
+                                 std::cref(crawl)));
   }
 
   for (auto &f : futures) {
@@ -129,7 +175,8 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
   std::map<std::string, BaselineFingerprint> baselines;
   auto get_host = [](const std::string &url) -> std::string {
     auto pos = url.find("://");
-    if (pos == std::string::npos) return url;
+    if (pos == std::string::npos)
+      return url;
     auto start = pos + 3;
     auto end = url.find('/', start);
     return url.substr(0, end != std::string::npos ? end : url.size());
@@ -149,7 +196,76 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
     filtered.push_back(std::move(f));
   }
 
-  return filtered;
+  // Quality filter: downgrade critical/high findings that lack evidence
+  for (auto &f : filtered) {
+    if ((f.severity == "critical" || f.severity == "high") &&
+        f.evidence.empty()) {
+      // No evidence = unverified = downgrade to medium
+      f.severity = "medium";
+      f.type += " (unverified)";
+    }
+  }
+
+  // AI Verification: use qwen3:14b to filter false positives
+  {
+    int ai_checked = 0;
+    for (auto &f : filtered) {
+      if (f.severity != "critical" && f.severity != "high")
+        continue;
+      if (ai_checked >= 5)
+        break;
+      std::string ev = f.evidence.substr(0, 80);
+      for (auto &c : ev) {
+        if (c == '"' || c == '\\' || c == '\n')
+          c = ' ';
+      }
+      std::string type_clean = f.type;
+      for (auto &c : type_clean) {
+        if (c == '"')
+          c = ' ';
+      }
+      std::string body = "{\"model\":\"qwen3:14b\",\"prompt\":\"/no_think REAL "
+                         "or FALSE_POSITIVE? " +
+                         type_clean + " " + ev +
+                         "\",\"stream\":false,\"options\":{\"num_predict\":5}}";
+      std::string cmd = "curl -s http://127.0.0.1:11434/api/generate -d '" +
+                        body + "' 2>/dev/null";
+      FILE *fp = popen(cmd.c_str(), "r");
+      if (fp) {
+        char buf[2048] = {};
+        fread(buf, 1, sizeof(buf) - 1, fp);
+        pclose(fp);
+        std::string resp(buf);
+        if (resp.find("FALSE") != std::string::npos) {
+          f.severity = "info";
+          f.type += " (AI:FP)";
+        }
+        ai_checked++;
+      }
+    }
+  }
+
+  // Remove pure noise findings that add no value
+  std::vector<Finding> final_filtered;
+  for (auto &f : filtered) {
+    // Skip Cloud Metadata findings without actual metadata in evidence
+    if (f.type.find("Cloud Metadata") != std::string::npos) {
+      if (f.evidence.find("ami-id") == std::string::npos &&
+          f.evidence.find("instance-id") == std::string::npos &&
+          f.evidence.find("AccessKeyId") == std::string::npos) {
+        continue;
+      }
+    }
+    // Skip XSLT/Deserialization without evidence
+    if ((f.type.find("XSLT") != std::string::npos ||
+         f.type.find("Deserialization") != std::string::npos) &&
+        f.evidence.empty()) {
+      continue;
+    }
+    final_filtered.push_back(std::move(f));
+  }
+
+  return final_filtered;
 }
 
 } // namespace apex

@@ -16,8 +16,10 @@ struct BaselineFingerprint {
   bool is_wildcard = false;
 };
 
-/// Get the baseline fingerprint for a host (request a random non-existent path).
-inline BaselineFingerprint get_baseline(HttpClient &http, const std::string &base_url) {
+/// Get the baseline fingerprint for a host (request a random non-existent
+/// path).
+inline BaselineFingerprint get_baseline(HttpClient &http,
+                                        const std::string &base_url) {
   BaselineFingerprint fp;
   auto resp = http.get(base_url + "/apex_nonexistent_path_xz9q7w2m4k");
   fp.status_code = resp.status_code;
@@ -36,26 +38,59 @@ inline BaselineFingerprint get_baseline(HttpClient &http, const std::string &bas
 }
 
 /// Check if a response is just the wildcard/default page (not real content).
-inline bool is_wildcard_response(const Response &resp, const BaselineFingerprint &fp) {
+inline bool is_wildcard_response(const Response &resp,
+                                 const BaselineFingerprint &fp) {
   if (!fp.is_wildcard) {
-    // Not a wildcard host — only filter if same status + same size as 404 baseline
-    return resp.status_code == fp.status_code && resp.body.size() == fp.body_size;
+    // Not a wildcard host — only filter if same status + same size as 404
+    // baseline
+    return resp.status_code == fp.status_code &&
+           resp.body.size() == fp.body_size;
   }
   // Wildcard host — response must differ significantly from baseline
-  if (resp.body.size() == fp.body_size) return true;
+  if (resp.body.size() == fp.body_size)
+    return true;
   // Allow small variance (±50 bytes) for dynamic tokens/nonces
-  if (std::abs((long)resp.body.size() - (long)fp.body_size) < 50) return true;
+  if (std::abs((long)resp.body.size() - (long)fp.body_size) < 50)
+    return true;
   return false;
 }
 
-/// Check if response is a WAF/CDN challenge page.
+/// Fix 2: Additional false positive checks
 inline bool is_waf_challenge(const Response &resp) {
-  if (resp.body.find("Just a moment...") != std::string::npos) return true;
-  if (resp.body.find("Cloudflare Access") != std::string::npos) return true;
-  if (resp.body.find("challenge-platform") != std::string::npos) return true;
-  if (resp.body.find("Checking your browser") != std::string::npos) return true;
-  if (resp.body.find("Please verify you are a human") != std::string::npos) return true;
-  if (resp.status_code == 403 && resp.body.find("Request blocked") != std::string::npos) return true;
+  if (resp.body.find("Just a moment...") != std::string::npos)
+    return true;
+  if (resp.body.find("Cloudflare Access") != std::string::npos)
+    return true;
+  if (resp.body.find("challenge-platform") != std::string::npos)
+    return true;
+  if (resp.body.find("Checking your browser") != std::string::npos)
+    return true;
+  if (resp.body.find("Please verify you are a human") != std::string::npos)
+    return true;
+  if (resp.status_code == 403 &&
+      resp.body.find("Request blocked") != std::string::npos)
+    return true;
+  return false;
+}
+
+inline bool is_false_positive(const Response &resp) {
+  // WAF/CDN challenge pages
+  if (is_waf_challenge(resp))
+    return true;
+  // Generic error pages that look like content
+  if (resp.body.find("404") != std::string::npos &&
+      resp.body.find("not found") != std::string::npos)
+    return true;
+  if (resp.body.find("Access Denied") != std::string::npos)
+    return true;
+  // Login redirect (not a real finding)
+  if (resp.status_code == 302 || resp.status_code == 301) {
+    for (const auto &[k, v] : resp.headers) {
+      if (k == "location" && (v.find("login") != std::string::npos ||
+                              v.find("signin") != std::string::npos))
+        return true;
+    }
+  }
   return false;
 }
 

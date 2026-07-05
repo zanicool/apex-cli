@@ -20,7 +20,7 @@ struct SBOMComponent {
 
 /// A vulnerability found via OSV.dev.
 struct SBOMVuln {
-  std::string id;       // CVE or GHSA ID
+  std::string id; // CVE or GHSA ID
   std::string summary;
   std::string severity; // critical, high, medium, low
   double cvss = 0.0;

@@ -1,5 +1,6 @@
 /// @file pipeline.hpp
-/// @brief Full bug bounty pipeline: recon → smart scan → deep → novelty → report.
+/// @brief Full bug bounty pipeline: recon → smart scan → deep → novelty →
+/// report.
 ///
 /// Based on PTES methodology + honeypot research insights:
 /// - Attackers check /.git, /env, metadata FIRST (we do too)
@@ -45,7 +46,8 @@ inline void print_pipeline_banner(const std::string &target) {
   std::cout << R"(
 ╔══════════════════════════════════════════════════════════════╗
 ║  APEX BOUNTY PIPELINE                                        ║
-║  Target: )" << target.substr(0, 50) << R"(
+║  Target: )"
+            << target.substr(0, 50) << R"(
 ╚══════════════════════════════════════════════════════════════╝
 )" << "\n";
 }
@@ -68,16 +70,17 @@ inline void print_pipeline_report(const PipelineResult &result) {
   // Stage summary
   std::cout << "\n  Stages:\n";
   for (const auto &s : result.stages) {
-    printf("    %-20s %3d findings  %5.1fs\n", s.name.c_str(),
-           s.findings_count, s.seconds);
+    printf("    %-20s %3d findings  %5.1fs\n", s.name.c_str(), s.findings_count,
+           s.seconds);
   }
   std::cout << "    ────────────────────────────────────────\n";
-  printf("    %-20s %3d findings  %5.1fs\n", "TOTAL",
-         result.total_findings, result.total_seconds);
+  printf("    %-20s %3d findings  %5.1fs\n", "TOTAL", result.total_findings,
+         result.total_seconds);
 
   // Reportable findings
   if (!result.reportable.empty()) {
-    std::cout << "\n  🟢 SUBMIT THESE (" << result.reportable.size() << "):\n\n";
+    std::cout << "\n  🟢 SUBMIT THESE (" << result.reportable.size()
+              << "):\n\n";
     for (const auto &f : result.reportable) {
       print_enriched_finding(f);
     }
@@ -89,8 +92,8 @@ inline void print_pipeline_report(const PipelineResult &result) {
               << ") — check hacktivity before submitting:\n\n";
     for (size_t i = 0; i < result.verify_first.size() && i < 10; ++i) {
       const auto &f = result.verify_first[i];
-      std::cout << "    [" << f.severity << "] " << f.type << " — "
-                << f.url << "\n";
+      std::cout << "    [" << f.severity << "] " << f.type << " — " << f.url
+                << "\n";
     }
     if (result.verify_first.size() > 10)
       std::cout << "    ... and " << (result.verify_first.size() - 10)
@@ -103,8 +106,8 @@ inline void print_pipeline_report(const PipelineResult &result) {
     std::cout << "  🔴 SKIP (" << result.skip.size()
               << ") — likely duplicates:\n";
     for (size_t i = 0; i < result.skip.size() && i < 5; ++i) {
-      std::cout << "    " << result.skip[i].type << " — "
-                << result.skip[i].url << "\n";
+      std::cout << "    " << result.skip[i].type << " — " << result.skip[i].url
+                << "\n";
     }
     if (result.skip.size() > 5)
       std::cout << "    ... and " << (result.skip.size() - 5) << " more\n";
@@ -116,14 +119,16 @@ inline void print_pipeline_report(const PipelineResult &result) {
   if (result.reportable.empty() && result.verify_first.empty()) {
     std::cout << "    • No high-novelty findings. Try:\n";
     std::cout << "      - Authenticated scanning (--cookie / --auth-header)\n";
-    std::cout << "      - Different endpoints (check JS files for hidden APIs)\n";
+    std::cout
+        << "      - Different endpoints (check JS files for hidden APIs)\n";
     std::cout << "      - Business logic flaws (manual testing)\n";
     std::cout << "      - Race conditions, 2FA bypass, password reset flows\n";
   } else {
     std::cout << "    • Write clear PoC with reproduction steps\n";
     std::cout << "    • Show business impact (not just technical)\n";
     std::cout << "    • Check program policy for bonus criteria\n";
-    std::cout << "    • One report per vulnerability (don't chain unless needed)\n";
+    std::cout
+        << "    • One report per vulnerability (don't chain unless needed)\n";
   }
   std::cout << "\n";
 }

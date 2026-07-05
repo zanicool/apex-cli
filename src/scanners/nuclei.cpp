@@ -3,7 +3,7 @@
 namespace apex {
 
 std::vector<Scanner> register_nuclei_scanners() {
-    // Nuclei integration - delegates to external nuclei binary if available
+    // TODO: Implement nuclei template integration when nuclei is available
     return {};
 }
 

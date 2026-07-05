@@ -1,5 +1,6 @@
 /// @file brain.hpp
-/// @brief LLM-powered attack planner: analyzes findings and generates next steps.
+/// @brief LLM-powered attack planner: analyzes findings and generates next
+/// steps.
 #ifndef APEX_BRAIN_HPP
 #define APEX_BRAIN_HPP
 
@@ -14,7 +15,7 @@ namespace apex {
 
 /// A planned action from the LLM.
 struct PlannedAction {
-  std::string method;  // GET, POST
+  std::string method; // GET, POST
   std::string url;
   std::string body;
   std::string reason;

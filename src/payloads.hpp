@@ -8,7 +8,8 @@
 
 namespace apex {
 
-/// Load lines from a payload/wordlist file. Returns hardcoded fallback if file not found.
+/// Load lines from a payload/wordlist file. Returns hardcoded fallback if file
+/// not found.
 std::vector<std::string> load_payloads(const std::string &filename);
 
 } // namespace apex

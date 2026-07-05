@@ -42,9 +42,10 @@ public:
                 const std::string &content_type);
 
   /// POST with custom headers.
-  Response post(const std::string &url, const std::string &body,
-                const std::string &content_type,
-                const std::vector<std::pair<std::string, std::string>> &headers);
+  Response
+  post(const std::string &url, const std::string &body,
+       const std::string &content_type,
+       const std::vector<std::pair<std::string, std::string>> &headers);
 
   /// Total requests made.
   long request_count() const;

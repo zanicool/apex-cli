@@ -107,8 +107,7 @@ Response HttpClient::post(
 long HttpClient::request_count() const { return req_count_.load(); }
 
 Response HttpClient::do_request(
-    const std::string &method, const std::string &url,
-    const std::string &body,
+    const std::string &method, const std::string &url, const std::string &body,
     const std::map<std::string, std::string> &extra_headers) {
   Response resp;
   resp.url = url;
@@ -161,6 +160,17 @@ Response HttpClient::do_request(
     std::string h = key + ": " + val;
     headers_list = curl_slist_append(headers_list, h.c_str());
   }
+
+  // Fix 1: Auto-inject auth cookie/header on every request
+  if (!cfg_.auth_cookie.empty()) {
+    std::string h = "Cookie: " + cfg_.auth_cookie;
+    headers_list = curl_slist_append(headers_list, h.c_str());
+  }
+  if (!cfg_.auth_header.empty()) {
+    std::string h = "Authorization: " + cfg_.auth_header;
+    headers_list = curl_slist_append(headers_list, h.c_str());
+  }
+
   if (headers_list) {
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers_list);
   }
@@ -169,8 +179,8 @@ Response HttpClient::do_request(
   CURLcode res = curl_easy_perform(curl);
   auto end = std::chrono::steady_clock::now();
 
-  resp.duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-      end - start);
+  resp.duration =
+      std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
   if (res != CURLE_OK) {
     resp.error = curl_easy_strerror(res);
@@ -192,16 +202,17 @@ Response HttpClient::do_request(
 }
 
 void HttpClient::rate_limit() {
-  if (cfg_.rate <= 0.0) return;
+  if (cfg_.rate <= 0.0)
+    return;
   // Global token bucket: allow 1/rate requests per second.
   static std::mutex rate_mu;
   static auto last = std::chrono::steady_clock::now();
   std::lock_guard<std::mutex> lock(rate_mu);
   auto now = std::chrono::steady_clock::now();
-  auto min_interval = std::chrono::milliseconds(
-      static_cast<int>(cfg_.rate * 1000.0));
-  auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-      now - last);
+  auto min_interval =
+      std::chrono::milliseconds(static_cast<int>(cfg_.rate * 1000.0));
+  auto elapsed =
+      std::chrono::duration_cast<std::chrono::milliseconds>(now - last);
   if (elapsed < min_interval) {
     std::this_thread::sleep_for(min_interval - elapsed);
   }

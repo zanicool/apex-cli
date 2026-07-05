@@ -18,7 +18,8 @@ std::string find_payload_file(const std::string &filename) {
       "../wordlists/" + filename,
   };
   for (const auto &p : search) {
-    if (std::filesystem::exists(p)) return p;
+    if (std::filesystem::exists(p))
+      return p;
   }
   return "";
 }
@@ -28,7 +29,8 @@ std::string find_payload_file(const std::string &filename) {
 std::vector<std::string> load_payloads(const std::string &filename) {
   std::vector<std::string> lines;
   std::string path = find_payload_file(filename);
-  if (path.empty()) return lines;
+  if (path.empty())
+    return lines;
 
   std::ifstream file(path);
   std::string line;

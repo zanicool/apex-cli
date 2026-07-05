@@ -78,17 +78,35 @@ std::vector<Finding> scan_mass_assignment(const Config &, HttpClient &http,
 
   const std::vector<std::string> api_paths = {
       "/api/user", "/api/profile", "/api/account", "/api/settings"};
-  const std::string payload =
+  const std::string normal_payload = R"({"name":"test"})";
+  const std::string escalation_payload =
       R"({"name":"test","role":"admin","is_admin":true,"verified":true})";
 
   for (const auto &path : api_paths) {
-    auto resp = http.post(base + path, payload, "application/json");
-    if (resp.status_code == 200 &&
+    // First: send a baseline request without privilege fields
+    auto baseline = http.post(base + path, normal_payload, "application/json");
+    if (baseline.status_code == 404 || baseline.status_code == 405) continue;
+
+    // Then: send request with privilege escalation fields
+    auto resp = http.post(base + path, escalation_payload, "application/json");
+    if (resp.status_code != 200) continue;
+
+    // Only flag if the response DIFFERS from baseline AND contains escalated privileges
+    // The response must show the server actually applied the role change
+    bool has_escalation =
         (resp.body.find("\"role\":\"admin\"") != std::string::npos ||
-         resp.body.find("\"is_admin\":true") != std::string::npos)) {
+         resp.body.find("\"is_admin\":true") != std::string::npos);
+    bool baseline_has_it =
+        (baseline.body.find("\"role\":\"admin\"") != std::string::npos ||
+         baseline.body.find("\"is_admin\":true") != std::string::npos);
+
+    // Only a real finding if the escalation fields appear in response
+    // AND they weren't already there in the baseline
+    if (has_escalation && !baseline_has_it && resp.body != baseline.body) {
       findings.push_back({"Mass Assignment", "critical", base + path,
-                          "Privilege escalation via mass assignment",
-                          "", payload, ""});
+                          "Privilege escalation via mass assignment — role changed in response",
+                          "", escalation_payload,
+                          "Baseline lacks admin role, escalated request shows it"});
     }
   }
   return findings;

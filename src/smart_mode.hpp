@@ -41,7 +41,8 @@ inline CrawlIntel analyze_crawl(const CrawlResult &crawl, HttpClient &http) {
           f.name.find("login") != std::string::npos ||
           f.name.find("user") != std::string::npos)
         intel.has_login = true;
-      if (f.type == "file") intel.has_upload = true;
+      if (f.type == "file")
+        intel.has_upload = true;
     }
   }
 
@@ -56,9 +57,12 @@ inline CrawlIntel analyze_crawl(const CrawlResult &crawl, HttpClient &http) {
   }
 
   for (const auto &url : crawl.urls) {
-    if (url.find("graphql") != std::string::npos) intel.has_graphql = true;
-    if (url.find("/api/") != std::string::npos) intel.has_api = true;
-    if (url.find("id=") != std::string::npos) intel.has_ids = true;
+    if (url.find("graphql") != std::string::npos)
+      intel.has_graphql = true;
+    if (url.find("/api/") != std::string::npos)
+      intel.has_api = true;
+    if (url.find("id=") != std::string::npos)
+      intel.has_ids = true;
     if (url.find("wp-content") != std::string::npos ||
         url.find("wp-admin") != std::string::npos)
       intel.has_cms = true;
@@ -67,13 +71,18 @@ inline CrawlIntel analyze_crawl(const CrawlResult &crawl, HttpClient &http) {
   // Sample first page for tech detection
   if (!crawl.urls.empty()) {
     auto resp = http.get(crawl.urls[0]);
-    if (resp.headers.count("Set-Cookie")) intel.has_cookies = true;
-    if (resp.headers.count("Access-Control-Allow-Origin")) intel.has_cors = true;
-    if (resp.body.find("wp-content") != std::string::npos) intel.has_cms = true;
+    if (resp.headers.count("Set-Cookie"))
+      intel.has_cookies = true;
+    if (resp.headers.count("Access-Control-Allow-Origin"))
+      intel.has_cors = true;
+    if (resp.body.find("wp-content") != std::string::npos)
+      intel.has_cms = true;
     if (resp.headers.count("Content-Type")) {
       auto ct = resp.headers.at("Content-Type");
-      if (ct.find("json") != std::string::npos) intel.has_api = true;
-      if (ct.find("xml") != std::string::npos) intel.has_xml = true;
+      if (ct.find("json") != std::string::npos)
+        intel.has_api = true;
+      if (ct.find("xml") != std::string::npos)
+        intel.has_xml = true;
     }
   }
 

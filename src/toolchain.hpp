@@ -13,7 +13,7 @@ namespace apex {
 /// An external tool with its path and availability.
 struct Tool {
   std::string name;
-  std::string path;    // Empty if not installed.
+  std::string path; // Empty if not installed.
   std::string version;
   bool available = false;
 };
@@ -38,7 +38,7 @@ std::string run_dalfox(const Finding &finding);
 
 /// Run ffuf for content discovery.
 std::vector<std::string> run_ffuf(const std::string &base_url,
-                                   const std::string &wordlist);
+                                  const std::string &wordlist);
 
 /// Run nuclei with specific templates on target.
 std::vector<Finding> run_nuclei(const std::string &target,

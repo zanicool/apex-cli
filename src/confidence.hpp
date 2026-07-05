@@ -17,9 +17,12 @@ enum class Confidence { Possible = 1, Probable = 2, Confirmed = 3 };
 
 inline const char *confidence_str(Confidence c) {
   switch (c) {
-  case Confidence::Confirmed: return "confirmed";
-  case Confidence::Probable: return "probable";
-  case Confidence::Possible: return "possible";
+  case Confidence::Confirmed:
+    return "confirmed";
+  case Confidence::Probable:
+    return "probable";
+  case Confidence::Possible:
+    return "possible";
   }
   return "unknown";
 }
@@ -35,9 +38,12 @@ inline Confidence score_confidence(const Finding &f) {
       return Confidence::Confirmed;
     if (f.type == "SSRF" && f.evidence.find("ami-id") != std::string::npos)
       return Confidence::Confirmed;
-    if (f.type == "IDOR") return Confidence::Confirmed;
-    if (f.type == "Secrets Exposure") return Confidence::Confirmed;
-    if (f.type == "CORS Misconfiguration") return Confidence::Confirmed;
+    if (f.type == "IDOR")
+      return Confidence::Confirmed;
+    if (f.type == "Secrets Exposure")
+      return Confidence::Confirmed;
+    if (f.type == "CORS Misconfiguration")
+      return Confidence::Confirmed;
     return Confidence::Probable;
   }
 
@@ -61,7 +67,8 @@ inline Confidence score_confidence(const Finding &f) {
 /// Filter findings by minimum confidence level.
 inline std::vector<Finding>
 filter_by_confidence(const std::vector<Finding> &findings, int min_level) {
-  if (min_level <= 0) return findings;
+  if (min_level <= 0)
+    return findings;
   std::vector<Finding> filtered;
   for (const auto &f : findings) {
     if (static_cast<int>(score_confidence(f)) >= min_level)
@@ -78,14 +85,21 @@ struct ConfidenceSummary {
   int total = 0;
 };
 
-inline ConfidenceSummary summarize_confidence(const std::vector<Finding> &findings) {
+inline ConfidenceSummary
+summarize_confidence(const std::vector<Finding> &findings) {
   ConfidenceSummary s;
   s.total = findings.size();
   for (const auto &f : findings) {
     switch (score_confidence(f)) {
-    case Confidence::Confirmed: ++s.confirmed; break;
-    case Confidence::Probable: ++s.probable; break;
-    case Confidence::Possible: ++s.possible; break;
+    case Confidence::Confirmed:
+      ++s.confirmed;
+      break;
+    case Confidence::Probable:
+      ++s.probable;
+      break;
+    case Confidence::Possible:
+      ++s.possible;
+      break;
     }
   }
   return s;
@@ -102,7 +116,8 @@ inline std::string finding_key(const Finding &f) {
 inline std::set<std::string> load_baseline(const std::string &path) {
   std::set<std::string> keys;
   std::ifstream file(path);
-  if (!file.is_open()) return keys;
+  if (!file.is_open())
+    return keys;
 
   std::string content((std::istreambuf_iterator<char>(file)),
                       std::istreambuf_iterator<char>());
@@ -112,10 +127,12 @@ inline std::set<std::string> load_baseline(const std::string &path) {
   while ((pos = content.find("\"type\"", pos)) != std::string::npos) {
     auto extract = [&](const std::string &field) -> std::string {
       size_t fp = content.find("\"" + field + "\"", pos);
-      if (fp == std::string::npos || fp > pos + 500) return "";
+      if (fp == std::string::npos || fp > pos + 500)
+        return "";
       size_t vs = content.find("\"", fp + field.size() + 3);
       size_t ve = content.find("\"", vs + 1);
-      if (vs == std::string::npos || ve == std::string::npos) return "";
+      if (vs == std::string::npos || ve == std::string::npos)
+        return "";
       return content.substr(vs + 1, ve - vs - 1);
     };
 

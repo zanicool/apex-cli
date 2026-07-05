@@ -5,16 +5,16 @@
 #define APEX_AUTO_LOGIN_HPP
 
 #include "http.hpp"
-#include <string>
-#include <vector>
 #include <map>
 #include <regex>
+#include <string>
+#include <vector>
 
 namespace apex {
 
 struct SessionInfo {
-  std::string cookie;       // Full cookie header value
-  std::string auth_header;  // Bearer token if found
+  std::string cookie;      // Full cookie header value
+  std::string auth_header; // Bearer token if found
   bool authenticated = false;
 };
 
@@ -30,9 +30,9 @@ inline SessionInfo auto_login(HttpClient &http, const std::string &base_url,
 
   // Common login paths to try
   std::vector<std::string> login_paths = {
-      "/login", "/signin", "/auth/login", "/api/login",
-      "/api/v1/login", "/api/auth/login", "/account/login",
-      "/user/login", "/members/login", "/session/new"};
+      "/login",         "/signin",         "/auth/login",    "/api/login",
+      "/api/v1/login",  "/api/auth/login", "/account/login", "/user/login",
+      "/members/login", "/session/new"};
 
   std::string login_url;
   std::string login_page_body;
@@ -50,11 +50,13 @@ inline SessionInfo auto_login(HttpClient &http, const std::string &base_url,
     }
   }
 
-  if (login_url.empty()) return session;
+  if (login_url.empty())
+    return session;
 
   // Extract CSRF token if present
   std::string csrf;
-  std::regex csrf_re(R"(name=["'](?:csrf|_token|authenticity_token|csrfmiddlewaretoken)["']\s+value=["']([^"']+)["'])");
+  std::regex csrf_re(
+      R"(name=["'](?:csrf|_token|authenticity_token|csrfmiddlewaretoken)["']\s+value=["']([^"']+)["'])");
   std::smatch m;
   if (std::regex_search(login_page_body, m, csrf_re)) {
     csrf = m[1].str();
@@ -62,25 +64,29 @@ inline SessionInfo auto_login(HttpClient &http, const std::string &base_url,
 
   // Try JSON login first
   {
-    std::string json_body = "{\"email\":\"" + username + "\",\"password\":\"" + password + "\"}";
+    std::string json_body =
+        "{\"email\":\"" + username + "\",\"password\":\"" + password + "\"}";
     auto resp = http.post(login_url, json_body, "application/json");
     if (resp.status_code == 200 || resp.status_code == 302) {
       session = extract_session(resp);
-      if (session.authenticated) return session;
+      if (session.authenticated)
+        return session;
     }
     // Try with username field
-    json_body = "{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}";
+    json_body =
+        "{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}";
     resp = http.post(login_url, json_body, "application/json");
     if (resp.status_code == 200 || resp.status_code == 302) {
       session = extract_session(resp);
-      if (session.authenticated) return session;
+      if (session.authenticated)
+        return session;
     }
   }
 
   // Try form-based login
   {
-    std::string form_body = "email=" + url_encode(username) +
-                            "&password=" + url_encode(password);
+    std::string form_body =
+        "email=" + url_encode(username) + "&password=" + url_encode(password);
     if (!csrf.empty()) {
       form_body += "&_token=" + url_encode(csrf) +
                    "&csrf_token=" + url_encode(csrf) +
@@ -89,9 +95,11 @@ inline SessionInfo auto_login(HttpClient &http, const std::string &base_url,
     // Also try username field
     form_body += "&username=" + url_encode(username);
 
-    auto resp = http.post(login_url, form_body, "application/x-www-form-urlencoded");
+    auto resp =
+        http.post(login_url, form_body, "application/x-www-form-urlencoded");
     session = extract_session(resp);
-    if (session.authenticated) return session;
+    if (session.authenticated)
+      return session;
   }
 
   return session;
@@ -106,13 +114,15 @@ inline SessionInfo extract_session(const Response &resp) {
   for (const auto &[key, value] : resp.headers) {
     std::string k = key;
     // Case-insensitive header check
-    for (auto &c : k) c = std::tolower(c);
+    for (auto &c : k)
+      c = std::tolower(c);
     if (k == "set-cookie") {
       auto name_end = value.find('=');
       auto val_end = value.find(';');
       if (name_end != std::string::npos) {
         std::string cookie_pair = value.substr(0, val_end);
-        if (!cookies.empty()) cookies += "; ";
+        if (!cookies.empty())
+          cookies += "; ";
         cookies += cookie_pair;
       }
     }
@@ -126,7 +136,8 @@ inline SessionInfo extract_session(const Response &resp) {
   // Check for token in response body
   if (resp.body.find("\"token\"") != std::string::npos ||
       resp.body.find("\"access_token\"") != std::string::npos) {
-    std::regex token_re(R"del("(?:token|access_token|jwt)"\s*:\s*"([^"]+)")del");
+    std::regex token_re(
+        R"del("(?:token|access_token|jwt)"\s*:\s*"([^"]+)")del");
     std::smatch m;
     if (std::regex_search(resp.body, m, token_re)) {
       session.auth_header = "Bearer " + m[1].str();

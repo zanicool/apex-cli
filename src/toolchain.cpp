@@ -12,12 +12,15 @@ namespace {
 
 /// Run a command and capture stdout.
 std::string exec_cmd(const std::string &cmd, int timeout_sec = 30) {
-  std::string full = "timeout " + std::to_string(timeout_sec) + " " + cmd + " 2>/dev/null";
+  std::string full =
+      "timeout " + std::to_string(timeout_sec) + " " + cmd + " 2>/dev/null";
   FILE *pipe = popen(full.c_str(), "r");
-  if (!pipe) return "";
+  if (!pipe)
+    return "";
   std::string result;
   char buf[4096];
-  while (fgets(buf, sizeof(buf), pipe)) result += buf;
+  while (fgets(buf, sizeof(buf), pipe))
+    result += buf;
   pclose(pipe);
   return result;
 }
@@ -45,9 +48,8 @@ Tool check_tool(const std::string &name) {
 
 std::vector<Tool> detect_tools() {
   const std::vector<std::string> names = {
-      "nuclei", "httpx", "katana", "subfinder", "ffuf",
-      "sqlmap", "dalfox", "nikto", "wapiti", "schemathesis",
-      "zap.sh", "zap-cli"};
+      "nuclei", "httpx", "katana", "subfinder",    "ffuf",   "sqlmap",
+      "dalfox", "nikto", "wapiti", "schemathesis", "zap.sh", "zap-cli"};
   std::vector<Tool> tools;
   for (const auto &name : names) {
     tools.push_back(check_tool(name));
@@ -67,43 +69,50 @@ void print_tool_status(const std::vector<Tool> &tools) {
 }
 
 std::vector<std::string> run_httpx(const std::vector<std::string> &hosts) {
-  if (hosts.empty()) return {};
+  if (hosts.empty())
+    return {};
   // Write hosts to temp file.
   std::string tmp = "/tmp/apex_httpx_in.txt";
   FILE *f = fopen(tmp.c_str(), "w");
-  if (!f) return {};
-  for (const auto &h : hosts) fprintf(f, "%s\n", h.c_str());
+  if (!f)
+    return {};
+  for (const auto &h : hosts)
+    fprintf(f, "%s\n", h.c_str());
   fclose(f);
 
-  std::string out = exec_cmd("cat " + tmp + " | httpx -silent -status-code -no-color", 30);
+  std::string out =
+      exec_cmd("cat " + tmp + " | httpx -silent -status-code -no-color", 30);
   std::vector<std::string> live;
   std::istringstream stream(out);
   std::string line;
   while (std::getline(stream, line)) {
     // httpx outputs: url [status]
     size_t space = line.find(' ');
-    std::string url = (space != std::string::npos) ? line.substr(0, space) : line;
-    if (!url.empty()) live.push_back(url);
+    std::string url =
+        (space != std::string::npos) ? line.substr(0, space) : line;
+    if (!url.empty())
+      live.push_back(url);
   }
   return live;
 }
 
 std::vector<std::string> run_katana(const std::string &target, int depth) {
-  std::string cmd = "katana -u https://" + target +
-                    " -d " + std::to_string(depth) +
-                    " -silent -no-color -jc";
+  std::string cmd = "katana -u https://" + target + " -d " +
+                    std::to_string(depth) + " -silent -no-color -jc";
   std::string out = exec_cmd(cmd, 60);
   std::vector<std::string> urls;
   std::istringstream stream(out);
   std::string line;
   while (std::getline(stream, line)) {
-    if (!line.empty() && line.find("http") == 0) urls.push_back(line);
+    if (!line.empty() && line.find("http") == 0)
+      urls.push_back(line);
   }
   return urls;
 }
 
 std::string run_sqlmap(const Finding &finding) {
-  if (finding.url.empty() || finding.param.empty()) return "";
+  if (finding.url.empty() || finding.param.empty())
+    return "";
   std::string target_url = finding.url;
   if (!finding.param.empty())
     target_url += "?" + finding.param + "=1";
@@ -114,16 +123,18 @@ std::string run_sqlmap(const Finding &finding) {
 }
 
 std::string run_dalfox(const Finding &finding) {
-  if (finding.url.empty()) return "";
+  if (finding.url.empty())
+    return "";
   std::string target_url = finding.url;
   if (!finding.param.empty())
     target_url += "?" + finding.param + "=FUZZ";
-  std::string cmd = "dalfox url '" + target_url + "' --silence 2>/dev/null | head -10";
+  std::string cmd =
+      "dalfox url '" + target_url + "' --silence 2>/dev/null | head -10";
   return exec_cmd(cmd, 30);
 }
 
 std::vector<std::string> run_ffuf(const std::string &base_url,
-                                   const std::string &wordlist) {
+                                  const std::string &wordlist) {
   std::string cmd = "ffuf -u '" + base_url + "/FUZZ' -w " + wordlist +
                     " -mc 200,301,302,403 -s 2>/dev/null";
   std::string out = exec_cmd(cmd, 60);
@@ -131,15 +142,17 @@ std::vector<std::string> run_ffuf(const std::string &base_url,
   std::istringstream stream(out);
   std::string line;
   while (std::getline(stream, line)) {
-    if (!line.empty()) paths.push_back(line);
+    if (!line.empty())
+      paths.push_back(line);
   }
   return paths;
 }
 
 std::vector<Finding> run_nuclei(const std::string &target,
                                 const std::string &tags) {
-  std::string cmd = "nuclei -u https://" + target + " -tags " + tags +
-                    " -severity critical,high,medium -jsonl -silent 2>/dev/null";
+  std::string cmd =
+      "nuclei -u https://" + target + " -tags " + tags +
+      " -severity critical,high,medium -jsonl -silent 2>/dev/null";
   std::string out = exec_cmd(cmd, 120);
   std::vector<Finding> findings;
   std::istringstream stream(out);
@@ -167,7 +180,8 @@ std::vector<Finding> run_nuclei(const std::string &target,
       size_t end = line.find("\"", sev);
       f.severity = line.substr(sev, end - sev);
     }
-    if (!f.url.empty()) findings.push_back(f);
+    if (!f.url.empty())
+      findings.push_back(f);
   }
   return findings;
 }

@@ -18,17 +18,22 @@ namespace {
 std::string normalize(const std::string &name) {
   std::string out;
   for (char c : name) {
-    if (std::isalnum(c) || c == '-' || c == '.') out += std::tolower(c);
-    else if (c == ' ') out += '-';
+    if (std::isalnum(c) || c == '-' || c == '.')
+      out += std::tolower(c);
+    else if (c == ' ')
+      out += '-';
   }
   return out;
 }
 
 /// Map severity string from CVSS score.
 std::string severity_from_cvss(double cvss) {
-  if (cvss >= 9.0) return "critical";
-  if (cvss >= 7.0) return "high";
-  if (cvss >= 4.0) return "medium";
+  if (cvss >= 9.0)
+    return "critical";
+  if (cvss >= 7.0)
+    return "high";
+  if (cvss >= 4.0)
+    return "medium";
   return "low";
 }
 
@@ -36,10 +41,14 @@ std::string severity_from_cvss(double cvss) {
 std::string json_escape(const std::string &s) {
   std::string out;
   for (char c : s) {
-    if (c == '"') out += "\\\"";
-    else if (c == '\\') out += "\\\\";
-    else if (c == '\n') out += "\\n";
-    else out += c;
+    if (c == '"')
+      out += "\\\"";
+    else if (c == '\\')
+      out += "\\\\";
+    else if (c == '\n')
+      out += "\\n";
+    else
+      out += c;
   }
   return out;
 }
@@ -65,7 +74,8 @@ std::vector<SBOMComponent> extract_sbom(const std::vector<Finding> &findings) {
         }
       }
     }
-    // Fingerprint findings: "Detected: X" or header values like "Server: nginx/1.24"
+    // Fingerprint findings: "Detected: X" or header values like "Server:
+    // nginx/1.24"
     if (f.type == "Fingerprint") {
       // Try to extract versioned component from evidence.
       std::regex ver_re(R"re((\w[\w. -]*?)[/: ]([\d]+\.[\d.]+))re");
@@ -113,7 +123,8 @@ void write_sbom(const std::vector<SBOMComponent> &components,
   out << "  \"version\": 1,\n";
   out << "  \"metadata\": {\n";
   out << "    \"timestamp\": \"" << ts.str() << "\",\n";
-  out << "    \"tools\": [{\"name\": \"apex-cli\", \"version\": \"11.0-cpp\"}],\n";
+  out << "    \"tools\": [{\"name\": \"apex-cli\", \"version\": "
+         "\"11.0-cpp\"}],\n";
   out << "    \"component\": {\"type\": \"application\", \"name\": \""
       << json_escape(target) << "\"}\n";
   out << "  },\n";
@@ -138,7 +149,8 @@ std::vector<SBOMVuln> check_osv(HttpClient &http,
   std::vector<SBOMVuln> vulns;
 
   for (const auto &comp : components) {
-    if (comp.version.empty()) continue;
+    if (comp.version.empty())
+      continue;
 
     // OSV.dev API: POST https://api.osv.dev/v1/query
     std::string body = "{\"package\":{\"name\":\"" + normalize(comp.name) +
@@ -150,11 +162,11 @@ std::vector<SBOMVuln> check_osv(HttpClient &http,
 
     for (const auto &eco : ecosystems) {
       std::string req = "{\"package\":{\"name\":\"" + normalize(comp.name) +
-                        "\",\"ecosystem\":\"" + eco +
-                        "\"},\"version\":\"" + comp.version + "\"}";
+                        "\",\"ecosystem\":\"" + eco + "\"},\"version\":\"" +
+                        comp.version + "\"}";
 
-      auto resp = http.post("https://api.osv.dev/v1/query",
-                            req, "application/json");
+      auto resp =
+          http.post("https://api.osv.dev/v1/query", req, "application/json");
 
       if (resp.status_code == 200 && resp.body.size() > 10 &&
           resp.body.find("\"vulns\"") != std::string::npos) {
@@ -164,10 +176,14 @@ std::vector<SBOMVuln> check_osv(HttpClient &http,
         std::regex score_re(R"re("score"\s*:\s*([\d.]+))re");
         std::regex fixed_re(R"re("fixed"\s*:\s*"([^"]+)")re");
 
-        auto id_it = std::sregex_iterator(resp.body.begin(), resp.body.end(), id_re);
-        auto sum_it = std::sregex_iterator(resp.body.begin(), resp.body.end(), sum_re);
-        auto score_it = std::sregex_iterator(resp.body.begin(), resp.body.end(), score_re);
-        auto fixed_it = std::sregex_iterator(resp.body.begin(), resp.body.end(), fixed_re);
+        auto id_it =
+            std::sregex_iterator(resp.body.begin(), resp.body.end(), id_re);
+        auto sum_it =
+            std::sregex_iterator(resp.body.begin(), resp.body.end(), sum_re);
+        auto score_it =
+            std::sregex_iterator(resp.body.begin(), resp.body.end(), score_re);
+        auto fixed_it =
+            std::sregex_iterator(resp.body.begin(), resp.body.end(), fixed_re);
 
         for (; id_it != std::sregex_iterator(); ++id_it) {
           SBOMVuln v;
