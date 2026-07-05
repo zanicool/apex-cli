@@ -141,4 +141,11 @@ namespace apex { std::vector<Scanner> register_network_service_scanners(); }
 namespace apex { std::vector<Scanner> register_recon_deep2_scanners(); }
 namespace apex { std::vector<Scanner> register_auth_scanner_scanners(); }
 namespace apex { std::vector<Scanner> register_api_protocol_scanners(); }
-namespace apex { std::vector<Scanner> register_ecommerce_scanners(); }
+namespace apex { std::vector<Scanner> register_ecommerce_scanners(); }namespace apex { std::vector<Scanner> register_autogen_authentication_account_takeover_25_scanners(); }
+namespace apex { std::vector<Scanner> register_autogen_idor_broken_access_control_30_scanners(); }
+namespace apex { std::vector<Scanner> register_autogen_injection_30_scanners(); }
+namespace apex { std::vector<Scanner> register_autogen_business_logic_30_scanners(); }
+namespace apex { std::vector<Scanner> register_autogen_file_upload_15_scanners(); }
+namespace apex { std::vector<Scanner> register_autogen_api_specific_25_scanners(); }
+namespace apex { std::vector<Scanner> register_autogen_infrastructure_cloud_20_scanners(); }
+namespace apex { std::vector<Scanner> register_autogen_mobile_client_side_10_scanners(); }

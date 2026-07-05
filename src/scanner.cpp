@@ -97,6 +97,14 @@ std::vector<Scanner> get_scanners() {
   append(register_network_service_scanners());
   append(register_recon_deep2_scanners());
   append(register_auth_scanner_scanners());
+  append(register_autogen_authentication_account_takeover_25_scanners());
+  append(register_autogen_idor_broken_access_control_30_scanners());
+  append(register_autogen_injection_30_scanners());
+  append(register_autogen_business_logic_30_scanners());
+  append(register_autogen_file_upload_15_scanners());
+  append(register_autogen_api_specific_25_scanners());
+  append(register_autogen_infrastructure_cloud_20_scanners());
+  append(register_autogen_mobile_client_side_10_scanners());
   append(register_infra_misconfig_scanners());
   append(register_advanced_injection_scanners());
   append(register_auth_advanced2_scanners());
@@ -319,6 +327,14 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
     }
     final_filtered.push_back(std::move(f));
   }
+
+
+
+
+
+
+
+
 
   // Run Attack Chain Engine — combines findings into multi-step exploits
   g_all_findings = final_filtered;
