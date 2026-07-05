@@ -88,6 +88,7 @@ std::vector<Scanner> get_scanners() {
   append(register_payload_mutator_scanners());
   append(register_behavioral_analysis_scanners());
   append(register_path_traversal_scanners());
+  append(register_browser_engine_scanners());
   append(register_infra_misconfig_scanners());
   append(register_advanced_injection_scanners());
   append(register_auth_advanced2_scanners());
