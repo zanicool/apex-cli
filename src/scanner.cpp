@@ -282,6 +282,33 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
         f.evidence.empty()) {
       continue;
     }
+    // Skip findings whose evidence contains WAF/CDN generic responses
+    if (!f.evidence.empty() &&
+        (f.evidence.find("Access Denied") != std::string::npos ||
+         f.evidence.find("<!DOCTYPE html>") != std::string::npos ||
+         f.evidence.find("Just a moment") != std::string::npos ||
+         f.evidence.find("Checking your browser") != std::string::npos ||
+         f.evidence.find("Attention Required") != std::string::npos ||
+         f.evidence.find("cf-browser-verification") != std::string::npos ||
+         f.evidence.find("Page Not Found") != std::string::npos)) {
+      continue;
+    }
+    // Skip high/critical findings that only matched based on status code 200
+    // without meaningful content validation (common CDN false positive)
+    if ((f.severity == "critical" || f.severity == "high") &&
+        f.evidence.empty() && f.payload.empty()) {
+      continue;
+    }
+    // Skip race condition targets that are just guessed paths (not from crawl)
+    if (f.type.find("Race Condition Target") != std::string::npos &&
+        f.evidence.empty()) {
+      continue;
+    }
+    // Skip subdomain takeover without actual takeover fingerprint in evidence
+    if (f.type.find("Subdomain Takeover") != std::string::npos &&
+        f.evidence.empty()) {
+      continue;
+    }
     final_filtered.push_back(std::move(f));
   }
 

@@ -1,0 +1,21 @@
+---
+# Auto-generated scan policy for: Payload CMS
+name: "Payload CMS Policy"
+
+rules:
+  # SQL Injection
+  - id: 40018
+    strength: HIGH
+    threshold: MEDIUM
+  # XSS Reflected
+  - id: 40012
+    strength: HIGH
+    threshold: MEDIUM
+  # XSS Persistent
+  - id: 40014
+    strength: HIGH
+    threshold: MEDIUM
+  # LDAP Injection — disabled (not detected)
+  - id: 40015
+    strength: OFF
+    threshold: OFF

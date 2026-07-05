@@ -153,7 +153,17 @@ std::vector<Finding> scan_trial_bypass(const Config &, HttpClient &http,
     auto resp = http.post(base + path,
                           R"({"plan":"enterprise","trial_end":"2099-12-31"})",
                           "application/json");
-    if (resp.status_code == 200 && resp.body.find("error") == std::string::npos) {
+    if (resp.status_code == 200 && resp.body.find("error") == std::string::npos &&
+        // Must be a JSON response, not a WAF/redirect/HTML page
+        resp.body.find("<!DOCTYPE") == std::string::npos &&
+        resp.body.find("<HTML>") == std::string::npos &&
+        resp.body.find("Access Denied") == std::string::npos &&
+        resp.body.find("Just a moment") == std::string::npos &&
+        (resp.body.find("{") == 0 || resp.body.find("[") == 0) &&
+        // Must contain confirmation of the change
+        (resp.body.find("enterprise") != std::string::npos ||
+         resp.body.find("success") != std::string::npos ||
+         resp.body.find("updated") != std::string::npos)) {
       findings.push_back({"Subscription Plan Manipulation", "high", base + path,
                           "Plan/trial dates modifiable from client side",
                           "plan", "enterprise",

@@ -95,12 +95,17 @@ std::vector<Finding> scan_el_injection(const Config &, HttpClient &http,
     auto targets = get_targets(crawl, url);
     for (const auto &[base, param] : targets) {
       for (const auto &[payload_a, expect_a, payload_b, expect_b] : canaries) {
+        // Baseline: check if expected values already exist in normal response
+        auto baseline = http.get(base + "safe_test_string_12345");
+        if (baseline.body.find(expect_a) != std::string::npos) continue; // Already in page = FP
+
         auto resp_a = http.get(base + payload_a);
         if (resp_a.body.find(expect_a) == std::string::npos) continue;
         // First canary matched — now verify with second
         auto resp_b = http.get(base + payload_b);
-        if (resp_b.body.find(expect_b) != std::string::npos) {
-          // Both canaries confirmed — real injection
+        if (resp_b.body.find(expect_b) != std::string::npos &&
+            baseline.body.find(expect_b) == std::string::npos) {
+          // Both canaries confirmed AND not in baseline — real injection
           findings.push_back({"EL Injection", "critical", url,
                               "Differential canary confirmed: " + expect_a + " AND " + expect_b,
                               param, payload_a, expect_a});

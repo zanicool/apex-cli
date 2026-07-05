@@ -455,7 +455,15 @@ std::vector<Finding> scan_api_version_bypass(const Config &, HttpClient &http,
       std::string old_url = api_base + std::to_string(v) + "/users";
       auto resp = http.get(old_url);
       if (resp.status_code == 200 && resp.body.size() > 50 &&
-          resp.body.find("error") == std::string::npos) {
+          resp.body.find("error") == std::string::npos &&
+          // Reject WAF/CDN generic pages
+          resp.body.find("Access Denied") == std::string::npos &&
+          resp.body.find("<!DOCTYPE html>") == std::string::npos &&
+          resp.body.find("Page Not Found") == std::string::npos &&
+          resp.body.find("Attention Required") == std::string::npos &&
+          resp.body.find("Just a moment") == std::string::npos &&
+          // Must look like JSON API response
+          (resp.body.find("{") == 0 || resp.body.find("[") == 0)) {
         // Check if newer version requires auth but old doesn't
         auto new_resp = http.get(api_base + "3/users");
         if (new_resp.status_code == 401 || new_resp.status_code == 403) {

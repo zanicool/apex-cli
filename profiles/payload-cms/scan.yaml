@@ -1,0 +1,73 @@
+---
+# Auto-generated ZAP profile for: Payload CMS
+# Generated: 2026-07-05
+# Source: apex-cli auto-learning from scan of https://www.tiktok.com
+#
+# This profile was created automatically when apex-cli detected
+# Payload CMS without an existing scan profile.
+# It will be refined on subsequent scans.
+#
+env:
+  contexts:
+    - name: "Payload CMS Target"
+      urls:
+        - "${target.url}"
+      includePaths:
+        - "${target.url}.*"
+      excludePaths:
+        - ".*\\.js$"
+        - ".*\\.css$"
+        - ".*\\.png$"
+        - ".*\\.jpg$"
+        - ".*\\.woff2?$"
+
+jobs:
+  - type: spider
+    parameters:
+      maxDuration: 5
+      maxDepth: 5
+      url: "${target.url}"
+  - type: requestor
+    requests:
+      - url: "${target.url}/api/bulk/delete"
+      - url: "${target.url}/api/checkout"
+      - url: "${target.url}/api/claim"
+      - url: "${target.url}/api/follow"
+      - url: "${target.url}/api/invite/accept"
+      - url: "${target.url}/api/like"
+      - url: "${target.url}/api/login"
+      - url: "${target.url}/api/order"
+      - url: "${target.url}/api/password-reset"
+      - url: "${target.url}/api/pdf"
+      - url: "${target.url}/api/referral"
+      - url: "${target.url}/api/register"
+      - url: "${target.url}/api/subscription"
+      - url: "${target.url}/api/transfer"
+      - url: "${target.url}/api/trial"
+      - url: "${target.url}/api/upload"
+      - url: "${target.url}/api/v0/users"
+      - url: "${target.url}/api/v1/auth/login"
+      - url: "${target.url}/api/v1/checkout"
+      - url: "${target.url}/api/v1/referral"
+      - url: "${target.url}/api/v1/transfer"
+      - url: "${target.url}/api/v1/trial/start"
+      - url: "${target.url}/api/v1/withdraw"
+      - url: "${target.url}/api/vote"
+      - url: "${target.url}/api/webhooks"
+      - url: "${target.url}/api/withdraw"
+      - url: "${target.url}/backup.zip"
+      - url: "${target.url}/invite"
+  - type: activeScan
+    parameters:
+      maxRuleDurationInMins: 5
+      maxScanDurationInMins: 20
+      policy: "policy.yaml"
+  - type: report
+    parameters:
+      template: "traditional-json"
+      reportDir: "/tmp/zap-reports"
+      reportFile: "payload-cms-scan"
+    risks:
+      - high
+      - medium
+      - low

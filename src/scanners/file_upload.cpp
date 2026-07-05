@@ -185,6 +185,19 @@ std::vector<Finding> scan_sensitive_files(const Config &, HttpClient &http,
   for (const auto &check : checks) {
     auto resp = http.get(base + check.path);
     if (resp.status_code == 200 && resp.body.size() > 10) {
+      // Reject generic error/redirect pages (WAF/CDN false positives)
+      if (resp.body.find("Access Denied") != std::string::npos ||
+          resp.body.find("Page Not Found") != std::string::npos ||
+          resp.body.find("404") != std::string::npos ||
+          resp.body.find("not found") != std::string::npos ||
+          resp.body.find("Attention Required") != std::string::npos ||
+          resp.body.find("Just a moment") != std::string::npos ||
+          resp.body.find("Checking your browser") != std::string::npos ||
+          resp.body.find("cf-browser-verification") != std::string::npos ||
+          resp.body.find("<!DOCTYPE html>") != std::string::npos) {
+        // If indicator is empty and response looks like HTML error page, skip
+        if (check.indicator.empty()) continue;
+      }
       if (check.indicator.empty() ||
           resp.body.find(check.indicator) != std::string::npos) {
         std::string severity = "medium";

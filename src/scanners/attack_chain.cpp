@@ -314,7 +314,17 @@ std::vector<Finding> scan_attack_chains(const Config &, HttpClient &,
   std::vector<Finding> chains;
 
   // Get all findings from the global scanner pipeline
-  const auto &findings = g_all_findings;
+  // Only consider findings with actual evidence (not speculative)
+  std::vector<Finding> findings;
+  for (const auto &f : g_all_findings) {
+    if (!f.evidence.empty() || f.severity == "critical" || f.severity == "high") {
+      // Additional filter: skip unverified/downgraded findings
+      if (f.type.find("unverified") != std::string::npos) continue;
+      if (f.type.find("AI:FP") != std::string::npos) continue;
+      if (f.type.find("(unverified)") != std::string::npos) continue;
+      findings.push_back(f);
+    }
+  }
   if (findings.empty()) return chains;
 
   // Run all chain detectors
