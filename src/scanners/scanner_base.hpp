@@ -138,5 +138,7 @@ namespace apex { std::vector<Scanner> register_api_protocol_scanners(); }
 namespace apex { std::vector<Scanner> register_cloud_attack_scanners(); }
 namespace apex { std::vector<Scanner> register_ecommerce_scanners(); }
 namespace apex { std::vector<Scanner> register_network_service_scanners(); }
+namespace apex { std::vector<Scanner> register_recon_deep2_scanners(); }
+namespace apex { std::vector<Scanner> register_auth_scanner_scanners(); }
 namespace apex { std::vector<Scanner> register_api_protocol_scanners(); }
 namespace apex { std::vector<Scanner> register_ecommerce_scanners(); }

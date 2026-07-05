@@ -95,6 +95,8 @@ std::vector<Scanner> get_scanners() {
   append(register_cloud_attack_scanners());
   append(register_ecommerce_scanners());
   append(register_network_service_scanners());
+  append(register_recon_deep2_scanners());
+  append(register_auth_scanner_scanners());
   append(register_infra_misconfig_scanners());
   append(register_advanced_injection_scanners());
   append(register_auth_advanced2_scanners());
