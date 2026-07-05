@@ -90,6 +90,11 @@ std::vector<Scanner> get_scanners() {
   append(register_path_traversal_scanners());
   append(register_browser_engine_scanners());
   append(register_critical_hunter_scanners());
+  append(register_cms_specific_scanners());
+  append(register_api_protocol_scanners());
+  append(register_cloud_attack_scanners());
+  append(register_ecommerce_scanners());
+  append(register_network_service_scanners());
   append(register_infra_misconfig_scanners());
   append(register_advanced_injection_scanners());
   append(register_auth_advanced2_scanners());

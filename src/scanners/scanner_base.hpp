@@ -133,3 +133,10 @@ namespace apex { std::vector<Scanner> register_behavioral_analysis_scanners(); }
 namespace apex { std::vector<Scanner> register_path_traversal_scanners(); }
 namespace apex { std::vector<Scanner> register_browser_engine_scanners(); }
 namespace apex { std::vector<Scanner> register_critical_hunter_scanners(); }
+namespace apex { std::vector<Scanner> register_cms_specific_scanners(); }
+namespace apex { std::vector<Scanner> register_api_protocol_scanners(); }
+namespace apex { std::vector<Scanner> register_cloud_attack_scanners(); }
+namespace apex { std::vector<Scanner> register_ecommerce_scanners(); }
+namespace apex { std::vector<Scanner> register_network_service_scanners(); }
+namespace apex { std::vector<Scanner> register_api_protocol_scanners(); }
+namespace apex { std::vector<Scanner> register_ecommerce_scanners(); }
