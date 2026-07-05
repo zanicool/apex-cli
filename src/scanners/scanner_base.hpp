@@ -129,3 +129,5 @@ namespace apex { std::vector<Scanner> register_attack_chain_scanners(); }
 namespace apex { std::vector<Scanner> register_waf_evasion_scanners(); }
 namespace apex { std::vector<Scanner> register_exploit_gen_scanners(); }
 namespace apex { std::vector<Scanner> register_payload_mutator_scanners(); }
+namespace apex { std::vector<Scanner> register_behavioral_analysis_scanners(); }
+namespace apex { std::vector<Scanner> register_path_traversal_scanners(); }
