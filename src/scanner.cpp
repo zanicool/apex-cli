@@ -97,6 +97,7 @@ std::vector<Scanner> get_scanners() {
   append(register_network_service_scanners());
   append(register_recon_deep2_scanners());
   append(register_auth_scanner_scanners());
+  append(register_prototype_pollution_deep_scanners());
   append(register_autogen_authentication_account_takeover_25_scanners());
   append(register_autogen_idor_broken_access_control_30_scanners());
   append(register_autogen_injection_30_scanners());
