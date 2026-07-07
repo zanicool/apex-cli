@@ -20,6 +20,7 @@
 #include "recon_logger.hpp"
 #include "reporter.hpp"
 #include "sbom.hpp"
+#include "reasoning.hpp"
 #include "scanner.hpp"
 #include "smart_mode.hpp"
 #include "targeting.hpp"
@@ -1211,6 +1212,27 @@ int main(int argc, char *argv[]) {
     // Update findings with verification confidence
     for (size_t i = 0; i < verified.size() && i < findings.size(); i++) {
       findings[i].confidence = verified[i].finding.confidence;
+    }
+  }
+
+  // Phase 5b: Reasoning Engine — autonomous attack path discovery
+  if (cfg.pipeline || cfg.smart) {
+    auto profile = apex::build_profile(crawl, http);
+    auto reasoning = apex::reason(findings, profile, crawl, http);
+    
+    std::cout << "\n[Phase 5b] Reasoning — autonomous attack analysis\n";
+    std::cout << "  Risk Score: " << reasoning.risk_score << "/100\n";
+    std::cout << "  Hypotheses: " << reasoning.hypotheses.size() << "\n";
+    std::cout << "  Attack Paths: " << reasoning.attack_paths.size() << "\n";
+    
+    if (!reasoning.attack_paths.empty()) {
+      std::cout << "  Most likely path: " << reasoning.attack_paths[0].name << "\n";
+      std::cout << "  Probability: " << (int)(reasoning.attack_paths[0].probability * 100) << "%\n";
+    }
+    
+    if (!reasoning.escalated_findings.empty()) {
+      std::cout << "  Escalated: " << reasoning.escalated_findings.size() 
+                << " findings upgraded due to attack chain participation\n";
     }
   }
 
