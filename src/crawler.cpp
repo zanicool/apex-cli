@@ -208,6 +208,43 @@ CrawlResult run_crawler(const Config &cfg, HttpClient &http,
     }
   }
 
+  // Technology Intelligence: detect stack from crawled content
+  if (!result.urls.empty()) {
+    auto home = http.get(result.urls[0]);
+    std::string body = home.body;
+
+    // Server header
+    auto srv = home.headers.find("Server");
+    if (srv != home.headers.end()) result.server_header = srv->second;
+    auto powered = home.headers.find("X-Powered-By");
+    if (powered != home.headers.end()) {
+      if (powered->second.find("Express") != std::string::npos) result.technologies.insert("express");
+      if (powered->second.find("PHP") != std::string::npos) result.technologies.insert("php");
+      if (powered->second.find("ASP") != std::string::npos) result.technologies.insert("aspnet");
+    }
+
+    // Framework detection from HTML
+    if (body.find("__next") != std::string::npos || body.find("_next/static") != std::string::npos)
+      result.technologies.insert("nextjs");
+    if (body.find("__nuxt") != std::string::npos) result.technologies.insert("nuxtjs");
+    if (body.find("ng-version") != std::string::npos) result.technologies.insert("angular");
+    if (body.find("data-reactroot") != std::string::npos || body.find("__REACT") != std::string::npos)
+      result.technologies.insert("react");
+    if (body.find("wp-content") != std::string::npos) result.technologies.insert("wordpress");
+    if (body.find("Drupal") != std::string::npos) result.technologies.insert("drupal");
+    if (body.find("laravel") != std::string::npos || body.find("csrf-token") != std::string::npos)
+      result.technologies.insert("laravel");
+    if (body.find("django") != std::string::npos || body.find("csrfmiddlewaretoken") != std::string::npos)
+      result.technologies.insert("django");
+    if (body.find("graphql") != std::string::npos || body.find("GraphQL") != std::string::npos)
+      result.has_graphql = true;
+    if (body.find("wss://") != std::string::npos || body.find("ws://") != std::string::npos)
+      result.has_websocket = true;
+    if (body.find("<div id=\"root\">") != std::string::npos ||
+        body.find("<div id=\"app\">") != std::string::npos)
+      result.is_spa = true;
+  }
+
   return result;
 }
 

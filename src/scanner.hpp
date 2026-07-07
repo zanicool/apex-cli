@@ -21,6 +21,13 @@ struct Finding {
   std::string param;
   std::string payload;
   std::string evidence;
+
+  // Enhanced metadata (populated by post-processing)
+  int confidence = 0;          // 0-100, higher = more certain (0 = not scored)
+  std::string cwe_id;          // e.g. "CWE-79"
+  std::string owasp_category;  // e.g. "A03:2021 Injection"
+  double cvss_score = 0.0;     // 0.0-10.0
+  std::string technology;      // detected framework/tech context
 };
 
 /// Scanner function signature.

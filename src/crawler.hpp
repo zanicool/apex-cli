@@ -6,6 +6,7 @@
 
 #include "config.hpp"
 #include "http.hpp"
+#include <set>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,14 @@ struct CrawlResult {
   std::vector<std::string> urls;
   std::vector<Parameter> params;
   std::vector<Form> forms;
+
+  // Technology intelligence (populated during crawl)
+  std::set<std::string> technologies;  // e.g. "wordpress", "nextjs", "graphql", "react"
+  std::string server_header;
+  bool has_graphql = false;
+  bool has_websocket = false;
+  bool is_spa = false;
+  bool is_api_only = false;
 };
 
 /// Run the crawler starting from seed URLs.

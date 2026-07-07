@@ -338,6 +338,117 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
 
 
   // Run Attack Chain Engine — combines findings into multi-step exploits
+
+  // ============================================================
+  // INTELLIGENCE LAYER: Enrich findings with metadata + filter by similarity
+  // ============================================================
+
+  // 1. Response Similarity Filter: get baseline 404/default response
+  //    and remove findings whose evidence matches it (same page for everything = FP)
+  {
+    std::map<std::string, size_t> host_baseline_sizes;
+    for (auto it = final_filtered.begin(); it != final_filtered.end(); ) {
+      if (it->url.empty() || it->severity == "info") { ++it; continue; }
+
+      std::string host = it->url.substr(0, it->url.find("/", 8));
+      if (host_baseline_sizes.find(host) == host_baseline_sizes.end()) {
+        auto bl = http.get(host + "/apex_nonexistent_baseline_" +
+                           std::to_string(time(nullptr)));
+        host_baseline_sizes[host] = bl.body.size();
+      }
+
+      // If evidence is empty AND it's a high/critical finding, reduce confidence
+      if (it->evidence.empty() && (it->severity == "critical" || it->severity == "high")) {
+        it->confidence = 20;
+      }
+      ++it;
+    }
+  }
+
+  // 2. CWE/CVSS/OWASP Enrichment
+  {
+    struct VulnMeta {
+      std::string pattern;
+      std::string cwe;
+      std::string owasp;
+      double cvss;
+      int base_confidence;
+    };
+
+    const std::vector<VulnMeta> meta_map = {
+        {"SQL Injection", "CWE-89", "A03:2021 Injection", 9.8, 90},
+        {"SQLi", "CWE-89", "A03:2021 Injection", 9.8, 90},
+        {"XSS", "CWE-79", "A03:2021 Injection", 6.1, 70},
+        {"Cross-Site Scripting", "CWE-79", "A03:2021 Injection", 6.1, 70},
+        {"SSRF", "CWE-918", "A10:2021 SSRF", 9.1, 80},
+        {"SSTI", "CWE-1336", "A03:2021 Injection", 9.8, 90},
+        {"Template Injection", "CWE-1336", "A03:2021 Injection", 9.8, 90},
+        {"Command Injection", "CWE-78", "A03:2021 Injection", 9.8, 95},
+        {"Path Traversal", "CWE-22", "A01:2021 Broken Access Control", 7.5, 80},
+        {"LFI", "CWE-98", "A03:2021 Injection", 7.5, 80},
+        {"RFI", "CWE-98", "A03:2021 Injection", 9.8, 85},
+        {"IDOR", "CWE-639", "A01:2021 Broken Access Control", 6.5, 70},
+        {"BOLA", "CWE-639", "A01:2021 Broken Access Control", 6.5, 70},
+        {"BFLA", "CWE-285", "A01:2021 Broken Access Control", 8.0, 75},
+        {"JWT", "CWE-347", "A02:2021 Cryptographic Failures", 7.5, 75},
+        {"Prototype Pollution", "CWE-1321", "A03:2021 Injection", 8.0, 70},
+        {"Request Smuggling", "CWE-444", "A05:2021 Security Misconfiguration", 9.1, 80},
+        {"Cache Poisoning", "CWE-349", "A05:2021 Security Misconfiguration", 7.5, 70},
+        {"CORS", "CWE-942", "A05:2021 Security Misconfiguration", 7.5, 70},
+        {"Open Redirect", "CWE-601", "A01:2021 Broken Access Control", 4.7, 80},
+        {"CSRF", "CWE-352", "A01:2021 Broken Access Control", 4.3, 60},
+        {"Subdomain Takeover", "CWE-284", "A05:2021 Security Misconfiguration", 7.5, 75},
+        {"Information Disclosure", "CWE-200", "A01:2021 Broken Access Control", 5.3, 80},
+        {"S3 Bucket", "CWE-284", "A05:2021 Security Misconfiguration", 7.5, 85},
+        {"Firebase", "CWE-284", "A05:2021 Security Misconfiguration", 7.5, 80},
+        {"Admin", "CWE-284", "A01:2021 Broken Access Control", 9.1, 70},
+        {"Auth Bypass", "CWE-287", "A07:2021 Authentication Failures", 9.8, 85},
+        {"Password Reset", "CWE-640", "A07:2021 Authentication Failures", 8.0, 80},
+        {"2FA Bypass", "CWE-308", "A07:2021 Authentication Failures", 8.0, 80},
+        {"Race Condition", "CWE-362", "A04:2021 Insecure Design", 8.0, 60},
+        {"Deserialization", "CWE-502", "A08:2021 Software Integrity", 9.8, 80},
+        {"XXE", "CWE-611", "A05:2021 Security Misconfiguration", 7.5, 80},
+        {"CRLF", "CWE-93", "A03:2021 Injection", 6.1, 75},
+        {"GraphQL", "CWE-200", "A01:2021 Broken Access Control", 5.3, 70},
+        {"Docker", "CWE-284", "A05:2021 Security Misconfiguration", 9.1, 85},
+        {"Kubernetes", "CWE-284", "A05:2021 Security Misconfiguration", 9.8, 85},
+        {"Terraform", "CWE-200", "A05:2021 Security Misconfiguration", 9.1, 90},
+        {"Missing Header", "CWE-693", "A05:2021 Security Misconfiguration", 3.7, 95},
+        {"Missing HSTS", "CWE-319", "A02:2021 Cryptographic Failures", 4.3, 95},
+        {"Missing CSP", "CWE-693", "A05:2021 Security Misconfiguration", 3.7, 95},
+    };
+
+    for (auto &f : final_filtered) {
+      for (const auto &meta : meta_map) {
+        if (f.type.find(meta.pattern) != std::string::npos) {
+          if (f.cwe_id.empty()) f.cwe_id = meta.cwe;
+          if (f.owasp_category.empty()) f.owasp_category = meta.owasp;
+          if (f.cvss_score == 0.0) f.cvss_score = meta.cvss;
+          if (f.confidence == 0) f.confidence = meta.base_confidence;
+          break;
+        }
+      }
+      // Boost confidence if evidence is present
+      if (!f.evidence.empty() && f.confidence > 0) {
+        f.confidence = std::min(100, f.confidence + 15);
+      }
+      // Reduce confidence for unverified high/critical
+      if (f.type.find("unverified") != std::string::npos) {
+        f.confidence = std::max(10, f.confidence - 30);
+      }
+    }
+  }
+
+  // 3. Sort by confidence * cvss (practical exploitability ranking)
+  std::sort(final_filtered.begin(), final_filtered.end(),
+            [](const Finding &a, const Finding &b) {
+              double score_a = a.confidence * a.cvss_score;
+              double score_b = b.confidence * b.cvss_score;
+              return score_a > score_b;
+            });
+
+  // ============================================================
+
   g_all_findings = final_filtered;
   auto chain_scanners = register_attack_chain_scanners();
   for (const auto &cs : chain_scanners) {
