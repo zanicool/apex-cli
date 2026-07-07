@@ -116,6 +116,12 @@ Response HttpClient::do_request(
     return resp;
   }
 
+  // Check cache first (GET only)
+  std::string ckey = cache_key(method, url, extra_headers);
+  if (auto *cached = cache_lookup(ckey)) {
+    return *cached;
+  }
+
   rate_limit();
 
   CURL *curl = static_cast<CURL *>(acquire_handle());
@@ -199,6 +205,11 @@ Response HttpClient::do_request(
   release_handle(curl);
   ++req_count_;
 
+  // Store in cache (successful GET only)
+  if (resp.status_code >= 200 && resp.status_code < 400) {
+    cache_store(ckey, resp);
+  }
+
   // Adaptive rate limiting: back off on 429/503, retry up to 3 times
   if (resp.status_code == 429 || resp.status_code == 503) {
     static std::atomic<int> backoff_ms{500};
@@ -241,6 +252,41 @@ void HttpClient::rate_limit() {
     std::this_thread::sleep_for(min_interval - elapsed);
   }
   last = std::chrono::steady_clock::now();
+}
+
+// ============================================================
+// REQUEST CACHE
+// ============================================================
+
+std::string HttpClient::cache_key(const std::string &method, const std::string &url,
+                                    const std::map<std::string, std::string> &headers) const {
+  // Only cache GET requests (POST/PUT are state-changing)
+  if (method != "GET") return "";
+  // Key = URL (headers usually don't change between modules)
+  return url;
+}
+
+Response *HttpClient::cache_lookup(const std::string &key) {
+  if (key.empty()) return nullptr;
+  std::lock_guard<std::mutex> lock(cache_mu_);
+  auto it = response_cache_.find(key);
+  if (it != response_cache_.end()) {
+    cache_hits_++;
+    return &it->second;
+  }
+  return nullptr;
+}
+
+void HttpClient::cache_store(const std::string &key, const Response &resp) {
+  if (key.empty()) return;
+  // Don't cache errors or empty responses
+  if (resp.status_code == 0 || resp.body.empty()) return;
+  // Don't cache responses > 1MB (memory management)
+  if (resp.body.size() > 1024 * 1024) return;
+  // Cap cache at 500 entries
+  std::lock_guard<std::mutex> lock(cache_mu_);
+  if (response_cache_.size() >= 500) return;
+  response_cache_[key] = resp;
 }
 
 std::string HttpClient::random_ua() const {

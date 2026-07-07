@@ -63,6 +63,18 @@ private:
   std::atomic<long> req_count_{0};
   std::mutex pool_mu_;
   std::vector<void *> pool_;
+
+  // Request-level intelligent cache
+  // Key: method + url + sorted_headers_hash
+  // Shares responses across scanner modules (same URL = 1 request)
+  std::mutex cache_mu_;
+  std::map<std::string, Response> response_cache_;
+  std::atomic<long> cache_hits_{0};
+
+  std::string cache_key(const std::string &method, const std::string &url,
+                         const std::map<std::string, std::string> &headers) const;
+  Response *cache_lookup(const std::string &key);
+  void cache_store(const std::string &key, const Response &resp);
 };
 
 /// Sanitize a string for use in filenames.
