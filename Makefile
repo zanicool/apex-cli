@@ -12,7 +12,7 @@ TEST_DIR := tests
 OUT_DIR  := build
 TARGET   := $(OUT_DIR)/apex-cli
 
-SRCS     := $(wildcard $(SRC_DIR)/*.cpp) $(wildcard $(SRC_DIR)/scanners/*.cpp)
+SRCS     := $(wildcard $(SRC_DIR)/*.cpp) $(wildcard $(SRC_DIR)/scanners/*.cpp) $(wildcard $(SRC_DIR)/knowledge/*.cpp)
 OBJS     := $(patsubst $(SRC_DIR)/%.cpp,$(OUT_DIR)/%.o,$(SRCS))
 LIB_OBJS := $(filter-out $(OUT_DIR)/main.o,$(OBJS))
 TEST_SRCS := $(wildcard $(TEST_DIR)/*.cpp)
