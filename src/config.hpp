@@ -45,6 +45,8 @@ struct Config {
   std::string ssh_key;    // SSH private key path
   bool chain = false; // Chain executor: escalate findings into full exploits
   bool full_scan = false; // Disable intelligent targeting, run all modules
+  bool delta_scan = false; // Only scan new/changed endpoints vs last scan
+  bool verify_mode = false; // Deep verification of all high/critical findings
 
   // Authentication
   std::string auth_cookie; // Cookie header value for authenticated scanning

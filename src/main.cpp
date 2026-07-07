@@ -22,7 +22,9 @@
 #include "sbom.hpp"
 #include "scanner.hpp"
 #include "smart_mode.hpp"
+#include "targeting.hpp"
 #include "toolchain.hpp"
+#include "verification.hpp"
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -216,6 +218,12 @@ int main(int argc, char *argv[]) {
       cfg.login_user = argv[++i];
     } else if (arg == "--pass" && i + 1 < argc) {
       cfg.login_pass = argv[++i];
+    } else if (arg == "--full-scan" || arg == "--full") {
+      cfg.full_scan = true;
+    } else if (arg == "--delta") {
+      cfg.delta_scan = true;
+    } else if (arg == "--verify") {
+      cfg.verify_mode = true;
     } else if (arg[0] != '-') {
       target = arg;
     }
@@ -1177,6 +1185,85 @@ int main(int argc, char *argv[]) {
       }
     }
   }
+
+  // ============================================================
+  // INTELLIGENCE PIPELINE INTEGRATION
+  // ============================================================
+
+  // Phase 5: Verification Pipeline
+  if (cfg.verify_mode || cfg.pipeline) {
+    std::cout << "\n[Phase 5] Verification — testing " 
+              << std::min(10, (int)findings.size()) << " high-impact findings\n";
+    auto verified = apex::verify_findings(findings, http, cfg.verify_mode ? 20 : 10);
+    
+    int confirmed = 0, suspected = 0, fp = 0;
+    for (const auto &vf : verified) {
+      if (vf.state == apex::VerifyState::VERIFIED || vf.state == apex::VerifyState::CONFIRMED)
+        confirmed++;
+      else if (vf.state == apex::VerifyState::SUSPECTED)
+        suspected++;
+      else if (vf.state == apex::VerifyState::FALSE_POS)
+        fp++;
+    }
+    std::cout << "  -> " << confirmed << " verified, " << suspected 
+              << " suspected, " << fp << " false positives removed\n";
+    
+    // Update findings with verification confidence
+    for (size_t i = 0; i < verified.size() && i < findings.size(); i++) {
+      findings[i].confidence = verified[i].finding.confidence;
+    }
+  }
+
+  // Phase 6: Scan Memory — save snapshot and compute delta
+  {
+    std::string memory_dir = cfg.output_dir.empty() ? "scans" : cfg.output_dir;
+    
+    // Build snapshot
+    apex::ScanSnapshot snapshot;
+    snapshot.target = cfg.target;
+    snapshot.timestamp = []() {
+      auto now = std::chrono::system_clock::now();
+      auto t = std::chrono::system_clock::to_time_t(now);
+      char buf[32];
+      std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", std::gmtime(&t));
+      return std::string(buf);
+    }();
+    for (const auto &url : crawl.urls) snapshot.endpoints.push_back(url);
+    for (const auto &t : crawl.technologies) snapshot.technologies.push_back(t);
+    for (const auto &f : findings) {
+      apex::VerifiedFinding vf;
+      vf.finding = f;
+      vf.state = f.confidence >= 80 ? apex::VerifyState::VERIFIED : apex::VerifyState::SUSPECTED;
+      snapshot.findings.push_back(vf);
+    }
+    
+    // Save
+    apex::save_snapshot(snapshot, memory_dir);
+    
+    // Delta comparison (if --delta or previous scan exists)
+    if (cfg.delta_scan) {
+      auto previous = apex::load_previous_snapshot(cfg.target, memory_dir);
+      if (!previous.endpoints.empty()) {
+        auto delta = apex::compute_delta(previous, snapshot);
+        std::cout << "\n[Delta] Changes since last scan:\n";
+        std::cout << "  + " << delta.new_endpoints.size() << " new endpoints\n";
+        std::cout << "  - " << delta.removed_endpoints.size() << " removed endpoints\n";
+        std::cout << "  + " << delta.new_findings.size() << " new findings\n";
+        std::cout << "  ✓ " << delta.resolved_findings.size() << " resolved findings\n";
+        if (!delta.new_endpoints.empty()) {
+          std::cout << "  New attack surface:\n";
+          for (size_t i = 0; i < std::min((size_t)5, delta.new_endpoints.size()); i++) {
+            std::cout << "    → " << delta.new_endpoints[i] << "\n";
+          }
+        }
+      } else {
+        std::cout << "\n[Delta] First scan — no previous data to compare.\n";
+      }
+    }
+  }
+
+  std::cout << "\n[done] Scan complete in " << elapsed.count() << "s — "
+            << findings.size() << " findings\n";
 
   // Watch mode: loop
   if (cfg.watch) {
