@@ -3,6 +3,7 @@
 ///        concurrently, deduplicates findings.
 #include "scanner.hpp"
 #include "scanners/scanner_base.hpp"
+#include "targeting.hpp"
 #include "wildcard.hpp"
 #include <algorithm>
 #include <future>
@@ -119,7 +120,23 @@ std::vector<Scanner> get_scanners() {
 
 std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
                                   const CrawlResult &crawl) {
-  auto scanners = get_scanners();
+  auto all_scanners = get_scanners();
+
+  // Intelligent Targeting: build asset profile and select relevant modules
+  auto profile = build_profile(crawl, http);
+  auto scanners = cfg.full_scan ? all_scanners : select_modules(all_scanners, profile, 0.3);
+
+  // Log targeting decision
+  if (!cfg.full_scan && scanners.size() < all_scanners.size()) {
+    std::cerr << "  [targeting] " << scanners.size() << "/" << all_scanners.size()
+              << " modules selected (";
+    for (const auto &t : profile.technologies) std::cerr << t << " ";
+    if (profile.has_graphql) std::cerr << "graphql ";
+    if (profile.has_jwt) std::cerr << "jwt ";
+    if (profile.has_oauth) std::cerr << "oauth ";
+    std::cerr << ")\n";
+  }
+
   std::vector<Finding> all_findings;
   std::mutex mu;
 

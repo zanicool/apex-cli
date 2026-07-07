@@ -44,6 +44,7 @@ struct Config {
   std::string ssh_target; // SSH target (user@host) for agent-based scanning
   std::string ssh_key;    // SSH private key path
   bool chain = false; // Chain executor: escalate findings into full exploits
+  bool full_scan = false; // Disable intelligent targeting, run all modules
 
   // Authentication
   std::string auth_cookie; // Cookie header value for authenticated scanning
