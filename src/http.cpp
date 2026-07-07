@@ -198,6 +198,30 @@ Response HttpClient::do_request(
   }
   release_handle(curl);
   ++req_count_;
+
+  // Adaptive rate limiting: back off on 429/503, retry up to 3 times
+  if (resp.status_code == 429 || resp.status_code == 503) {
+    static std::atomic<int> backoff_ms{500};
+    int current_backoff = backoff_ms.load();
+
+    for (int retry = 0; retry < 3; ++retry) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(current_backoff));
+      current_backoff *= 2; // Exponential backoff
+      if (current_backoff > 10000) current_backoff = 10000; // Cap at 10s
+
+      // Increase global rate limit
+      backoff_ms.store(std::min(current_backoff, 5000));
+
+      // Retry the request
+      auto retry_resp = do_request(method, url, body, extra_headers);
+      if (retry_resp.status_code != 429 && retry_resp.status_code != 503) {
+        return retry_resp;
+      }
+    }
+    // After 3 retries still blocked — slow down permanently for this scan
+    backoff_ms.store(std::min(backoff_ms.load() * 2, 10000));
+  }
+
   return resp;
 }
 
