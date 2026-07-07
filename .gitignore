@@ -30,3 +30,7 @@ nuclei_*/
 .playwright-mcp/
 .env
 .amazonq/
+scans/archive/
+output/
+build/
+*.db
