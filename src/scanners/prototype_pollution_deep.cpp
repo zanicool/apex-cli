@@ -19,9 +19,10 @@
 /// References:
 /// - https://portswigger.net/research/server-side-prototype-pollution
 /// - BlackHat 2023: "Prototype Pollution in the Wild"
-#include "scanner_base.hpp"
-#include <regex>
 #include <random>
+#include <regex>
+
+#include "scanner_base.hpp"
 
 namespace apex {
 namespace {
@@ -38,8 +39,7 @@ std::string gen_canary() {
 
 /// Detect client-side PP via URL parameters.
 /// Tests if URL query/fragment params merge into Object.prototype.
-std::vector<Finding> scan_pp_client_url(const Config &, HttpClient &http,
-                                         const CrawlResult &crawl) {
+std::vector<Finding> scan_pp_client_url(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -69,19 +69,16 @@ std::vector<Finding> scan_pp_client_url(const Config &, HttpClient &http,
       {"?__proto__[isAdmin]=true", "query __proto__ privilege escalation"},
   };
 
-  for (const auto &vec : vectors) {
+  for (const auto& vec : vectors) {
     auto resp = http.get(base + vec.payload);
     if (resp.status_code != 200) continue;
 
     // Detection method 1: canary reflected in response (rare but definitive)
-    if (resp.body.find(canary) != std::string::npos &&
-        baseline.body.find(canary) == std::string::npos) {
-      findings.push_back(Finding{"Prototype Pollution — Client-Side URL (" + vec.technique + ")",
-                          "high", base + vec.payload,
-                          "Canary property '" + canary + "' injected via " + vec.technique +
-                          " appears in response. Object.prototype is pollutable from URL.",
-                          "__proto__", vec.payload,
-                          "Canary reflected — pollution confirmed"});
+    if (resp.body.find(canary) != std::string::npos && baseline.body.find(canary) == std::string::npos) {
+      findings.push_back(Finding{"Prototype Pollution — Client-Side URL (" + vec.technique + ")", "high", base + vec.payload,
+                                 "Canary property '" + canary + "' injected via " + vec.technique +
+                                     " appears in response. Object.prototype is pollutable from URL.",
+                                 "__proto__", vec.payload, "Canary reflected — pollution confirmed"});
       return findings;
     }
 
@@ -89,15 +86,14 @@ std::vector<Finding> scan_pp_client_url(const Config &, HttpClient &http,
     // (e.g., admin UI elements appear, error messages change)
     if (vec.payload.find("isAdmin") != std::string::npos) {
       if (resp.body.size() > baseline.body.size() + 200 &&
-          (resp.body.find("admin") != std::string::npos ||
-           resp.body.find("Admin") != std::string::npos) &&
+          (resp.body.find("admin") != std::string::npos || resp.body.find("Admin") != std::string::npos) &&
           baseline.body.find("admin") == std::string::npos) {
-        findings.push_back(Finding{"Prototype Pollution → Privilege Escalation",
-                            "critical", base + vec.payload,
-                            "Setting __proto__[isAdmin]=true causes admin content to appear. "
-                            "Client-side authorization relies on pollutable object properties.",
-                            "__proto__[isAdmin]", "true",
-                            "Response gained " + std::to_string(resp.body.size() - baseline.body.size()) + " bytes + admin indicators"});
+        findings.push_back(
+            Finding{"Prototype Pollution → Privilege Escalation", "critical", base + vec.payload,
+                    "Setting __proto__[isAdmin]=true causes admin content to appear. "
+                    "Client-side authorization relies on pollutable object properties.",
+                    "__proto__[isAdmin]", "true",
+                    "Response gained " + std::to_string(resp.body.size() - baseline.body.size()) + " bytes + admin indicators"});
         return findings;
       }
     }
@@ -112,8 +108,7 @@ std::vector<Finding> scan_pp_client_url(const Config &, HttpClient &http,
 
 /// Detect server-side PP via JSON body injection.
 /// Targets Node.js/Express apps that use deep merge on request body.
-std::vector<Finding> scan_pp_server_json(const Config &, HttpClient &http,
-                                          const CrawlResult &crawl) {
+std::vector<Finding> scan_pp_server_json(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -122,20 +117,18 @@ std::vector<Finding> scan_pp_server_json(const Config &, HttpClient &http,
 
   // Find endpoints that accept JSON POST/PUT
   std::vector<std::string> json_endpoints;
-  for (const auto &url : crawl.urls) {
-    if (url.find("api") != std::string::npos ||
-        url.find("graphql") != std::string::npos) {
+  for (const auto& url : crawl.urls) {
+    if (url.find("api") != std::string::npos || url.find("graphql") != std::string::npos) {
       json_endpoints.push_back(url);
     }
   }
 
   // Also try common API paths
-  std::vector<std::string> common = {
-      base + "/api/user", base + "/api/profile", base + "/api/settings",
-      base + "/api/v1/user", base + "/api/account", base + "/api/preferences"};
+  std::vector<std::string> common = {base + "/api/user",    base + "/api/profile", base + "/api/settings",
+                                     base + "/api/v1/user", base + "/api/account", base + "/api/preferences"};
   json_endpoints.insert(json_endpoints.end(), common.begin(), common.end());
 
-  for (const auto &endpoint : json_endpoints) {
+  for (const auto& endpoint : json_endpoints) {
     // Technique 1: __proto__ in JSON body
     std::string pp_body = R"({"__proto__":{")" + canary + R"(":"polluted"}})";
     auto resp = http.post(endpoint, pp_body, "application/json");
@@ -144,13 +137,13 @@ std::vector<Finding> scan_pp_server_json(const Config &, HttpClient &http,
       // Check if a subsequent request shows the polluted property
       auto verify = http.get(endpoint);
       if (verify.body.find(canary) != std::string::npos) {
-        findings.push_back(Finding{"Server-Side Prototype Pollution — JSON Body",
-                            "critical", endpoint,
-                            "Injecting __proto__ via JSON body pollutes server-side Object.prototype. "
-                            "Property '" + canary + "' persists across requests. "
-                            "Enables RCE via known Node.js gadgets (child_process, ejs, pug, etc).",
-                            "__proto__", pp_body,
-                            "Canary found in subsequent GET — pollution persists server-side"});
+        findings.push_back(Finding{"Server-Side Prototype Pollution — JSON Body", "critical", endpoint,
+                                   "Injecting __proto__ via JSON body pollutes server-side Object.prototype. "
+                                   "Property '" +
+                                       canary +
+                                       "' persists across requests. "
+                                       "Enables RCE via known Node.js gadgets (child_process, ejs, pug, etc).",
+                                   "__proto__", pp_body, "Canary found in subsequent GET — pollution persists server-side"});
         return findings;
       }
     }
@@ -162,11 +155,9 @@ std::vector<Finding> scan_pp_server_json(const Config &, HttpClient &http,
     if (resp2.status_code == 200 || resp2.status_code == 201) {
       auto verify2 = http.get(endpoint);
       if (verify2.body.find(canary) != std::string::npos) {
-        findings.push_back(Finding{"Server-Side Prototype Pollution — constructor.prototype",
-                            "critical", endpoint,
-                            "constructor.prototype injection pollutes Object.prototype server-side.",
-                            "constructor.prototype", cp_body,
-                            "Canary persists across requests"});
+        findings.push_back(Finding{"Server-Side Prototype Pollution — constructor.prototype", "critical", endpoint,
+                                   "constructor.prototype injection pollutes Object.prototype server-side.", "constructor.prototype",
+                                   cp_body, "Canary persists across requests"});
         return findings;
       }
     }
@@ -177,21 +168,20 @@ std::vector<Finding> scan_pp_server_json(const Config &, HttpClient &http,
 
 /// Detect server-side PP via status code / behavior change.
 /// PortSwigger technique: pollute status/statusCode to detect non-reflected PP.
-std::vector<Finding> scan_pp_server_status(const Config &, HttpClient &http,
-                                            const CrawlResult &crawl) {
+std::vector<Finding> scan_pp_server_status(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
   // Find JSON endpoints
   std::vector<std::string> endpoints;
-  for (const auto &url : crawl.urls) {
+  for (const auto& url : crawl.urls) {
     if (url.find("api") != std::string::npos) endpoints.push_back(url);
   }
   endpoints.push_back(base + "/api/user");
   endpoints.push_back(base + "/api/v1/user");
 
-  for (const auto &endpoint : endpoints) {
+  for (const auto& endpoint : endpoints) {
     // Baseline
     auto baseline = http.post(endpoint, "{}", "application/json");
     if (baseline.status_code == 404) continue;
@@ -201,14 +191,12 @@ std::vector<Finding> scan_pp_server_status(const Config &, HttpClient &http,
     auto resp = http.post(endpoint, payload, "application/json");
 
     if (resp.status_code == 555 && baseline.status_code != 555) {
-      findings.push_back(Finding{"Server-Side Prototype Pollution — Status Code Manipulation",
-                          "critical", endpoint,
-                          "Polluting __proto__.status changes HTTP response code from " +
-                          std::to_string(baseline.status_code) + " to 555. "
-                          "Confirms server-side prototype pollution. "
-                          "Escalation: pollute shell/execPath/env for RCE.",
-                          "__proto__", payload,
-                          "Status changed: " + std::to_string(baseline.status_code) + " → 555"});
+      findings.push_back(Finding{"Server-Side Prototype Pollution — Status Code Manipulation", "critical", endpoint,
+                                 "Polluting __proto__.status changes HTTP response code from " + std::to_string(baseline.status_code) +
+                                     " to 555. "
+                                     "Confirms server-side prototype pollution. "
+                                     "Escalation: pollute shell/execPath/env for RCE.",
+                                 "__proto__", payload, "Status changed: " + std::to_string(baseline.status_code) + " → 555"});
       return findings;
     }
 
@@ -219,16 +207,12 @@ std::vector<Finding> scan_pp_server_status(const Config &, HttpClient &http,
 
     // Send normal request after — check if JSON is now indented
     auto after = http.get(endpoint);
-    if (after.body.find("  ") != std::string::npos &&
-        after.body.find("{") == 0 &&
-        baseline.body.find("  ") == std::string::npos) {
-      findings.push_back(Finding{"Server-Side Prototype Pollution — Express JSON Spaces",
-                          "high", endpoint,
-                          "Polluting __proto__['json spaces'] causes Express to indent JSON responses. "
-                          "Confirms prototype pollution on Express.js. "
-                          "Escalation: pollute 'shell', 'execPath', or 'env' for RCE.",
-                          "__proto__", spaces_payload,
-                          "JSON indentation appeared after pollution"});
+    if (after.body.find("  ") != std::string::npos && after.body.find("{") == 0 && baseline.body.find("  ") == std::string::npos) {
+      findings.push_back(Finding{"Server-Side Prototype Pollution — Express JSON Spaces", "high", endpoint,
+                                 "Polluting __proto__['json spaces'] causes Express to indent JSON responses. "
+                                 "Confirms prototype pollution on Express.js. "
+                                 "Escalation: pollute 'shell', 'execPath', or 'env' for RCE.",
+                                 "__proto__", spaces_payload, "JSON indentation appeared after pollution"});
       return findings;
     }
   }
@@ -242,8 +226,7 @@ std::vector<Finding> scan_pp_server_status(const Config &, HttpClient &http,
 
 /// Identify exploitable gadgets in the JavaScript code.
 /// If we find prototype pollution + a gadget = confirmed critical chain.
-std::vector<Finding> scan_pp_gadgets(const Config &, HttpClient &http,
-                                      const CrawlResult &crawl) {
+std::vector<Finding> scan_pp_gadgets(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -279,7 +262,7 @@ std::vector<Finding> scan_pp_gadgets(const Config &, HttpClient &http,
 
   std::vector<std::string> detected_gadgets;
 
-  for (const auto &gadget : gadgets) {
+  for (const auto& gadget : gadgets) {
     if (resp.body.find(gadget.indicator) != std::string::npos) {
       detected_gadgets.push_back(gadget.name + " (via " + gadget.exploit_property + ")");
     }
@@ -295,7 +278,7 @@ std::vector<Finding> scan_pp_gadgets(const Config &, HttpClient &http,
     if (js_url[0] == '/') js_url = base + js_url;
     auto js_resp = http.get(js_url);
 
-    for (const auto &gadget : gadgets) {
+    for (const auto& gadget : gadgets) {
       if (js_resp.body.find(gadget.indicator) != std::string::npos) {
         // Check for version — older versions are more vulnerable
         detected_gadgets.push_back(gadget.name + " [in " + js_url.substr(js_url.rfind('/') + 1) + "]");
@@ -305,16 +288,13 @@ std::vector<Finding> scan_pp_gadgets(const Config &, HttpClient &http,
 
   if (!detected_gadgets.empty()) {
     std::string gadget_list;
-    for (const auto &g : detected_gadgets) gadget_list += "- " + g + "\n";
+    for (const auto& g : detected_gadgets) gadget_list += "- " + g + "\n";
 
-    findings.push_back(Finding{"Prototype Pollution Gadgets Detected",
-                        "medium", base,
-                        "The application uses libraries with known prototype pollution gadgets:\n" +
-                        gadget_list +
-                        "If prototype pollution is achievable (via URL params or JSON body), "
-                        "these gadgets can escalate to XSS or RCE.",
-                        "", "",
-                        std::to_string(detected_gadgets.size()) + " gadgets found"});
+    findings.push_back(Finding{"Prototype Pollution Gadgets Detected", "medium", base,
+                               "The application uses libraries with known prototype pollution gadgets:\n" + gadget_list +
+                                   "If prototype pollution is achievable (via URL params or JSON body), "
+                                   "these gadgets can escalate to XSS or RCE.",
+                               "", "", std::to_string(detected_gadgets.size()) + " gadgets found"});
   }
 
   return findings;
@@ -325,8 +305,7 @@ std::vector<Finding> scan_pp_gadgets(const Config &, HttpClient &http,
 // ============================================================
 
 /// Check for JS libraries with known prototype pollution vulnerabilities.
-std::vector<Finding> scan_pp_vulnerable_libs(const Config &, HttpClient &http,
-                                              const CrawlResult &crawl) {
+std::vector<Finding> scan_pp_vulnerable_libs(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -351,32 +330,28 @@ std::vector<Finding> scan_pp_vulnerable_libs(const Config &, HttpClient &http,
       {R"x(undefsafe[./\-]([01]\.\d|2\.[01]\.))x", "undefsafe", "2.0.3"},
   };
 
-  for (const auto &lib : vuln_libs) {
+  for (const auto& lib : vuln_libs) {
     std::regex re(lib.pattern);
     if (std::regex_search(resp.body, re)) {
-      findings.push_back(Finding{"Vulnerable Library — " + lib.name + " (Prototype Pollution)",
-                          "medium", base,
-                          lib.name + " version below " + lib.fixed_version + " detected. "
-                          "This version is vulnerable to prototype pollution. "
-                          "If user input reaches merge/extend functions, PP is exploitable.",
-                          "", lib.name,
-                          "Fixed in: " + lib.fixed_version});
+      findings.push_back(Finding{"Vulnerable Library — " + lib.name + " (Prototype Pollution)", "medium", base,
+                                 lib.name + " version below " + lib.fixed_version +
+                                     " detected. "
+                                     "This version is vulnerable to prototype pollution. "
+                                     "If user input reaches merge/extend functions, PP is exploitable.",
+                                 "", lib.name, "Fixed in: " + lib.fixed_version});
     }
   }
 
   return findings;
 }
 
-} // namespace
+}  // namespace
 
 std::vector<Scanner> register_prototype_pollution_deep_scanners() {
   return {
-      {"PP Client URL", scan_pp_client_url},
-      {"PP Server JSON", scan_pp_server_json},
-      {"PP Server Status", scan_pp_server_status},
-      {"PP Gadgets", scan_pp_gadgets},
-      {"PP Vulnerable Libs", scan_pp_vulnerable_libs},
+      {"PP Client URL", scan_pp_client_url}, {"PP Server JSON", scan_pp_server_json},         {"PP Server Status", scan_pp_server_status},
+      {"PP Gadgets", scan_pp_gadgets},       {"PP Vulnerable Libs", scan_pp_vulnerable_libs},
   };
 }
 
-} // namespace apex
+}  // namespace apex

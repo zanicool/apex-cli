@@ -1,6 +1,7 @@
 /// @file impact.cpp
 /// @brief Impact prover and HackerOne report generator.
 #include "impact.hpp"
+
 #include <sstream>
 
 namespace apex {
@@ -8,11 +9,11 @@ namespace apex {
 namespace {
 
 struct ImpactTemplate {
-  const char *type;
-  const char *severity;
-  const char *description;
-  const char *fix;
-  const char *owasp;
+  const char* type;
+  const char* severity;
+  const char* description;
+  const char* fix;
+  const char* owasp;
 };
 
 const ImpactTemplate kTemplates[] = {
@@ -34,38 +35,34 @@ const ImpactTemplate kTemplates[] = {
      "Use parameterized queries/prepared statements. Never concatenate user "
      "input into SQL.",
      "A03:2021 Injection"},
-    {"JWT", "high",
-     "JWT authentication bypass via weak secret or algorithm confusion",
+    {"JWT", "high", "JWT authentication bypass via weak secret or algorithm confusion",
      "Use strong secrets (256+ bits). Explicitly specify allowed algorithms. "
      "Validate all claims.",
      "A07:2021 Identification and Authentication Failures"},
-    {"LFI", "high",
-     "Local file inclusion allowing arbitrary file read from the server",
+    {"LFI", "high", "Local file inclusion allowing arbitrary file read from the server",
      "Validate file paths against a whitelist. Use chroot or containerization. "
      "Never pass user input to file operations.",
      "A01:2021 Broken Access Control"},
-    {"SSTI", "critical",
-     "Server-side template injection leading to remote code execution",
+    {"SSTI", "critical", "Server-side template injection leading to remote code execution",
      "Never pass user input directly to template engines. Use sandboxed "
      "rendering. Escape all output.",
      "A03:2021 Injection"},
 };
 
-} // namespace
+}  // namespace
 
-std::vector<ImpactProof> prove_impact(const std::vector<AttackChain> &chains) {
+std::vector<ImpactProof> prove_impact(const std::vector<AttackChain>& chains) {
   std::vector<ImpactProof> proofs;
 
-  for (const auto &chain : chains) {
-    if (!chain.complete)
-      continue;
+  for (const auto& chain : chains) {
+    if (!chain.complete) continue;
 
     ImpactProof proof;
     proof.chain_type = chain.initial_finding.type;
     proof.evidence = chain.proof;
 
     // Match template
-    for (const auto &t : kTemplates) {
+    for (const auto& t : kTemplates) {
       if (chain.initial_finding.type.find(t.type) != std::string::npos) {
         proof.severity = t.severity;
         proof.description = t.description;
@@ -85,11 +82,10 @@ std::vector<ImpactProof> prove_impact(const std::vector<AttackChain> &chains) {
     std::ostringstream steps;
     steps << "## Steps to Reproduce\n\n";
     int i = 1;
-    for (const auto &s : chain.steps) {
+    for (const auto& s : chain.steps) {
       steps << i++ << ". " << s.reason << "\n";
       steps << "   ```\n   " << s.action << " " << s.url << "\n   ```\n";
-      if (s.success && !s.result.empty())
-        steps << "   Response: " << s.result.substr(0, 100) << "\n";
+      if (s.success && !s.result.empty()) steps << "   Response: " << s.result.substr(0, 100) << "\n";
       steps << "\n";
     }
     proof.repro_steps = steps.str();
@@ -100,20 +96,16 @@ std::vector<ImpactProof> prove_impact(const std::vector<AttackChain> &chains) {
   return proofs;
 }
 
-std::string generate_h1_report(const std::vector<ImpactProof> &proofs,
-                               const std::string &target,
-                               const std::string &program) {
-  if (proofs.empty())
-    return "";
+std::string generate_h1_report(const std::vector<ImpactProof>& proofs, const std::string& target, const std::string& program) {
+  if (proofs.empty()) return "";
 
   std::ostringstream report;
 
-  for (const auto &proof : proofs) {
+  for (const auto& proof : proofs) {
     report << "# " << proof.chain_type << " — " << proof.description << "\n\n";
     report << "**Severity**: " << proof.severity << "\n";
     report << "**Target**: " << target << "\n";
-    if (!program.empty())
-      report << "**Program**: " << program << "\n";
+    if (!program.empty()) report << "**Program**: " << program << "\n";
     report << "**OWASP**: " << proof.owasp << "\n\n";
 
     report << "## Summary\n\n";
@@ -132,8 +124,7 @@ std::string generate_h1_report(const std::vector<ImpactProof> &proofs,
       report << "obtain sensitive information.\n\n";
 
     if (!proof.evidence.empty()) {
-      report << "## Evidence\n\n```\n"
-             << proof.evidence.substr(0, 1000) << "\n```\n\n";
+      report << "## Evidence\n\n```\n" << proof.evidence.substr(0, 1000) << "\n```\n\n";
     }
 
     report << "## Remediation\n\n" << proof.fix << "\n\n";
@@ -143,4 +134,4 @@ std::string generate_h1_report(const std::vector<ImpactProof> &proofs,
   return report.str();
 }
 
-} // namespace apex
+}  // namespace apex

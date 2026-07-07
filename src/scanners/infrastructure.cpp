@@ -1,36 +1,35 @@
 /// @file scanners/infrastructure.cpp
 /// @brief Infrastructure: subdomain takeover, S3 bucket misconfig, DNS zone
 ///        transfer, virtual host fuzzing.
-#include "scanner_base.hpp"
 #include <arpa/inet.h>
-#include <cstring>
 #include <netdb.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+#include <cstring>
+
+#include "scanner_base.hpp"
 
 namespace apex {
 namespace {
 
 /// Subdomain takeover — detect dangling DNS records.
-std::vector<Finding> scan_subdomain_takeover(const Config &, HttpClient &http,
-                                             const CrawlResult &crawl) {
+std::vector<Finding> scan_subdomain_takeover(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
-  const std::vector<std::pair<std::string, std::string>> fingerprints = {
-      {"There isn't a GitHub Pages site here", "GitHub Pages"},
-      {"NoSuchBucket", "AWS S3"},
-      {"Heroku | No such app", "Heroku"},
-      {"Repository not found", "Bitbucket"},
-      {"Sorry, this shop is currently unavailable", "Shopify"},
-      {"The feed has not been found", "Feedpress"},
-      {"project not found", "Surge.sh"},
-      {"This UserVoice subdomain is currently available", "UserVoice"}};
+  const std::vector<std::pair<std::string, std::string>> fingerprints = {{"There isn't a GitHub Pages site here", "GitHub Pages"},
+                                                                         {"NoSuchBucket", "AWS S3"},
+                                                                         {"Heroku | No such app", "Heroku"},
+                                                                         {"Repository not found", "Bitbucket"},
+                                                                         {"Sorry, this shop is currently unavailable", "Shopify"},
+                                                                         {"The feed has not been found", "Feedpress"},
+                                                                         {"project not found", "Surge.sh"},
+                                                                         {"This UserVoice subdomain is currently available", "UserVoice"}};
 
-  for (const auto &url : crawl.urls) {
+  for (const auto& url : crawl.urls) {
     auto resp = http.get(url);
-    for (const auto &[fp, service] : fingerprints) {
+    for (const auto& [fp, service] : fingerprints) {
       if (resp.body.find(fp) != std::string::npos) {
-        findings.push_back({"Subdomain Takeover", "high", url,
-                            "Potential " + service + " takeover", "", "", fp});
+        findings.push_back({"Subdomain Takeover", "high", url, "Potential " + service + " takeover", "", "", fp});
       }
     }
   }
@@ -38,8 +37,7 @@ std::vector<Finding> scan_subdomain_takeover(const Config &, HttpClient &http,
 }
 
 /// S3 bucket misconfiguration.
-std::vector<Finding> scan_s3_buckets(const Config &, HttpClient &http,
-                                     const CrawlResult &crawl) {
+std::vector<Finding> scan_s3_buckets(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
 
@@ -50,30 +48,24 @@ std::vector<Finding> scan_s3_buckets(const Config &, HttpClient &http,
   size_t dot = domain.find('.');
   std::string prefix = (dot != std::string::npos) ? domain.substr(0, dot) : domain;
 
-  const std::vector<std::string> suffixes = {
-      "", "-assets", "-backup", "-dev", "-staging", "-prod", "-media",
-      "-uploads", "-static", "-data", "-logs"};
+  const std::vector<std::string> suffixes = {"",       "-assets",  "-backup", "-dev",  "-staging", "-prod",
+                                             "-media", "-uploads", "-static", "-data", "-logs"};
 
-  for (const auto &suffix : suffixes) {
+  for (const auto& suffix : suffixes) {
     std::string bucket = prefix + suffix;
     std::string url = "https://" + bucket + ".s3.amazonaws.com/";
     auto resp = http.get(url);
-    if (resp.status_code == 200 &&
-        resp.body.find("<ListBucketResult") != std::string::npos) {
-      findings.push_back({"S3 Bucket", "high", url,
-                          "Public S3 bucket listing: " + bucket, "", "", ""});
+    if (resp.status_code == 200 && resp.body.find("<ListBucketResult") != std::string::npos) {
+      findings.push_back({"S3 Bucket", "high", url, "Public S3 bucket listing: " + bucket, "", "", ""});
     } else if (resp.status_code == 403) {
-      findings.push_back({"S3 Bucket", "info", url,
-                          "S3 bucket exists (no listing): " + bucket,
-                          "", "", ""});
+      findings.push_back({"S3 Bucket", "info", url, "S3 bucket exists (no listing): " + bucket, "", "", ""});
     }
   }
   return findings;
 }
 
 /// DNS zone transfer attempt.
-std::vector<Finding> scan_dns_zone_transfer(const Config &cfg, HttpClient &,
-                                            const CrawlResult &crawl) {
+std::vector<Finding> scan_dns_zone_transfer(const Config& cfg, HttpClient&, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
 
@@ -82,9 +74,8 @@ std::vector<Finding> scan_dns_zone_transfer(const Config &cfg, HttpClient &,
   std::string domain = base.substr(start);
 
   // Try AXFR via dig command.
-  std::string cmd = "dig @ns1." + domain + " " + domain +
-                    " AXFR +short +time=5 2>/dev/null | head -5";
-  FILE *pipe = popen(cmd.c_str(), "r");
+  std::string cmd = "dig @ns1." + domain + " " + domain + " AXFR +short +time=5 2>/dev/null | head -5";
+  FILE* pipe = popen(cmd.c_str(), "r");
   if (!pipe) return findings;
 
   std::string output;
@@ -92,17 +83,14 @@ std::vector<Finding> scan_dns_zone_transfer(const Config &cfg, HttpClient &,
   while (fgets(buf, sizeof(buf), pipe)) output += buf;
   pclose(pipe);
 
-  if (!output.empty() && output.find("Transfer failed") == std::string::npos &&
-      output.find("timed out") == std::string::npos) {
-    findings.push_back({"DNS Zone Transfer", "high", domain,
-                        "Zone transfer possible", "", "", output.substr(0, 200)});
+  if (!output.empty() && output.find("Transfer failed") == std::string::npos && output.find("timed out") == std::string::npos) {
+    findings.push_back({"DNS Zone Transfer", "high", domain, "Zone transfer possible", "", "", output.substr(0, 200)});
   }
   return findings;
 }
 
 /// Virtual host fuzzing — discover hidden vhosts.
-std::vector<Finding> scan_vhost_fuzzing(const Config &, HttpClient &http,
-                                        const CrawlResult &crawl) {
+std::vector<Finding> scan_vhost_fuzzing(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -110,29 +98,24 @@ std::vector<Finding> scan_vhost_fuzzing(const Config &, HttpClient &http,
   // Get baseline response.
   auto baseline = http.get(base + "/");
 
-  const std::vector<std::string> prefixes = {
-      "admin", "dev", "staging", "test", "internal", "api", "mail",
-      "vpn", "portal", "intranet", "jenkins", "gitlab", "jira"};
+  const std::vector<std::string> prefixes = {"admin", "dev",    "staging",  "test",    "internal", "api", "mail",
+                                             "vpn",   "portal", "intranet", "jenkins", "gitlab",   "jira"};
 
   size_t start = base.find("://") + 3;
   std::string domain = base.substr(start);
 
-  for (const auto &prefix : prefixes) {
+  for (const auto& prefix : prefixes) {
     std::string vhost = prefix + "." + domain;
     auto resp = http.get(base + "/", {{"Host", vhost}});
-    if (resp.status_code == 200 && resp.body != baseline.body &&
-        resp.body.size() > 100) {
-      findings.push_back({"VHost Discovery", "info", base,
-                          "Different response for Host: " + vhost,
-                          "", vhost, ""});
+    if (resp.status_code == 200 && resp.body != baseline.body && resp.body.size() > 100) {
+      findings.push_back({"VHost Discovery", "info", base, "Different response for Host: " + vhost, "", vhost, ""});
     }
   }
   return findings;
 }
 
 /// Open port scan — check common service ports.
-std::vector<Finding> scan_open_ports(const Config &cfg, HttpClient &,
-                                     const CrawlResult &crawl) {
+std::vector<Finding> scan_open_ports(const Config& cfg, HttpClient&, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -148,12 +131,14 @@ std::vector<Finding> scan_open_ports(const Config &cfg, HttpClient &,
     struct sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
-    struct hostent *he = gethostbyname(host.c_str());
-    if (!he) { close(sock); continue; }
+    struct hostent* he = gethostbyname(host.c_str());
+    if (!he) {
+      close(sock);
+      continue;
+    }
     memcpy(&addr.sin_addr, he->h_addr, he->h_length);
-    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
-      findings.push_back({"Open Port", "info", host + ":" + std::to_string(port),
-                          "Port " + std::to_string(port) + " open", "", "", ""});
+    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) == 0) {
+      findings.push_back({"Open Port", "info", host + ":" + std::to_string(port), "Port " + std::to_string(port) + " open", "", "", ""});
     }
     close(sock);
   }
@@ -161,65 +146,55 @@ std::vector<Finding> scan_open_ports(const Config &cfg, HttpClient &,
 }
 
 /// DNS Rebinding — check if target is vulnerable to DNS rebinding.
-std::vector<Finding> scan_dns_rebinding(const Config &, HttpClient &http,
-                                        const CrawlResult &crawl) {
+std::vector<Finding> scan_dns_rebinding(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   auto resp = http.get(crawl.urls[0]);
   // If no Host header validation, DNS rebinding is possible.
   auto resp2 = http.get(crawl.urls[0], {{"Host", "127.0.0.1"}});
   if (resp2.status_code == 200 && resp2.body == resp.body) {
-    findings.push_back({"DNS Rebinding", "medium", crawl.urls[0],
-                        "No Host header validation (DNS rebinding possible)",
-                        "", "Host: 127.0.0.1", ""});
+    findings.push_back(
+        {"DNS Rebinding", "medium", crawl.urls[0], "No Host header validation (DNS rebinding possible)", "", "Host: 127.0.0.1", ""});
   }
   return findings;
 }
 
 /// Subdomain Permutation — find related subdomains via common prefixes.
-std::vector<Finding> scan_subdomain_permutation(const Config &, HttpClient &http,
-                                                const CrawlResult &crawl) {
+std::vector<Finding> scan_subdomain_permutation(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
   size_t start = base.find("://") + 3;
   std::string domain = base.substr(start);
 
-  const std::vector<std::string> prefixes = {
-      "staging", "dev", "test", "uat", "beta", "old", "new", "backup"};
-  for (const auto &pre : prefixes) {
+  const std::vector<std::string> prefixes = {"staging", "dev", "test", "uat", "beta", "old", "new", "backup"};
+  for (const auto& pre : prefixes) {
     std::string url = "https://" + pre + "." + domain + "/";
     auto resp = http.get(url);
     if (resp.status_code == 200 && resp.body.size() > 100) {
-      findings.push_back({"Subdomain Permutation", "info", url,
-                          "Subdomain " + pre + "." + domain + " is live",
-                          "", "", ""});
+      findings.push_back({"Subdomain Permutation", "info", url, "Subdomain " + pre + "." + domain + " is live", "", "", ""});
     }
   }
   return findings;
 }
 
 /// Staging Exposure — find staging/test environments.
-std::vector<Finding> scan_staging_exposure(const Config &, HttpClient &http,
-                                           const CrawlResult &crawl) {
+std::vector<Finding> scan_staging_exposure(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
-  const std::vector<std::string> paths = {
-      "/staging/", "/test/", "/dev/", "/uat/", "/beta/",
-      "/stage/", "/_staging/", "/pre-prod/"};
-  for (const auto &path : paths) {
+  const std::vector<std::string> paths = {"/staging/", "/test/", "/dev/", "/uat/", "/beta/", "/stage/", "/_staging/", "/pre-prod/"};
+  for (const auto& path : paths) {
     auto resp = http.get(base + path);
     if (resp.status_code == 200 && resp.body.size() > 200) {
-      findings.push_back({"Staging Exposure", "medium", base + path,
-                          "Staging/test environment accessible", "", "", ""});
+      findings.push_back({"Staging Exposure", "medium", base + path, "Staging/test environment accessible", "", "", ""});
     }
   }
   return findings;
 }
 
-} // namespace
+}  // namespace
 
 std::vector<Scanner> register_infrastructure_scanners() {
   return {
@@ -234,4 +209,4 @@ std::vector<Scanner> register_infrastructure_scanners() {
   };
 }
 
-} // namespace apex
+}  // namespace apex

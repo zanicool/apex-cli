@@ -1,16 +1,17 @@
 /// @file scanners/autogen_injection_30.cpp
 /// @brief Auto-generated scanner: Injection (30)
-///        Checks: Server-Side Template Injection, Expression Language injection , LaTeX injection (in PDF genera, Server-Side JavaScript injecti
-#include "scanner_base.hpp"
-#include <regex>
+///        Checks: Server-Side Template Injection, Expression Language injection , LaTeX injection (in PDF genera, Server-Side JavaScript
+///        injecti
 #include <chrono>
+#include <regex>
+
+#include "scanner_base.hpp"
 
 namespace apex {
 namespace {
 
 /// Server-Side Template Injection (Jinja2, Twig, Freemarker)
-std::vector<Finding> scan_server_side_template_injection_jinja2_tw(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_server_side_template_injection_jinja2_tw(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -23,8 +24,7 @@ std::vector<Finding> scan_server_side_template_injection_jinja2_tw(const Config 
 }
 
 /// Expression Language injection (Spring EL, OGNL)
-std::vector<Finding> scan_expression_language_injection_spring_el_(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_expression_language_injection_spring_el_(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -37,8 +37,7 @@ std::vector<Finding> scan_expression_language_injection_spring_el_(const Config 
 }
 
 /// LaTeX injection (in PDF generators)
-std::vector<Finding> scan_latex_injection_in_pdf_generators(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_latex_injection_in_pdf_generators(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -51,8 +50,7 @@ std::vector<Finding> scan_latex_injection_in_pdf_generators(const Config &, Http
 }
 
 /// Server-Side JavaScript injection (Node.js eval)
-std::vector<Finding> scan_server_side_javascript_injection_node_js(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_server_side_javascript_injection_node_js(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -64,8 +62,7 @@ std::vector<Finding> scan_server_side_javascript_injection_node_js(const Config 
   return findings;
 }
 
-
-} // namespace
+}  // namespace
 
 std::vector<Scanner> register_autogen_injection_30_scanners() {
   return {
@@ -76,4 +73,4 @@ std::vector<Scanner> register_autogen_injection_30_scanners() {
   };
 }
 
-} // namespace apex
+}  // namespace apex

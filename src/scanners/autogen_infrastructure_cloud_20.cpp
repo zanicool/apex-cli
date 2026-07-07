@@ -1,16 +1,16 @@
 /// @file scanners/autogen_infrastructure_cloud_20.cpp
 /// @brief Auto-generated scanner: Infrastructure & Cloud (20)
 ///        Checks: Exposed Docker API, Exposed Redis/Memcached, Exposed Elasticsearch, Exposed MongoDB, Admin panels without auth
-#include "scanner_base.hpp"
-#include <regex>
 #include <chrono>
+#include <regex>
+
+#include "scanner_base.hpp"
 
 namespace apex {
 namespace {
 
 /// Exposed Docker API
-std::vector<Finding> scan_exposed_docker_api(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_exposed_docker_api(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -23,8 +23,7 @@ std::vector<Finding> scan_exposed_docker_api(const Config &, HttpClient &http,
 }
 
 /// Exposed Redis/Memcached
-std::vector<Finding> scan_exposed_redis_memcached(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_exposed_redis_memcached(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -37,8 +36,7 @@ std::vector<Finding> scan_exposed_redis_memcached(const Config &, HttpClient &ht
 }
 
 /// Exposed Elasticsearch
-std::vector<Finding> scan_exposed_elasticsearch(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_exposed_elasticsearch(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -51,8 +49,7 @@ std::vector<Finding> scan_exposed_elasticsearch(const Config &, HttpClient &http
 }
 
 /// Exposed MongoDB
-std::vector<Finding> scan_exposed_mongodb(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_exposed_mongodb(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -65,8 +62,7 @@ std::vector<Finding> scan_exposed_mongodb(const Config &, HttpClient &http,
 }
 
 /// Admin panels without auth
-std::vector<Finding> scan_admin_panels_without_auth(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_admin_panels_without_auth(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -79,8 +75,7 @@ std::vector<Finding> scan_admin_panels_without_auth(const Config &, HttpClient &
 }
 
 /// CI/CD secrets in public repos
-std::vector<Finding> scan_ci_cd_secrets_in_public_repos(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_ci_cd_secrets_in_public_repos(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -93,8 +88,7 @@ std::vector<Finding> scan_ci_cd_secrets_in_public_repos(const Config &, HttpClie
 }
 
 /// AWS credentials in source/config
-std::vector<Finding> scan_aws_credentials_in_source_config(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_aws_credentials_in_source_config(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -107,8 +101,7 @@ std::vector<Finding> scan_aws_credentials_in_source_config(const Config &, HttpC
 }
 
 /// Internal service exposed to internet
-std::vector<Finding> scan_internal_service_exposed_to_internet(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_internal_service_exposed_to_internet(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -120,8 +113,7 @@ std::vector<Finding> scan_internal_service_exposed_to_internet(const Config &, H
   return findings;
 }
 
-
-} // namespace
+}  // namespace
 
 std::vector<Scanner> register_autogen_infrastructure_cloud_20_scanners() {
   return {
@@ -136,4 +128,4 @@ std::vector<Scanner> register_autogen_infrastructure_cloud_20_scanners() {
   };
 }
 
-} // namespace apex
+}  // namespace apex

@@ -1,6 +1,7 @@
 /// @file checkpoint.cpp
 /// @brief Scan Checkpoint Engine implementation.
 #include "checkpoint.hpp"
+
 #include <chrono>
 #include <ctime>
 #include <filesystem>
@@ -15,11 +16,10 @@ namespace apex {
 
 namespace {
 
-std::string sanitize_target(const std::string &target) {
+std::string sanitize_target(const std::string& target) {
   std::string safe = target;
-  for (auto &c : safe) {
-    if (c == '/' || c == ':' || c == '\\' || c == '?' || c == '&' ||
-        c == '=' || c == ' ') c = '_';
+  for (auto& c : safe) {
+    if (c == '/' || c == ':' || c == '\\' || c == '?' || c == '&' || c == '=' || c == ' ') c = '_';
   }
   return safe;
 }
@@ -34,21 +34,31 @@ std::string now_timestamp() {
 
 std::string phase_name(ScanPhase phase) {
   switch (phase) {
-    case ScanPhase::INIT: return "init";
-    case ScanPhase::RECON_COMPLETE: return "recon_complete";
-    case ScanPhase::CRAWL_COMPLETE: return "crawl_complete";
-    case ScanPhase::PROFILE_COMPLETE: return "profile_complete";
-    case ScanPhase::SCANNING: return "scanning";
-    case ScanPhase::SCAN_COMPLETE: return "scan_complete";
-    case ScanPhase::VERIFICATION: return "verification";
-    case ScanPhase::REASONING: return "reasoning";
-    case ScanPhase::REPORT: return "report";
-    case ScanPhase::COMPLETED: return "completed";
+    case ScanPhase::INIT:
+      return "init";
+    case ScanPhase::RECON_COMPLETE:
+      return "recon_complete";
+    case ScanPhase::CRAWL_COMPLETE:
+      return "crawl_complete";
+    case ScanPhase::PROFILE_COMPLETE:
+      return "profile_complete";
+    case ScanPhase::SCANNING:
+      return "scanning";
+    case ScanPhase::SCAN_COMPLETE:
+      return "scan_complete";
+    case ScanPhase::VERIFICATION:
+      return "verification";
+    case ScanPhase::REASONING:
+      return "reasoning";
+    case ScanPhase::REPORT:
+      return "report";
+    case ScanPhase::COMPLETED:
+      return "completed";
   }
   return "unknown";
 }
 
-ScanPhase parse_phase(const std::string &s) {
+ScanPhase parse_phase(const std::string& s) {
   if (s == "recon_complete") return ScanPhase::RECON_COMPLETE;
   if (s == "crawl_complete") return ScanPhase::CRAWL_COMPLETE;
   if (s == "profile_complete") return ScanPhase::PROFILE_COMPLETE;
@@ -61,13 +71,11 @@ ScanPhase parse_phase(const std::string &s) {
   return ScanPhase::INIT;
 }
 
-} // namespace
+}  // namespace
 
-std::string session_dir(const std::string &target) {
-  return ".apex/sessions/" + sanitize_target(target);
-}
+std::string session_dir(const std::string& target) { return ".apex/sessions/" + sanitize_target(target); }
 
-void save_checkpoint(const ScanSession &session) {
+void save_checkpoint(const ScanSession& session) {
   std::string dir = session_dir(session.target);
   fs::create_directories(dir);
   fs::create_directories(dir + "/evidence");
@@ -106,7 +114,7 @@ void save_checkpoint(const ScanSession &session) {
   // Save findings (append mode — each module adds its findings)
   std::ofstream findings_file(dir + "/findings.jsonl");
   if (findings_file.is_open()) {
-    for (const auto &f : session.findings) {
+    for (const auto& f : session.findings) {
       findings_file << "{\"type\":\"" << f.type << "\","
                     << "\"severity\":\"" << f.severity << "\","
                     << "\"url\":\"" << f.url << "\","
@@ -119,20 +127,18 @@ void save_checkpoint(const ScanSession &session) {
   // Save seeds
   if (!session.seeds.empty()) {
     std::ofstream seeds_file(dir + "/seeds.txt");
-    for (const auto &s : session.seeds) seeds_file << s << "\n";
+    for (const auto& s : session.seeds) seeds_file << s << "\n";
     seeds_file.close();
   }
 
   // Progress log
   std::ofstream log(dir + "/progress.log", std::ios::app);
-  log << now_timestamp() << " | " << phase_name(session.phase)
-      << " | modules: " << session.modules_completed << "/" << session.modules_total
-      << " | findings: " << session.findings.size()
-      << " | last: " << session.last_module << "\n";
+  log << now_timestamp() << " | " << phase_name(session.phase) << " | modules: " << session.modules_completed << "/"
+      << session.modules_total << " | findings: " << session.findings.size() << " | last: " << session.last_module << "\n";
   log.close();
 }
 
-ScanSession load_session(const std::string &target) {
+ScanSession load_session(const std::string& target) {
   ScanSession session;
   session.target = target;
 
@@ -210,19 +216,17 @@ ScanSession load_session(const std::string &target) {
   return session;
 }
 
-bool has_interrupted_session(const std::string &target) {
+bool has_interrupted_session(const std::string& target) {
   std::string state_path = session_dir(target) + "/state.json";
   if (!fs::exists(state_path)) return false;
 
   // Check if it's actually interrupted (not completed)
   std::ifstream state(state_path);
-  std::string content((std::istreambuf_iterator<char>(state)),
-                       std::istreambuf_iterator<char>());
-  return content.find("\"interrupted\": true") != std::string::npos &&
-         content.find("\"phase\": \"completed\"") == std::string::npos;
+  std::string content((std::istreambuf_iterator<char>(state)), std::istreambuf_iterator<char>());
+  return content.find("\"interrupted\": true") != std::string::npos && content.find("\"phase\": \"completed\"") == std::string::npos;
 }
 
-void complete_session(const std::string &target) {
+void complete_session(const std::string& target) {
   std::string dir = session_dir(target);
   std::string state_path = dir + "/state.json";
 
@@ -238,7 +242,7 @@ void complete_session(const std::string &target) {
   state << "}\n";
 }
 
-int completion_percent(const ScanSession &session) {
+int completion_percent(const ScanSession& session) {
   // Weight each phase
   int phase_weight = static_cast<int>(session.phase) * 10;
   int module_weight = 0;
@@ -248,4 +252,4 @@ int completion_percent(const ScanSession &session) {
   return std::min(100, phase_weight + module_weight);
 }
 
-} // namespace apex
+}  // namespace apex

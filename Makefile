@@ -1,5 +1,5 @@
 CXX      := g++
-CXXFLAGS := -std=c++17 -Wall -Wextra -Wpedantic -O2
+CXXFLAGS := -std=c++17 -Wall -Wextra -Wpedantic -O2 -Wno-missing-field-initializers
 LDFLAGS  := -lcurl -pthread
 
 # Platform-specific include paths.

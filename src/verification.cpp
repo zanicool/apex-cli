@@ -1,6 +1,7 @@
 /// @file verification.cpp
 /// @brief Verification Pipeline + Scan Memory implementation.
 #include "verification.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <ctime>
@@ -24,7 +25,7 @@ std::string now_iso8601() {
 }
 
 /// Verify a single finding by re-testing it.
-VerifiedFinding verify_one(const Finding &f, HttpClient &http) {
+VerifiedFinding verify_one(const Finding& f, HttpClient& http) {
   VerifiedFinding vf;
   vf.finding = f;
   vf.verify_attempts = 1;
@@ -63,12 +64,9 @@ VerifiedFinding verify_one(const Finding &f, HttpClient &http) {
   ev.response_time_ms = replay.duration.count();
 
   // Check if replay produces different result than baseline
-  if (replay.status_code != baseline.status_code ||
-      replay.body.size() != baseline.body.size()) {
-    ev.baseline_diff = "status: " + std::to_string(baseline.status_code) + "→" +
-                       std::to_string(replay.status_code) + ", size: " +
-                       std::to_string(baseline.body.size()) + "→" +
-                       std::to_string(replay.body.size());
+  if (replay.status_code != baseline.status_code || replay.body.size() != baseline.body.size()) {
+    ev.baseline_diff = "status: " + std::to_string(baseline.status_code) + "→" + std::to_string(replay.status_code) +
+                       ", size: " + std::to_string(baseline.body.size()) + "→" + std::to_string(replay.body.size());
   }
 
   // Verification logic based on finding type
@@ -77,14 +75,11 @@ VerifiedFinding verify_one(const Finding &f, HttpClient &http) {
 
   // SQL Injection: look for DB errors in replay
   if (f.type.find("SQL") != std::string::npos || f.type.find("SQLi") != std::string::npos) {
-    if (replay.body.find("SQL") != std::string::npos ||
-        replay.body.find("mysql") != std::string::npos ||
-        replay.body.find("syntax") != std::string::npos ||
-        replay.body.find("SQLSTATE") != std::string::npos) {
+    if (replay.body.find("SQL") != std::string::npos || replay.body.find("mysql") != std::string::npos ||
+        replay.body.find("syntax") != std::string::npos || replay.body.find("SQLSTATE") != std::string::npos) {
       verified = true;
       reason = "Database error reproduced in replay";
-      ev.response_snippet = replay.body.substr(
-          replay.body.find("SQL") != std::string::npos ? replay.body.find("SQL") : 0, 200);
+      ev.response_snippet = replay.body.substr(replay.body.find("SQL") != std::string::npos ? replay.body.find("SQL") : 0, 200);
     }
   }
 
@@ -99,8 +94,7 @@ VerifiedFinding verify_one(const Finding &f, HttpClient &http) {
 
   // SSRF: check if internal content appears
   if (f.type.find("SSRF") != std::string::npos) {
-    if (replay.body.find("root:") != std::string::npos ||
-        replay.body.find("ami-") != std::string::npos ||
+    if (replay.body.find("root:") != std::string::npos || replay.body.find("ami-") != std::string::npos ||
         replay.body.find("instance") != std::string::npos) {
       verified = true;
       reason = "Internal data in response confirms SSRF";
@@ -110,8 +104,7 @@ VerifiedFinding verify_one(const Finding &f, HttpClient &http) {
 
   // Path Traversal: check for system file content
   if (f.type.find("LFI") != std::string::npos || f.type.find("Path Traversal") != std::string::npos) {
-    if (replay.body.find("root:") != std::string::npos ||
-        replay.body.find("[fonts]") != std::string::npos) {
+    if (replay.body.find("root:") != std::string::npos || replay.body.find("[fonts]") != std::string::npos) {
       verified = true;
       reason = "System file content returned";
       ev.response_snippet = replay.body.substr(0, 200);
@@ -120,8 +113,7 @@ VerifiedFinding verify_one(const Finding &f, HttpClient &http) {
 
   // SSTI: check if math evaluation appeared
   if (f.type.find("SSTI") != std::string::npos || f.type.find("Template") != std::string::npos) {
-    if (replay.body.find("49") != std::string::npos &&
-        baseline.body.find("49") == std::string::npos) {
+    if (replay.body.find("49") != std::string::npos && baseline.body.find("49") == std::string::npos) {
       verified = true;
       reason = "Template expression evaluated (49 appeared only with payload)";
     }
@@ -129,8 +121,7 @@ VerifiedFinding verify_one(const Finding &f, HttpClient &http) {
 
   // Prototype Pollution: behavioral change
   if (f.type.find("Prototype") != std::string::npos) {
-    if (replay.body.size() != baseline.body.size() &&
-        std::abs((int)replay.body.size() - (int)baseline.body.size()) > 100) {
+    if (replay.body.size() != baseline.body.size() && std::abs((int)replay.body.size() - (int)baseline.body.size()) > 100) {
       verified = true;
       reason = "Response changed significantly after prototype injection";
     }
@@ -167,21 +158,17 @@ VerifiedFinding verify_one(const Finding &f, HttpClient &http) {
   return vf;
 }
 
-} // namespace
+}  // namespace
 
 // ============================================================
 // PUBLIC API
 // ============================================================
 
-std::vector<VerifiedFinding> verify_findings(
-    const std::vector<Finding> &findings,
-    HttpClient &http,
-    int max_verify) {
-
+std::vector<VerifiedFinding> verify_findings(const std::vector<Finding>& findings, HttpClient& http, int max_verify) {
   std::vector<VerifiedFinding> results;
   int verified_count = 0;
 
-  for (const auto &f : findings) {
+  for (const auto& f : findings) {
     if (verified_count >= max_verify) {
       // Accept remaining without deep verification
       VerifiedFinding vf;
@@ -208,11 +195,10 @@ std::vector<VerifiedFinding> verify_findings(
   return results;
 }
 
-void save_snapshot(const ScanSnapshot &snapshot, const std::string &output_dir) {
-  std::string filename = output_dir + "/scan_memory_" +
-                          snapshot.target + "_" + snapshot.timestamp + ".json";
+void save_snapshot(const ScanSnapshot& snapshot, const std::string& output_dir) {
+  std::string filename = output_dir + "/scan_memory_" + snapshot.target + "_" + snapshot.timestamp + ".json";
   // Sanitize filename
-  for (auto &c : filename) {
+  for (auto& c : filename) {
     if (c == ':' || c == '/' || c == '\\' || c == ' ') c = '_';
   }
 
@@ -239,7 +225,7 @@ void save_snapshot(const ScanSnapshot &snapshot, const std::string &output_dir) 
   out << "  \"finding_count\": " << snapshot.findings.size() << ",\n";
   out << "  \"findings\": [\n";
   for (size_t i = 0; i < snapshot.findings.size(); i++) {
-    auto &vf = snapshot.findings[i];
+    auto& vf = snapshot.findings[i];
     out << "    {\"type\": \"" << vf.finding.type << "\", "
         << "\"severity\": \"" << vf.finding.severity << "\", "
         << "\"url\": \"" << vf.finding.url << "\", "
@@ -256,8 +242,7 @@ void save_snapshot(const ScanSnapshot &snapshot, const std::string &output_dir) 
   std::cerr << "  [memory] Snapshot saved: " << filename << "\n";
 }
 
-ScanSnapshot load_previous_snapshot(const std::string &target,
-                                     const std::string &output_dir) {
+ScanSnapshot load_previous_snapshot(const std::string& target, const std::string& output_dir) {
   ScanSnapshot empty;
   empty.target = target;
   // TODO: implement JSON parsing of previous snapshot
@@ -265,13 +250,12 @@ ScanSnapshot load_previous_snapshot(const std::string &target,
   return empty;
 }
 
-ScanDelta compute_delta(const ScanSnapshot &previous,
-                         const ScanSnapshot &current) {
+ScanDelta compute_delta(const ScanSnapshot& previous, const ScanSnapshot& current) {
   ScanDelta delta;
 
   // Find new endpoints
   std::set<std::string> prev_eps(previous.endpoints.begin(), previous.endpoints.end());
-  for (const auto &ep : current.endpoints) {
+  for (const auto& ep : current.endpoints) {
     if (prev_eps.find(ep) == prev_eps.end()) {
       delta.new_endpoints.push_back(ep);
     }
@@ -279,7 +263,7 @@ ScanDelta compute_delta(const ScanSnapshot &previous,
 
   // Find removed endpoints
   std::set<std::string> curr_eps(current.endpoints.begin(), current.endpoints.end());
-  for (const auto &ep : previous.endpoints) {
+  for (const auto& ep : previous.endpoints) {
     if (curr_eps.find(ep) == curr_eps.end()) {
       delta.removed_endpoints.push_back(ep);
     }
@@ -287,7 +271,7 @@ ScanDelta compute_delta(const ScanSnapshot &previous,
 
   // Find new technologies
   std::set<std::string> prev_tech(previous.technologies.begin(), previous.technologies.end());
-  for (const auto &t : current.technologies) {
+  for (const auto& t : current.technologies) {
     if (prev_tech.find(t) == prev_tech.end()) {
       delta.new_technologies.push_back(t);
     }
@@ -295,11 +279,11 @@ ScanDelta compute_delta(const ScanSnapshot &previous,
 
   // Find new vs persistent findings
   std::set<std::string> prev_finding_keys;
-  for (const auto &f : previous.findings) {
+  for (const auto& f : previous.findings) {
     prev_finding_keys.insert(f.finding.type + "|" + f.finding.url);
   }
 
-  for (const auto &f : current.findings) {
+  for (const auto& f : current.findings) {
     std::string key = f.finding.type + "|" + f.finding.url;
     if (prev_finding_keys.find(key) == prev_finding_keys.end()) {
       delta.new_findings.push_back(f);
@@ -310,10 +294,10 @@ ScanDelta compute_delta(const ScanSnapshot &previous,
 
   // Find resolved findings (in previous but not current)
   std::set<std::string> curr_finding_keys;
-  for (const auto &f : current.findings) {
+  for (const auto& f : current.findings) {
     curr_finding_keys.insert(f.finding.type + "|" + f.finding.url);
   }
-  for (const auto &f : previous.findings) {
+  for (const auto& f : previous.findings) {
     std::string key = f.finding.type + "|" + f.finding.url;
     if (curr_finding_keys.find(key) == curr_finding_keys.end()) {
       delta.resolved_findings.push_back(f);
@@ -323,4 +307,4 @@ ScanDelta compute_delta(const ScanSnapshot &previous,
   return delta;
 }
 
-} // namespace apex
+}  // namespace apex

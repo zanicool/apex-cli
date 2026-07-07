@@ -1,11 +1,12 @@
 #include "recon_logger.hpp"
+
 #include <chrono>
 #include <iomanip>
 #include <sstream>
 
 namespace apex {
 
-ReconLogger::ReconLogger(const std::string &output_dir) {
+ReconLogger::ReconLogger(const std::string& output_dir) {
   cms_log_.open(output_dir + "/cms_recon.jsonl", std::ios::app);
   osint_log_.open(output_dir + "/osint_recon.jsonl", std::ios::app);
   vuln_log_.open(output_dir + "/vuln_recon.jsonl", std::ios::app);
@@ -19,7 +20,7 @@ std::string ReconLogger::timestamp() {
   return ss.str();
 }
 
-std::string ReconLogger::escape_json(const std::string &str) {
+std::string ReconLogger::escape_json(const std::string& str) {
   std::string escaped;
   for (char c : str) {
     if (c == '"')
@@ -38,7 +39,7 @@ std::string ReconLogger::escape_json(const std::string &str) {
   return escaped;
 }
 
-void ReconLogger::log_cms(const CMSVersion &cms, const std::string &url) {
+void ReconLogger::log_cms(const CMSVersion& cms, const std::string& url) {
   cms_log_ << "{"
            << "\"timestamp\":\"" << timestamp() << "\","
            << "\"url\":\"" << escape_json(url) << "\","
@@ -49,7 +50,7 @@ void ReconLogger::log_cms(const CMSVersion &cms, const std::string &url) {
   cms_log_.flush();
 }
 
-void ReconLogger::log_leak(const OSINTLeak &leak) {
+void ReconLogger::log_leak(const OSINTLeak& leak) {
   osint_log_ << "{"
              << "\"timestamp\":\"" << timestamp() << "\","
              << "\"type\":\"leak\","
@@ -63,7 +64,7 @@ void ReconLogger::log_leak(const OSINTLeak &leak) {
   osint_log_.flush();
 }
 
-void ReconLogger::log_employee(const EmployeeExposure &emp) {
+void ReconLogger::log_employee(const EmployeeExposure& emp) {
   osint_log_ << "{"
              << "\"timestamp\":\"" << timestamp() << "\","
              << "\"type\":\"employee\","
@@ -75,7 +76,7 @@ void ReconLogger::log_employee(const EmployeeExposure &emp) {
   osint_log_.flush();
 }
 
-void ReconLogger::log_techstack(const TechStackIntel &tech) {
+void ReconLogger::log_techstack(const TechStackIntel& tech) {
   osint_log_ << "{"
              << "\"timestamp\":\"" << timestamp() << "\","
              << "\"type\":\"techstack\","
@@ -87,7 +88,7 @@ void ReconLogger::log_techstack(const TechStackIntel &tech) {
   osint_log_.flush();
 }
 
-void ReconLogger::log_finding(const Finding &finding) {
+void ReconLogger::log_finding(const Finding& finding) {
   vuln_log_ << "{"
             << "\"timestamp\":\"" << timestamp() << "\","
             << "\"type\":\"" << escape_json(finding.type) << "\","
@@ -107,4 +108,4 @@ void ReconLogger::close() {
   vuln_log_.close();
 }
 
-} // namespace apex
+}  // namespace apex

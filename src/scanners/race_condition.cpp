@@ -1,16 +1,16 @@
 /// @file scanners/race_condition.cpp
 /// @brief Race condition scanner: detect endpoints vulnerable to TOCTOU,
 ///        double-spend, and concurrent request abuse.
-#include "scanner_base.hpp"
 #include <regex>
+
+#include "scanner_base.hpp"
 
 namespace apex {
 namespace {
 
 /// Detect endpoints likely vulnerable to race conditions.
 /// We can't safely exploit these, but we identify them for manual testing.
-std::vector<Finding> scan_race_candidates(const Config &, HttpClient &http,
-                                           const CrawlResult &crawl) {
+std::vector<Finding> scan_race_candidates(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -46,19 +46,20 @@ std::vector<Finding> scan_race_candidates(const Config &, HttpClient &http,
       {"/api/invite/accept", "Invite acceptance", "Accept same invite multiple times"},
   };
 
-  for (const auto &t : targets) {
+  for (const auto& t : targets) {
     auto resp = http.get(base + t.path);
     // 405 = exists but wrong method (likely POST)
     // 401/403 = exists but requires auth
     // 400 = exists but needs body
-    if (resp.status_code == 405 || resp.status_code == 401 ||
-        resp.status_code == 403 || resp.status_code == 400 ||
+    if (resp.status_code == 405 || resp.status_code == 401 || resp.status_code == 403 || resp.status_code == 400 ||
         resp.status_code == 422) {
-      findings.push_back({"Race Condition Target — " + t.operation, "medium",
-                          base + t.path,
-                          "Endpoint likely performs state-changing operation: " + t.operation + ". "
-                          "Risk: " + t.risk + ". "
-                          "Test by sending 10-50 concurrent POST requests.",
+      findings.push_back({"Race Condition Target — " + t.operation, "medium", base + t.path,
+                          "Endpoint likely performs state-changing operation: " + t.operation +
+                              ". "
+                              "Risk: " +
+                              t.risk +
+                              ". "
+                              "Test by sending 10-50 concurrent POST requests.",
                           "", "", "Status: " + std::to_string(resp.status_code)});
     }
   }
@@ -66,24 +67,21 @@ std::vector<Finding> scan_race_candidates(const Config &, HttpClient &http,
 }
 
 /// Check for missing idempotency keys on payment endpoints.
-std::vector<Finding> scan_idempotency(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_idempotency(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
-  std::vector<std::string> payment_paths = {
-      "/api/payment", "/api/v1/payment", "/api/charge", "/api/pay",
-      "/api/v1/pay", "/api/transactions", "/api/v1/transactions",
-      "/api/checkout/complete", "/api/order/create"};
+  std::vector<std::string> payment_paths = {"/api/payment",     "/api/v1/payment",   "/api/charge",          "/api/pay",
+                                            "/api/v1/pay",      "/api/transactions", "/api/v1/transactions", "/api/checkout/complete",
+                                            "/api/order/create"};
 
-  for (const auto &path : payment_paths) {
+  for (const auto& path : payment_paths) {
     auto resp = http.get(base + path);
-    if (resp.status_code == 405 || resp.status_code == 401 ||
-        resp.status_code == 400 || resp.status_code == 422) {
+    if (resp.status_code == 405 || resp.status_code == 401 || resp.status_code == 400 || resp.status_code == 422) {
       // Check if response mentions idempotency
       bool has_idempotency = false;
-      for (const auto &[key, val] : resp.headers) {
+      for (const auto& [key, val] : resp.headers) {
         std::string lower = key;
         std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
         if (lower.find("idempotency") != std::string::npos) {
@@ -92,8 +90,7 @@ std::vector<Finding> scan_idempotency(const Config &, HttpClient &http,
         }
       }
       if (!has_idempotency && resp.body.find("idempotency") == std::string::npos) {
-        findings.push_back({"Payment Endpoint — No Idempotency Key", "medium",
-                            base + path,
+        findings.push_back({"Payment Endpoint — No Idempotency Key", "medium", base + path,
                             "Payment endpoint found without idempotency mechanism. "
                             "Retried/concurrent requests may cause double charges.",
                             "", "", ""});
@@ -105,38 +102,31 @@ std::vector<Finding> scan_idempotency(const Config &, HttpClient &http,
 }
 
 /// Check for rate limiting on sensitive operations.
-std::vector<Finding> scan_rate_limit_absence(const Config &, HttpClient &http,
-                                              const CrawlResult &crawl) {
+std::vector<Finding> scan_rate_limit_absence(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
-  std::vector<std::string> auth_paths = {
-      "/api/auth/login", "/api/v1/auth/login", "/api/login",
-      "/api/auth/forgot-password", "/api/v1/auth/forgot-password",
-      "/api/auth/verify", "/api/v1/auth/verify-otp",
-      "/api/auth/reset-password"};
+  std::vector<std::string> auth_paths = {"/api/auth/login",           "/api/v1/auth/login",           "/api/login",
+                                         "/api/auth/forgot-password", "/api/v1/auth/forgot-password", "/api/auth/verify",
+                                         "/api/v1/auth/verify-otp",   "/api/auth/reset-password"};
 
-  for (const auto &path : auth_paths) {
+  for (const auto& path : auth_paths) {
     auto resp = http.get(base + path);
-    if (resp.status_code == 405 || resp.status_code == 400 ||
-        resp.status_code == 422) {
+    if (resp.status_code == 405 || resp.status_code == 400 || resp.status_code == 422) {
       // Check for rate limit headers
       bool has_rate_limit = false;
-      for (const auto &[key, val] : resp.headers) {
+      for (const auto& [key, val] : resp.headers) {
         std::string lower = key;
         std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-        if (lower.find("ratelimit") != std::string::npos ||
-            lower.find("rate-limit") != std::string::npos ||
-            lower.find("x-rate") != std::string::npos ||
-            lower.find("retry-after") != std::string::npos) {
+        if (lower.find("ratelimit") != std::string::npos || lower.find("rate-limit") != std::string::npos ||
+            lower.find("x-rate") != std::string::npos || lower.find("retry-after") != std::string::npos) {
           has_rate_limit = true;
           break;
         }
       }
       if (!has_rate_limit) {
-        findings.push_back({"Auth Endpoint — No Rate Limiting", "medium",
-                            base + path,
+        findings.push_back({"Auth Endpoint — No Rate Limiting", "medium", base + path,
                             "Authentication endpoint has no rate limit headers. "
                             "Vulnerable to credential brute-forcing and OTP guessing.",
                             "", "", ""});
@@ -148,24 +138,18 @@ std::vector<Finding> scan_rate_limit_absence(const Config &, HttpClient &http,
 }
 
 /// Detect WebSocket endpoints (often lack auth/rate limiting).
-std::vector<Finding> scan_websocket(const Config &, HttpClient &http,
-                                     const CrawlResult &crawl) {
+std::vector<Finding> scan_websocket(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
   // Check for WebSocket upgrade endpoints
-  std::vector<std::string> ws_paths = {
-      "/ws", "/websocket", "/socket.io/", "/api/ws", "/realtime",
-      "/cable", "/hub", "/signalr"};
+  std::vector<std::string> ws_paths = {"/ws", "/websocket", "/socket.io/", "/api/ws", "/realtime", "/cable", "/hub", "/signalr"};
 
-  for (const auto &path : ws_paths) {
+  for (const auto& path : ws_paths) {
     auto resp = http.get(base + path, {{"Upgrade", "websocket"}, {"Connection", "Upgrade"}});
-    if (resp.status_code == 101 || resp.status_code == 200 ||
-        resp.status_code == 400) {
-      if (resp.body.find("websocket") != std::string::npos ||
-          resp.body.find("socket") != std::string::npos ||
-          resp.status_code == 101) {
+    if (resp.status_code == 101 || resp.status_code == 200 || resp.status_code == 400) {
+      if (resp.body.find("websocket") != std::string::npos || resp.body.find("socket") != std::string::npos || resp.status_code == 101) {
         findings.push_back({"WebSocket Endpoint Found", "info", base + path,
                             "WebSocket endpoint discovered. Test for: "
                             "auth bypass, message injection, and lack of rate limiting.",
@@ -181,16 +165,15 @@ std::vector<Finding> scan_websocket(const Config &, HttpClient &http,
   std::sregex_iterator it(resp.body.begin(), resp.body.end(), ws_re);
   std::sregex_iterator end;
   for (; it != end; ++it) {
-    findings.push_back({"WebSocket URL in Source", "info", base,
-                        "WebSocket URL found in page source: " + (*it).str(),
-                        "", (*it).str(), ""});
+    findings.push_back(
+        {"WebSocket URL in Source", "info", base, "WebSocket URL found in page source: " + (*it).str(), "", (*it).str(), ""});
     break;
   }
 
   return findings;
 }
 
-} // namespace
+}  // namespace
 
 std::vector<Scanner> register_race_condition_scanners() {
   return {
@@ -201,4 +184,4 @@ std::vector<Scanner> register_race_condition_scanners() {
   };
 }
 
-} // namespace apex
+}  // namespace apex

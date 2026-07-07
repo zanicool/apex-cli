@@ -8,6 +8,7 @@
 ///
 /// This is not pattern matching. It's inference.
 #include "reasoning.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <set>
@@ -31,34 +32,31 @@ struct Surface {
   std::vector<Finding> client_side;
 };
 
-Surface categorize(const std::vector<Finding> &findings) {
+Surface categorize(const std::vector<Finding>& findings) {
   Surface s;
-  for (const auto &f : findings) {
+  for (const auto& f : findings) {
     std::string t = f.type;
     std::transform(t.begin(), t.end(), t.begin(), ::tolower);
 
-    if (t.find("auth") != std::string::npos || t.find("jwt") != std::string::npos ||
-        t.find("oauth") != std::string::npos || t.find("session") != std::string::npos ||
-        t.find("password") != std::string::npos || t.find("2fa") != std::string::npos) {
+    if (t.find("auth") != std::string::npos || t.find("jwt") != std::string::npos || t.find("oauth") != std::string::npos ||
+        t.find("session") != std::string::npos || t.find("password") != std::string::npos || t.find("2fa") != std::string::npos) {
       s.auth_findings.push_back(f);
-    } else if (t.find("sql") != std::string::npos || t.find("xss") != std::string::npos ||
-               t.find("ssti") != std::string::npos || t.find("injection") != std::string::npos ||
-               t.find("lfi") != std::string::npos || t.find("rfi") != std::string::npos) {
+    } else if (t.find("sql") != std::string::npos || t.find("xss") != std::string::npos || t.find("ssti") != std::string::npos ||
+               t.find("injection") != std::string::npos || t.find("lfi") != std::string::npos || t.find("rfi") != std::string::npos) {
       s.injection_findings.push_back(f);
-    } else if (t.find("disclosure") != std::string::npos || t.find("exposed") != std::string::npos ||
-               t.find("leak") != std::string::npos || t.find("internal") != std::string::npos) {
+    } else if (t.find("disclosure") != std::string::npos || t.find("exposed") != std::string::npos || t.find("leak") != std::string::npos ||
+               t.find("internal") != std::string::npos) {
       s.info_disclosure.push_back(f);
     } else if (t.find("misconfig") != std::string::npos || t.find("missing") != std::string::npos ||
                t.find("header") != std::string::npos || t.find("cors") != std::string::npos) {
       s.misconfig.push_back(f);
-    } else if (t.find("idor") != std::string::npos || t.find("access") != std::string::npos ||
-               t.find("admin") != std::string::npos || t.find("privilege") != std::string::npos ||
-               t.find("bypass") != std::string::npos) {
+    } else if (t.find("idor") != std::string::npos || t.find("access") != std::string::npos || t.find("admin") != std::string::npos ||
+               t.find("privilege") != std::string::npos || t.find("bypass") != std::string::npos) {
       s.access_control.push_back(f);
     } else if (t.find("ssrf") != std::string::npos) {
       s.ssrf_findings.push_back(f);
-    } else if (t.find("prototype") != std::string::npos || t.find("dom") != std::string::npos ||
-               t.find("client") != std::string::npos || t.find("cache") != std::string::npos) {
+    } else if (t.find("prototype") != std::string::npos || t.find("dom") != std::string::npos || t.find("client") != std::string::npos ||
+               t.find("cache") != std::string::npos) {
       s.client_side.push_back(f);
     } else {
       s.misconfig.push_back(f);
@@ -71,8 +69,7 @@ Surface categorize(const std::vector<Finding> &findings) {
 // HYPOTHESIS GENERATION: what attack paths are plausible?
 // ============================================================
 
-std::vector<Hypothesis> generate_hypotheses(const Surface &surface,
-                                             const AssetProfile &profile) {
+std::vector<Hypothesis> generate_hypotheses(const Surface& surface, const AssetProfile& profile) {
   std::vector<Hypothesis> hypotheses;
   int id = 0;
 
@@ -80,11 +77,13 @@ std::vector<Hypothesis> generate_hypotheses(const Surface &surface,
   if (!surface.info_disclosure.empty() && !surface.auth_findings.empty()) {
     Hypothesis h;
     h.id = "H" + std::to_string(++id);
-    h.description = "Information disclosure combined with authentication weakness "
-                    "may enable account takeover";
-    h.test_plan = "1. Use disclosed information to identify user accounts\n"
-                  "2. Exploit auth weakness to access those accounts\n"
-                  "3. Verify cross-account data access";
+    h.description =
+        "Information disclosure combined with authentication weakness "
+        "may enable account takeover";
+    h.test_plan =
+        "1. Use disclosed information to identify user accounts\n"
+        "2. Exploit auth weakness to access those accounts\n"
+        "3. Verify cross-account data access";
     h.confidence = 0.6;
     h.status = "pending";
     hypotheses.push_back(h);
@@ -94,11 +93,13 @@ std::vector<Hypothesis> generate_hypotheses(const Surface &surface,
   if (!surface.ssrf_findings.empty() && !profile.cloud_provider.empty()) {
     Hypothesis h;
     h.id = "H" + std::to_string(++id);
-    h.description = "SSRF in " + profile.cloud_provider + " environment — "
+    h.description = "SSRF in " + profile.cloud_provider +
+                    " environment — "
                     "cloud metadata and internal services likely reachable";
-    h.test_plan = "1. Attempt metadata endpoint via SSRF\n"
-                  "2. Extract IAM credentials\n"
-                  "3. Enumerate accessible cloud services";
+    h.test_plan =
+        "1. Attempt metadata endpoint via SSRF\n"
+        "2. Extract IAM credentials\n"
+        "3. Enumerate accessible cloud services";
     h.confidence = 0.8;
     h.status = "pending";
     hypotheses.push_back(h);
@@ -108,11 +109,13 @@ std::vector<Hypothesis> generate_hypotheses(const Surface &surface,
   if (!surface.injection_findings.empty() && !surface.access_control.empty()) {
     Hypothesis h;
     h.id = "H" + std::to_string(++id);
-    h.description = "Injection vulnerability near admin/privileged endpoint "
-                    "likely leads to remote code execution or full data access";
-    h.test_plan = "1. Confirm injection point\n"
-                  "2. Determine database/template engine\n"
-                  "3. Escalate from data extraction to code execution";
+    h.description =
+        "Injection vulnerability near admin/privileged endpoint "
+        "likely leads to remote code execution or full data access";
+    h.test_plan =
+        "1. Confirm injection point\n"
+        "2. Determine database/template engine\n"
+        "3. Escalate from data extraction to code execution";
     h.confidence = 0.7;
     h.status = "pending";
     hypotheses.push_back(h);
@@ -122,11 +125,13 @@ std::vector<Hypothesis> generate_hypotheses(const Surface &surface,
   if (!surface.client_side.empty() && profile.has_oauth) {
     Hypothesis h;
     h.id = "H" + std::to_string(++id);
-    h.description = "Client-side vulnerability (XSS/PP) combined with OAuth "
-                    "can steal tokens and take over accounts at scale";
-    h.test_plan = "1. Confirm XSS/PP exploitation\n"
-                  "2. Craft payload that extracts OAuth tokens\n"
-                  "3. Demonstrate cross-origin token theft";
+    h.description =
+        "Client-side vulnerability (XSS/PP) combined with OAuth "
+        "can steal tokens and take over accounts at scale";
+    h.test_plan =
+        "1. Confirm XSS/PP exploitation\n"
+        "2. Craft payload that extracts OAuth tokens\n"
+        "3. Demonstrate cross-origin token theft";
     h.confidence = 0.65;
     h.status = "pending";
     hypotheses.push_back(h);
@@ -136,11 +141,13 @@ std::vector<Hypothesis> generate_hypotheses(const Surface &surface,
   if (surface.info_disclosure.size() >= 3) {
     Hypothesis h;
     h.id = "H" + std::to_string(++id);
-    h.description = "Multiple information disclosures likely expose enough context "
-                    "for credential theft or social engineering";
-    h.test_plan = "1. Combine disclosed info (internal URLs, usernames, tech stack)\n"
-                  "2. Identify credential exposure vectors\n"
-                  "3. Test default/leaked credentials";
+    h.description =
+        "Multiple information disclosures likely expose enough context "
+        "for credential theft or social engineering";
+    h.test_plan =
+        "1. Combine disclosed info (internal URLs, usernames, tech stack)\n"
+        "2. Identify credential exposure vectors\n"
+        "3. Test default/leaked credentials";
     h.confidence = 0.5;
     h.status = "pending";
     hypotheses.push_back(h);
@@ -149,18 +156,20 @@ std::vector<Hypothesis> generate_hypotheses(const Surface &surface,
   // Hypothesis: weak crypto + JWT = token forgery
   if (profile.has_jwt) {
     bool has_jwt_finding = false;
-    for (const auto &f : surface.auth_findings) {
+    for (const auto& f : surface.auth_findings) {
       if (f.type.find("JWT") != std::string::npos) has_jwt_finding = true;
     }
     if (has_jwt_finding) {
       Hypothesis h;
       h.id = "H" + std::to_string(++id);
-      h.description = "JWT vulnerability enables token forgery — "
-                      "attacker can create admin tokens";
-      h.test_plan = "1. Determine JWT algorithm\n"
-                    "2. Attempt none/HS256 confusion\n"
-                    "3. Forge token with admin claims\n"
-                    "4. Access admin endpoints";
+      h.description =
+          "JWT vulnerability enables token forgery — "
+          "attacker can create admin tokens";
+      h.test_plan =
+          "1. Determine JWT algorithm\n"
+          "2. Attempt none/HS256 confusion\n"
+          "3. Forge token with admin claims\n"
+          "4. Access admin endpoints";
       h.confidence = 0.75;
       h.status = "pending";
       hypotheses.push_back(h);
@@ -169,15 +178,17 @@ std::vector<Hypothesis> generate_hypotheses(const Surface &surface,
 
   // Hypothesis: SPA + prototype pollution = persistent XSS
   if (profile.is_spa) {
-    for (const auto &f : surface.client_side) {
+    for (const auto& f : surface.client_side) {
       if (f.type.find("Prototype") != std::string::npos) {
         Hypothesis h;
         h.id = "H" + std::to_string(++id);
-        h.description = "Prototype pollution in SPA application — "
-                        "can likely escalate to persistent XSS via gadget chain";
-        h.test_plan = "1. Identify PP injection vector\n"
-                      "2. Find gadget in framework (innerHTML, src, etc)\n"
-                      "3. Demonstrate XSS execution via polluted property";
+        h.description =
+            "Prototype pollution in SPA application — "
+            "can likely escalate to persistent XSS via gadget chain";
+        h.test_plan =
+            "1. Identify PP injection vector\n"
+            "2. Find gadget in framework (innerHTML, src, etc)\n"
+            "3. Demonstrate XSS execution via polluted property";
         h.confidence = 0.7;
         h.status = "pending";
         hypotheses.push_back(h);
@@ -192,9 +203,7 @@ std::vector<Hypothesis> generate_hypotheses(const Surface &surface,
 // ATTACK PATH CONSTRUCTION: build ordered exploitation chains
 // ============================================================
 
-std::vector<AttackPath> build_attack_paths(const Surface &surface,
-                                            const AssetProfile &profile,
-                                            const std::vector<Hypothesis> &hypotheses) {
+std::vector<AttackPath> build_attack_paths(const Surface& surface, const AssetProfile& profile, const std::vector<Hypothesis>& /*hypotheses*/) {
   std::vector<AttackPath> paths;
   int id = 0;
 
@@ -207,18 +216,18 @@ std::vector<AttackPath> build_attack_paths(const Surface &surface,
     path.probability = 0.0;
 
     // Add steps
-    for (const auto &f : surface.info_disclosure) {
+    for (const auto& f : surface.info_disclosure) {
       path.steps.push_back(f);
       if (path.steps.size() >= 2) break;
     }
-    for (const auto &f : surface.auth_findings) {
+    for (const auto& f : surface.auth_findings) {
       path.steps.push_back(f);
       if (path.steps.size() >= 4) break;
     }
 
     // Calculate probability based on finding confidence
     double avg_conf = 0;
-    for (const auto &s : path.steps) avg_conf += s.confidence;
+    for (const auto& s : path.steps) avg_conf += s.confidence;
     avg_conf /= path.steps.size();
     path.probability = avg_conf / 100.0;
 
@@ -226,8 +235,7 @@ std::vector<AttackPath> build_attack_paths(const Surface &surface,
     std::ostringstream nar;
     nar << "Attack narrative:\n";
     for (size_t i = 0; i < path.steps.size(); i++) {
-      nar << "  Step " << (i + 1) << ": " << path.steps[i].type
-          << " at " << path.steps[i].url << "\n";
+      nar << "  Step " << (i + 1) << ": " << path.steps[i].type << " at " << path.steps[i].url << "\n";
     }
     nar << "\nThis chain demonstrates how seemingly low-severity information "
            "disclosures enable critical account takeover when combined with "
@@ -244,13 +252,13 @@ std::vector<AttackPath> build_attack_paths(const Surface &surface,
     path.name = "SSRF → " + profile.cloud_provider + " Metadata → Infrastructure Compromise";
     path.impact = "critical";
 
-    for (const auto &f : surface.ssrf_findings) {
+    for (const auto& f : surface.ssrf_findings) {
       path.steps.push_back(f);
       break;
     }
 
     double avg_conf = 0;
-    for (const auto &s : path.steps) avg_conf += s.confidence;
+    for (const auto& s : path.steps) avg_conf += s.confidence;
     path.probability = (avg_conf / path.steps.size()) / 100.0 * 0.8;
 
     path.narrative = "SSRF vulnerability in " + profile.cloud_provider +
@@ -266,21 +274,23 @@ std::vector<AttackPath> build_attack_paths(const Surface &surface,
     path.name = "Client-Side Vuln → Token Theft → Mass Account Takeover";
     path.impact = "critical";
 
-    for (const auto &f : surface.client_side) {
+    for (const auto& f : surface.client_side) {
       path.steps.push_back(f);
       break;
     }
 
     path.probability = 0.5;
-    path.narrative = "Client-side vulnerability enables JavaScript execution in victim's browser. "
-                     "With " + std::string(profile.has_jwt ? "JWT" : "OAuth") +
-                     " tokens accessible via JavaScript, attacker can steal authentication "
-                     "tokens and take over any user's account who visits a crafted page.";
+    path.narrative =
+        "Client-side vulnerability enables JavaScript execution in victim's browser. "
+        "With " +
+        std::string(profile.has_jwt ? "JWT" : "OAuth") +
+        " tokens accessible via JavaScript, attacker can steal authentication "
+        "tokens and take over any user's account who visits a crafted page.";
     paths.push_back(path);
   }
 
   // Sort by probability * impact
-  std::sort(paths.begin(), paths.end(), [](const AttackPath &a, const AttackPath &b) {
+  std::sort(paths.begin(), paths.end(), [](const AttackPath& a, const AttackPath& b) {
     double score_a = a.probability * (a.impact == "critical" ? 10 : a.impact == "high" ? 7 : 4);
     double score_b = b.probability * (b.impact == "critical" ? 10 : b.impact == "high" ? 7 : 4);
     return score_a > score_b;
@@ -293,8 +303,7 @@ std::vector<AttackPath> build_attack_paths(const Surface &surface,
 // RISK SCORING: overall target assessment
 // ============================================================
 
-int compute_risk_score(const Surface &surface, const AssetProfile &profile,
-                       const std::vector<AttackPath> &paths) {
+int compute_risk_score(const Surface& surface, const AssetProfile& profile, const std::vector<AttackPath>& paths) {
   int score = 0;
 
   // Base score from finding counts
@@ -307,30 +316,29 @@ int compute_risk_score(const Surface &surface, const AssetProfile &profile,
   score += surface.misconfig.size() * 2;
 
   // Multiply by attack path viability
-  for (const auto &path : paths) {
-    if (path.impact == "critical" && path.probability > 0.5) score += 20;
-    else if (path.impact == "high" && path.probability > 0.5) score += 10;
+  for (const auto& path : paths) {
+    if (path.impact == "critical" && path.probability > 0.5)
+      score += 20;
+    else if (path.impact == "high" && path.probability > 0.5)
+      score += 10;
   }
 
   // Context modifiers
   if (profile.cloud_provider == "aws" || profile.cloud_provider == "gcp") score += 5;
   if (profile.has_jwt) score += 3;
   if (profile.has_oauth) score += 3;
-  if (profile.waf.empty()) score += 5; // No WAF = easier to exploit
+  if (profile.waf.empty()) score += 5;  // No WAF = easier to exploit
 
   return std::min(100, score);
 }
 
-} // namespace
+}  // namespace
 
 // ============================================================
 // PUBLIC API
 // ============================================================
 
-ReasoningResult reason(const std::vector<Finding> &findings,
-                        const AssetProfile &profile,
-                        const CrawlResult &crawl,
-                        HttpClient &http) {
+ReasoningResult reason(const std::vector<Finding>& findings, const AssetProfile& profile, const CrawlResult& /*crawl*/, HttpClient& /*http*/) {
   ReasoningResult result;
 
   if (findings.empty()) {
@@ -352,9 +360,9 @@ ReasoningResult reason(const std::vector<Finding> &findings,
   result.risk_score = compute_risk_score(surface, profile, result.attack_paths);
 
   // Phase 5: Escalate — upgrade findings that participate in attack paths
-  for (auto &path : result.attack_paths) {
+  for (auto& path : result.attack_paths) {
     if (path.impact == "critical" && path.probability > 0.4) {
-      for (auto &step : path.steps) {
+      for (auto& step : path.steps) {
         if (step.severity == "medium" || step.severity == "low") {
           step.severity = "high";
           step.detail += " [ESCALATED: part of critical attack chain '" + path.name + "']";
@@ -387,4 +395,4 @@ ReasoningResult reason(const std::vector<Finding> &findings,
   return result;
 }
 
-} // namespace apex
+}  // namespace apex

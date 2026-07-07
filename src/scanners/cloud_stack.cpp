@@ -2,8 +2,9 @@
 /// @brief Modern cloud stack scanner: Supabase, Firebase, Neon, PlanetScale,
 ///        Clerk, Auth0, Vercel, Cloudflare, PostHog, Sentry misconfigurations.
 ///        Detects exposed keys, open APIs, permissive RLS, leaked configs.
-#include "scanner_base.hpp"
 #include <set>
+
+#include "scanner_base.hpp"
 
 ///
 /// @details This scanner module is part of the apex-cli security scanning
@@ -24,8 +25,7 @@ namespace {
 /// Supabase misconfigurations: exposed anon key, disabled RLS, open storage.
 /// Scanner implementation.
 /// @brief Scan for supabase vulnerabilities.
-std::vector<Finding> scan_supabase(const Config &, HttpClient &http,
-                                   const CrawlResult &crawl) {
+std::vector<Finding> scan_supabase(const Config&, HttpClient& http, const CrawlResult& crawl) {
   // Accumulate findings for this scanner.
   // Accumulate findings for this scanner.
   // Accumulate findings for this scanner.
@@ -46,7 +46,7 @@ std::vector<Finding> scan_supabase(const Config &, HttpClient &http,
   // Process each crawled URL.
   // Process each crawled URL.
   // Process each crawled URL.
-  for (const auto &url : crawl.urls) {
+  for (const auto& url : crawl.urls) {
     auto resp = http.get(url);
     // NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY
     std::regex url_re(R"(https://[a-z]+\.supabase\.co)");
@@ -59,44 +59,35 @@ std::vector<Finding> scan_supabase(const Config &, HttpClient &http,
 
   if (supabase_url.empty()) return findings;
 
-  findings.push_back({"Supabase Instance Detected", "info", supabase_url,
-                      "Supabase project URL found in client code", "", "", ""});
+  findings.push_back({"Supabase Instance Detected", "info", supabase_url, "Supabase project URL found in client code", "", "", ""});
 
   if (!anon_key.empty()) {
     // Test if RLS is disabled — try to read tables directly.
-    const std::vector<std::string> tables = {
-        "users", "profiles", "accounts", "orders", "payments",
-        "messages", "documents", "files", "settings", "admin"};
+    const std::vector<std::string> tables = {"users",    "profiles",  "accounts", "orders",   "payments",
+                                             "messages", "documents", "files",    "settings", "admin"};
 
-    for (const auto &table : tables) {
+    for (const auto& table : tables) {
       auto resp = http.get(supabase_url + "/rest/v1/" + table + "?select=*&limit=1",
                            {{"apikey", anon_key}, {"Authorization", "Bearer " + anon_key}});
-      if (resp.status_code == 200 && resp.body.size() > 5 &&
-          resp.body != "[]" && resp.body.find("error") == std::string::npos) {
-        findings.push_back({"Supabase RLS Disabled: " + table, "critical",
-                            supabase_url + "/rest/v1/" + table,
-                            "Table '" + table + "' readable without auth — RLS not enforced",
-                            "", "", ""});
+      if (resp.status_code == 200 && resp.body.size() > 5 && resp.body != "[]" && resp.body.find("error") == std::string::npos) {
+        findings.push_back({"Supabase RLS Disabled: " + table, "critical", supabase_url + "/rest/v1/" + table,
+                            "Table '" + table + "' readable without auth — RLS not enforced", "", "", ""});
       }
     }
 
     // Check storage buckets.
-    auto storage = http.get(supabase_url + "/storage/v1/bucket",
-                            {{"apikey", anon_key}, {"Authorization", "Bearer " + anon_key}});
+    auto storage = http.get(supabase_url + "/storage/v1/bucket", {{"apikey", anon_key}, {"Authorization", "Bearer " + anon_key}});
     if (storage.status_code == 200 && storage.body.find("name") != std::string::npos) {
-      findings.push_back({"Supabase Storage Buckets Exposed", "high",
-                          supabase_url + "/storage/v1/bucket",
+      findings.push_back({"Supabase Storage Buckets Exposed", "high", supabase_url + "/storage/v1/bucket",
                           "Storage buckets listable with anon key", "", "", ""});
     }
 
     // Check if service_role key is accidentally exposed (catastrophic).
-    for (const auto &url : crawl.urls) {
+    for (const auto& url : crawl.urls) {
       auto resp = http.get(url);
-      if (resp.body.find("service_role") != std::string::npos ||
-          resp.body.find("SUPABASE_SERVICE") != std::string::npos) {
-        findings.push_back({"Supabase Service Role Key Leaked", "critical", url,
-                            "service_role key in client code — full DB admin access",
-                            "", "", ""});
+      if (resp.body.find("service_role") != std::string::npos || resp.body.find("SUPABASE_SERVICE") != std::string::npos) {
+        findings.push_back(
+            {"Supabase Service Role Key Leaked", "critical", url, "service_role key in client code — full DB admin access", "", "", ""});
         break;
       }
     }
@@ -110,19 +101,17 @@ std::vector<Finding> scan_supabase(const Config &, HttpClient &http,
 /// Clerk/Auth0/auth provider misconfigurations.
 /// Scanner implementation.
 /// @brief Scan for auth_providers vulnerabilities.
-std::vector<Finding> scan_auth_providers(const Config &, HttpClient &http,
-                                         const CrawlResult &crawl) {
+std::vector<Finding> scan_auth_providers(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
 
   std::string clerk_key, auth0_domain;
   // Iterate over targets.
-  for (const auto &url : crawl.urls) {
+  for (const auto& url : crawl.urls) {
     auto resp = http.get(url);
     // Clerk publishable key.
-    if (resp.body.find("pk_live_") != std::string::npos ||
-        resp.body.find("pk_test_") != std::string::npos) {
+    if (resp.body.find("pk_live_") != std::string::npos || resp.body.find("pk_test_") != std::string::npos) {
       std::regex re(R"(pk_(live|test)_[A-Za-z0-9]+)");
       std::smatch m;
       if (std::regex_search(resp.body, m, re)) clerk_key = m[0].str();
@@ -134,13 +123,10 @@ std::vector<Finding> scan_auth_providers(const Config &, HttpClient &http,
 
     // Check for secret keys accidentally exposed.
     if (resp.body.find("sk_live_") != std::string::npos) {
-      findings.push_back({"Clerk Secret Key Leaked", "critical", url,
-                          "Clerk secret key (sk_live_) in client-side code", "", "", ""});
+      findings.push_back({"Clerk Secret Key Leaked", "critical", url, "Clerk secret key (sk_live_) in client-side code", "", "", ""});
     }
-    if (resp.body.find("AUTH0_SECRET") != std::string::npos ||
-        resp.body.find("auth0_client_secret") != std::string::npos) {
-      findings.push_back({"Auth0 Client Secret Leaked", "critical", url,
-                          "Auth0 client secret in client-side code", "", "", ""});
+    if (resp.body.find("AUTH0_SECRET") != std::string::npos || resp.body.find("auth0_client_secret") != std::string::npos) {
+      findings.push_back({"Auth0 Client Secret Leaked", "critical", url, "Auth0 client secret in client-side code", "", "", ""});
     }
   }
 
@@ -148,8 +134,7 @@ std::vector<Finding> scan_auth_providers(const Config &, HttpClient &http,
   if (!auth0_domain.empty()) {
     auto resp = http.get("https://" + auth0_domain + "/api/v2/users");
     if (resp.status_code == 200 && resp.body.find("email") != std::string::npos) {
-      findings.push_back({"Auth0 Management API Open", "critical",
-                          "https://" + auth0_domain + "/api/v2/users",
+      findings.push_back({"Auth0 Management API Open", "critical", "https://" + auth0_domain + "/api/v2/users",
                           "Auth0 management API accessible without auth", "", "", ""});
     }
   }
@@ -159,8 +144,7 @@ std::vector<Finding> scan_auth_providers(const Config &, HttpClient &http,
 /// Vercel/Netlify/Cloudflare deployment misconfigs.
 /// Scanner implementation.
 /// @brief Scan for deployment_platforms vulnerabilities.
-std::vector<Finding> scan_deployment_platforms(const Config &, HttpClient &http,
-                                               const CrawlResult &crawl) {
+std::vector<Finding> scan_deployment_platforms(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
@@ -169,36 +153,31 @@ std::vector<Finding> scan_deployment_platforms(const Config &, HttpClient &http,
   // Vercel: exposed _next/data, environment variables in source.
   auto next_resp = http.get(base + "/_next/data/");
   if (next_resp.status_code == 200) {
-    findings.push_back({"Vercel _next/data Exposed", "low", base + "/_next/data/",
-                        "Next.js data directory listable", "", "", ""});
+    findings.push_back({"Vercel _next/data Exposed", "low", base + "/_next/data/", "Next.js data directory listable", "", "", ""});
   }
 
   // Check for exposed .vercel, .netlify configs.
   // Iterate over targets.
-  for (const auto &path : {"/.vercel/project.json", "/.netlify/state.json"}) {
+  for (const auto& path : {"/.vercel/project.json", "/.netlify/state.json"}) {
     auto resp = http.get(base + path);
     if (resp.status_code == 200 && resp.body.size() > 10) {
-      findings.push_back({"Deployment Config Exposed", "medium", base + path,
-                          "Platform deployment config accessible", "", "", ""});
+      findings.push_back({"Deployment Config Exposed", "medium", base + path, "Platform deployment config accessible", "", "", ""});
     }
   }
 
   // Cloudflare: check for exposed Workers KV, D1, R2.
   // Iterate over targets.
-  for (const auto &url : crawl.urls) {
+  for (const auto& url : crawl.urls) {
     auto resp = http.get(url);
-    if (resp.body.find("CLOUDFLARE_API_TOKEN") != std::string::npos ||
-        resp.body.find("CF_API_KEY") != std::string::npos) {
-      findings.push_back({"Cloudflare API Token Leaked", "critical", url,
-                          "Cloudflare API token in source code", "", "", ""});
+    if (resp.body.find("CLOUDFLARE_API_TOKEN") != std::string::npos || resp.body.find("CF_API_KEY") != std::string::npos) {
+      findings.push_back({"Cloudflare API Token Leaked", "critical", url, "Cloudflare API token in source code", "", "", ""});
     }
   }
 
   // Check for exposed preview deployments with different env vars.
   auto preview = http.get(base, {{"X-Vercel-Protection-Bypass", ""}});
   if (preview.status_code == 200 && preview.body != http.get(base).body) {
-    findings.push_back({"Vercel Preview Bypass", "medium", base,
-                        "Preview deployment accessible via header bypass", "", "", ""});
+    findings.push_back({"Vercel Preview Bypass", "medium", base, "Preview deployment accessible via header bypass", "", "", ""});
   }
   return findings;
 }
@@ -206,8 +185,7 @@ std::vector<Finding> scan_deployment_platforms(const Config &, HttpClient &http,
 /// Serverless DB misconfigs: Neon, PlanetScale, Turso, Upstash.
 /// Scanner implementation.
 /// @brief Scan for serverless_db vulnerabilities.
-std::vector<Finding> scan_serverless_db(const Config &, HttpClient &http,
-                                        const CrawlResult &crawl) {
+std::vector<Finding> scan_serverless_db(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
@@ -227,18 +205,16 @@ std::vector<Finding> scan_serverless_db(const Config &, HttpClient &http,
   };
 
   // Iterate over targets.
-  for (const auto &url : crawl.urls) {
+  for (const auto& url : crawl.urls) {
     auto resp = http.get(url);
-    for (const auto &[pattern, desc] : patterns) {
+    for (const auto& [pattern, desc] : patterns) {
       if (resp.body.find(pattern) != std::string::npos) {
         // Verify it's not just a placeholder/docs reference.
         size_t pos = resp.body.find(pattern);
         std::string context = resp.body.substr(pos, std::min(size_t(100), resp.body.size() - pos));
-        if (context.find("example") == std::string::npos &&
-            context.find("placeholder") == std::string::npos &&
+        if (context.find("example") == std::string::npos && context.find("placeholder") == std::string::npos &&
             context.find("YOUR_") == std::string::npos) {
-          findings.push_back({"Leaked DB Credential: " + desc, "critical", url,
-                              desc + " found in client-accessible code", "", "", ""});
+          findings.push_back({"Leaked DB Credential: " + desc, "critical", url, desc + " found in client-accessible code", "", "", ""});
         }
       }
     }
@@ -249,8 +225,7 @@ std::vector<Finding> scan_serverless_db(const Config &, HttpClient &http,
 /// Observability/analytics misconfigs: PostHog, Sentry, Datadog.
 /// Scanner implementation.
 /// @brief Scan for observability vulnerabilities.
-std::vector<Finding> scan_observability(const Config &, HttpClient &http,
-                                        const CrawlResult &crawl) {
+std::vector<Finding> scan_observability(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
@@ -258,7 +233,7 @@ std::vector<Finding> scan_observability(const Config &, HttpClient &http,
 
   // PostHog: check for exposed API with overly permissive project key.
   // Iterate over targets.
-  for (const auto &url : crawl.urls) {
+  for (const auto& url : crawl.urls) {
     auto resp = http.get(url);
     std::regex ph_re(R"(phc_[A-Za-z0-9]{20,})");
     std::smatch m;
@@ -267,31 +242,26 @@ std::vector<Finding> scan_observability(const Config &, HttpClient &http,
       // Test if we can query events (should be write-only).
       auto test = http.get("https://app.posthog.com/api/event/?token=" + key);
       if (test.status_code == 200 && test.body.find("results") != std::string::npos) {
-        findings.push_back({"PostHog API Key Overpermissioned", "high",
-                            "https://app.posthog.com/api/event/",
-                            "PostHog key allows reading events — should be write-only",
-                            "", key, ""});
+        findings.push_back({"PostHog API Key Overpermissioned", "high", "https://app.posthog.com/api/event/",
+                            "PostHog key allows reading events — should be write-only", "", key, ""});
       }
     }
 
     // Sentry DSN — check if it leaks internal project info.
     std::regex sentry_re(R"(https://[a-f0-9]+@[a-z0-9]+\.ingest\.sentry\.io/[0-9]+)");
     if (std::regex_search(resp.body, m, sentry_re)) {
-      findings.push_back({"Sentry DSN Exposed", "info", url,
-                          "Sentry DSN in source — normal for client-side, verify scope",
-                          "", m[0].str(), ""});
+      findings.push_back(
+          {"Sentry DSN Exposed", "info", url, "Sentry DSN in source — normal for client-side, verify scope", "", m[0].str(), ""});
     }
   }
 
   // Check for exposed Grafana/monitoring dashboards.
   // Iterate over targets.
-  for (const auto &path : {"/grafana/", "/kibana/", "/prometheus/", "/jaeger/"}) {
+  for (const auto& path : {"/grafana/", "/kibana/", "/prometheus/", "/jaeger/"}) {
     auto resp = http.get(base + path);
-    if (resp.status_code == 200 && resp.body.size() > 200 &&
-        resp.body.find("login") == std::string::npos) {
-      findings.push_back({"Exposed Monitoring: " + std::string(path), "high",
-                          base + path, "Monitoring dashboard accessible without auth",
-                          "", "", ""});
+    if (resp.status_code == 200 && resp.body.size() > 200 && resp.body.find("login") == std::string::npos) {
+      findings.push_back(
+          {"Exposed Monitoring: " + std::string(path), "high", base + path, "Monitoring dashboard accessible without auth", "", "", ""});
     }
   }
   return findings;
@@ -300,36 +270,29 @@ std::vector<Finding> scan_observability(const Config &, HttpClient &http,
 /// Realtime/messaging misconfigs: Pusher, Ably, WebSocket endpoints.
 /// Scanner implementation.
 /// @brief Scan for realtime_infra vulnerabilities.
-std::vector<Finding> scan_realtime_infra(const Config &, HttpClient &http,
-                                         const CrawlResult &crawl) {
+std::vector<Finding> scan_realtime_infra(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
 
   // Iterate over targets.
-  for (const auto &url : crawl.urls) {
+  for (const auto& url : crawl.urls) {
     auto resp = http.get(url);
 
     // Pusher keys — check if they allow subscribing to private channels.
     std::regex pusher_re(R"(([a-f0-9]{20}))");
-    if (resp.body.find("pusher") != std::string::npos ||
-        resp.body.find("Pusher") != std::string::npos) {
-      if (resp.body.find("pusherSecret") != std::string::npos ||
-          resp.body.find("PUSHER_SECRET") != std::string::npos) {
+    if (resp.body.find("pusher") != std::string::npos || resp.body.find("Pusher") != std::string::npos) {
+      if (resp.body.find("pusherSecret") != std::string::npos || resp.body.find("PUSHER_SECRET") != std::string::npos) {
         findings.push_back({"Pusher Secret Key Leaked", "critical", url,
-                            "Pusher secret in client code — can forge auth for private channels",
-                            "", "", ""});
+                            "Pusher secret in client code — can forge auth for private channels", "", "", ""});
       }
     }
 
     // Ably API key.
     std::regex ably_re(R"([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+:[A-Za-z0-9_-]+)");
     std::smatch m;
-    if (resp.body.find("ably") != std::string::npos &&
-        std::regex_search(resp.body, m, ably_re)) {
-      findings.push_back({"Ably API Key Exposed", "high", url,
-                          "Ably key in source — verify it's subscribe-only",
-                          "", "", ""});
+    if (resp.body.find("ably") != std::string::npos && std::regex_search(resp.body, m, ably_re)) {
+      findings.push_back({"Ably API Key Exposed", "high", url, "Ably key in source — verify it's subscribe-only", "", "", ""});
     }
 
     // Exposed WebSocket endpoints without auth.
@@ -338,11 +301,9 @@ std::vector<Finding> scan_realtime_infra(const Config &, HttpClient &http,
     auto end = std::sregex_iterator();
     for (auto it = begin; it != end; ++it) {
       std::string ws_url = (*it)[0].str();
-      if (ws_url.find("socket") != std::string::npos ||
-          ws_url.find("ws.") != std::string::npos) {
-        findings.push_back({"WebSocket Endpoint Found", "info", ws_url,
-                            "WebSocket endpoint in source — verify auth requirements",
-                            "", "", ""});
+      if (ws_url.find("socket") != std::string::npos || ws_url.find("ws.") != std::string::npos) {
+        findings.push_back(
+            {"WebSocket Endpoint Found", "info", ws_url, "WebSocket endpoint in source — verify auth requirements", "", "", ""});
         break;
       }
     }
@@ -353,8 +314,7 @@ std::vector<Finding> scan_realtime_infra(const Config &, HttpClient &http,
 /// Automation/low-code misconfigs: n8n, Retool, internal tools.
 /// Scanner implementation.
 /// @brief Scan for automation_tools vulnerabilities.
-std::vector<Finding> scan_automation_tools(const Config &, HttpClient &http,
-                                           const CrawlResult &crawl) {
+std::vector<Finding> scan_automation_tools(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
@@ -373,19 +333,17 @@ std::vector<Finding> scan_automation_tools(const Config &, HttpClient &http,
   };
 
   // Iterate over targets.
-  for (const auto &[path, name] : paths) {
+  for (const auto& [path, name] : paths) {
     auto resp = http.get(base + path);
-    if (resp.status_code == 200 && resp.body.size() > 100 &&
-        resp.body.find("unauthorized") == std::string::npos &&
+    if (resp.status_code == 200 && resp.body.size() > 100 && resp.body.find("unauthorized") == std::string::npos &&
         resp.body.find("login") == std::string::npos) {
-      findings.push_back({"Exposed " + name, "high", base + path,
-                          name + " accessible without authentication", "", "", ""});
+      findings.push_back({"Exposed " + name, "high", base + path, name + " accessible without authentication", "", "", ""});
     }
   }
   return findings;
 }
 
-} // namespace
+}  // namespace
 
 std::vector<Scanner> register_cloud_stack_scanners() {
   return {
@@ -399,4 +357,4 @@ std::vector<Scanner> register_cloud_stack_scanners() {
   };
 }
 
-} // namespace apex
+}  // namespace apex

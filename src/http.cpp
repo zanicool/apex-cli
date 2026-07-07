@@ -1,10 +1,12 @@
 /// @file http.cpp
 /// @brief HTTP client implementation using libcurl.
 #include "http.hpp"
+
+#include <curl/curl.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
-#include <curl/curl.h>
 #include <random>
 #include <regex>
 #include <thread>
@@ -14,7 +16,7 @@ namespace apex {
 namespace {
 
 /// User agents for rotation.
-const char *kUserAgents[] = {
+const char* kUserAgents[] = {
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -27,16 +29,16 @@ const char *kUserAgents[] = {
 constexpr size_t kNumAgents = sizeof(kUserAgents) / sizeof(kUserAgents[0]);
 
 /// Callback for libcurl to write response body.
-size_t write_callback(char *ptr, size_t size, size_t nmemb, void *userdata) {
-  auto *buf = static_cast<std::string *>(userdata);
+size_t write_callback(char* ptr, size_t size, size_t nmemb, void* userdata) {
+  auto* buf = static_cast<std::string*>(userdata);
   size_t bytes = size * nmemb;
   buf->append(ptr, bytes);
   return bytes;
 }
 
 /// Callback for libcurl to capture response headers.
-size_t header_callback(char *ptr, size_t size, size_t nmemb, void *userdata) {
-  auto *headers = static_cast<std::map<std::string, std::string> *>(userdata);
+size_t header_callback(char* ptr, size_t size, size_t nmemb, void* userdata) {
+  auto* headers = static_cast<std::map<std::string, std::string>*>(userdata);
   size_t bytes = size * nmemb;
   std::string line(ptr, bytes);
   auto colon = line.find(':');
@@ -51,54 +53,45 @@ size_t header_callback(char *ptr, size_t size, size_t nmemb, void *userdata) {
   return bytes;
 }
 
-} // namespace
+}  // namespace
 
-HttpClient::HttpClient(const Config &cfg) : cfg_(cfg) {
-  curl_global_init(CURL_GLOBAL_DEFAULT);
-}
+HttpClient::HttpClient(const Config& cfg) : cfg_(cfg) { curl_global_init(CURL_GLOBAL_DEFAULT); }
 
 HttpClient::~HttpClient() {
-  for (auto *h : pool_) {
-    curl_easy_cleanup(static_cast<CURL *>(h));
+  for (auto* h : pool_) {
+    curl_easy_cleanup(static_cast<CURL*>(h));
   }
   curl_global_cleanup();
 }
 
-void *HttpClient::acquire_handle() {
+void* HttpClient::acquire_handle() {
   std::lock_guard<std::mutex> lock(pool_mu_);
   if (!pool_.empty()) {
-    void *h = pool_.back();
+    void* h = pool_.back();
     pool_.pop_back();
     return h;
   }
   return curl_easy_init();
 }
 
-void HttpClient::release_handle(void *handle) {
+void HttpClient::release_handle(void* handle) {
   std::lock_guard<std::mutex> lock(pool_mu_);
   pool_.push_back(handle);
 }
 
-Response HttpClient::get(const std::string &url) {
-  return do_request("GET", url, "", {});
-}
+Response HttpClient::get(const std::string& url) { return do_request("GET", url, "", {}); }
 
-Response HttpClient::get(
-    const std::string &url,
-    const std::vector<std::pair<std::string, std::string>> &headers) {
+Response HttpClient::get(const std::string& url, const std::vector<std::pair<std::string, std::string>>& headers) {
   std::map<std::string, std::string> hmap(headers.begin(), headers.end());
   return do_request("GET", url, "", hmap);
 }
 
-Response HttpClient::post(const std::string &url, const std::string &body,
-                          const std::string &content_type) {
+Response HttpClient::post(const std::string& url, const std::string& body, const std::string& content_type) {
   return do_request("POST", url, body, {{"Content-Type", content_type}});
 }
 
-Response HttpClient::post(
-    const std::string &url, const std::string &body,
-    const std::string &content_type,
-    const std::vector<std::pair<std::string, std::string>> &headers) {
+Response HttpClient::post(const std::string& url, const std::string& body, const std::string& content_type,
+                          const std::vector<std::pair<std::string, std::string>>& headers) {
   std::map<std::string, std::string> hmap(headers.begin(), headers.end());
   hmap["Content-Type"] = content_type;
   return do_request("POST", url, body, hmap);
@@ -106,9 +99,8 @@ Response HttpClient::post(
 
 long HttpClient::request_count() const { return req_count_.load(); }
 
-Response HttpClient::do_request(
-    const std::string &method, const std::string &url, const std::string &body,
-    const std::map<std::string, std::string> &extra_headers) {
+Response HttpClient::do_request(const std::string& method, const std::string& url, const std::string& body,
+                                const std::map<std::string, std::string>& extra_headers) {
   Response resp;
   resp.url = url;
 
@@ -118,13 +110,13 @@ Response HttpClient::do_request(
 
   // Check cache first (GET only)
   std::string ckey = cache_key(method, url, extra_headers);
-  if (auto *cached = cache_lookup(ckey)) {
+  if (auto* cached = cache_lookup(ckey)) {
     return *cached;
   }
 
   rate_limit();
 
-  CURL *curl = static_cast<CURL *>(acquire_handle());
+  CURL* curl = static_cast<CURL*>(acquire_handle());
   if (!curl) {
     resp.error = "curl handle not available";
     return resp;
@@ -157,12 +149,11 @@ Response HttpClient::do_request(
   if (method == "POST") {
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE,
-                     static_cast<long>(body.size()));
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
   }
 
-  struct curl_slist *headers_list = nullptr;
-  for (const auto &[key, val] : extra_headers) {
+  struct curl_slist* headers_list = nullptr;
+  for (const auto& [key, val] : extra_headers) {
     std::string h = key + ": " + val;
     headers_list = curl_slist_append(headers_list, h.c_str());
   }
@@ -185,8 +176,7 @@ Response HttpClient::do_request(
   CURLcode res = curl_easy_perform(curl);
   auto end = std::chrono::steady_clock::now();
 
-  resp.duration =
-      std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+  resp.duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
   if (res != CURLE_OK) {
     resp.error = curl_easy_strerror(res);
@@ -217,8 +207,8 @@ Response HttpClient::do_request(
 
     for (int retry = 0; retry < 3; ++retry) {
       std::this_thread::sleep_for(std::chrono::milliseconds(current_backoff));
-      current_backoff *= 2; // Exponential backoff
-      if (current_backoff > 10000) current_backoff = 10000; // Cap at 10s
+      current_backoff *= 2;                                  // Exponential backoff
+      if (current_backoff > 10000) current_backoff = 10000;  // Cap at 10s
 
       // Increase global rate limit
       backoff_ms.store(std::min(current_backoff, 5000));
@@ -237,17 +227,14 @@ Response HttpClient::do_request(
 }
 
 void HttpClient::rate_limit() {
-  if (cfg_.rate <= 0.0)
-    return;
+  if (cfg_.rate <= 0.0) return;
   // Global token bucket: allow 1/rate requests per second.
   static std::mutex rate_mu;
   static auto last = std::chrono::steady_clock::now();
   std::lock_guard<std::mutex> lock(rate_mu);
   auto now = std::chrono::steady_clock::now();
-  auto min_interval =
-      std::chrono::milliseconds(static_cast<int>(cfg_.rate * 1000.0));
-  auto elapsed =
-      std::chrono::duration_cast<std::chrono::milliseconds>(now - last);
+  auto min_interval = std::chrono::milliseconds(static_cast<int>(cfg_.rate * 1000.0));
+  auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last);
   if (elapsed < min_interval) {
     std::this_thread::sleep_for(min_interval - elapsed);
   }
@@ -258,15 +245,15 @@ void HttpClient::rate_limit() {
 // REQUEST CACHE
 // ============================================================
 
-std::string HttpClient::cache_key(const std::string &method, const std::string &url,
-                                    const std::map<std::string, std::string> &headers) const {
+std::string HttpClient::cache_key(const std::string& method, const std::string& url,
+                                  const std::map<std::string, std::string>& /*headers*/) const {
   // Only cache GET requests (POST/PUT are state-changing)
   if (method != "GET") return "";
   // Key = URL (headers usually don't change between modules)
   return url;
 }
 
-Response *HttpClient::cache_lookup(const std::string &key) {
+Response* HttpClient::cache_lookup(const std::string& key) {
   if (key.empty()) return nullptr;
   std::lock_guard<std::mutex> lock(cache_mu_);
   auto it = response_cache_.find(key);
@@ -277,7 +264,7 @@ Response *HttpClient::cache_lookup(const std::string &key) {
   return nullptr;
 }
 
-void HttpClient::cache_store(const std::string &key, const Response &resp) {
+void HttpClient::cache_store(const std::string& key, const Response& resp) {
   if (key.empty()) return;
   // Don't cache errors or empty responses
   if (resp.status_code == 0 || resp.body.empty()) return;
@@ -295,11 +282,10 @@ std::string HttpClient::random_ua() const {
   return kUserAgents[dist(rng)];
 }
 
-std::string safe_name(const std::string &s) {
+std::string safe_name(const std::string& s) {
   std::string out = s;
-  std::replace_if(
-      out.begin(), out.end(), [](char c) { return !std::isalnum(c); }, '_');
+  std::replace_if(out.begin(), out.end(), [](char c) { return !std::isalnum(c); }, '_');
   return out;
 }
 
-} // namespace apex
+}  // namespace apex

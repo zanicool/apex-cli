@@ -1,6 +1,7 @@
 /// @file brain.cpp
 /// @brief LLM-powered attack planner using ollama.
 #include "brain.hpp"
+
 #include <array>
 #include <cstdio>
 #include <fstream>
@@ -10,10 +11,9 @@
 
 namespace apex {
 
-Brain::Brain(const Config &cfg, HttpClient &http) : cfg_(cfg), http_(http) {}
+Brain::Brain(const Config& cfg, HttpClient& http) : cfg_(cfg), http_(http) {}
 
-BrainResult Brain::think_and_act(const std::vector<Finding> &findings,
-                                 const std::string &target) {
+BrainResult Brain::think_and_act(const std::vector<Finding>& findings, const std::string& target) {
   BrainResult result;
 
   // Build context from findings
@@ -25,20 +25,18 @@ BrainResult Brain::think_and_act(const std::vector<Finding> &findings,
 
   // Execute each action and track results
   std::vector<std::pair<PlannedAction, std::string>> executed;
-  for (const auto &action : actions) {
+  for (const auto& action : actions) {
     std::string resp = execute_action(action);
     executed.push_back({action, resp});
     ++result.actions_executed;
 
     // Check if we found something interesting
-    if (resp.find("FLAG{") != std::string::npos ||
-        resp.find("root:") != std::string::npos ||
-        resp.find("admin") != std::string::npos) {
+    if (resp.find("FLAG{") != std::string::npos || resp.find("root:") != std::string::npos || resp.find("admin") != std::string::npos) {
       AttackChain chain;
       chain.complete = true;
       chain.impact = "LLM-guided exploitation successful";
       chain.proof = resp.substr(0, 500);
-      for (const auto &[a, r] : executed) {
+      for (const auto& [a, r] : executed) {
         ChainStep step;
         step.action = a.method;
         step.url = a.url;
@@ -53,15 +51,12 @@ BrainResult Brain::think_and_act(const std::vector<Finding> &findings,
     }
   }
 
-  result.summary = "Executed " + std::to_string(result.actions_executed) +
-                   " actions, " + std::to_string(result.chains_completed) +
-                   " chains completed";
+  result.summary =
+      "Executed " + std::to_string(result.actions_executed) + " actions, " + std::to_string(result.chains_completed) + " chains completed";
   return result;
 }
 
-std::vector<PlannedAction>
-Brain::plan(const std::vector<Finding> & /*findings*/,
-            const std::string &context) {
+std::vector<PlannedAction> Brain::plan(const std::vector<Finding>& /*findings*/, const std::string& context) {
   std::vector<PlannedAction> actions;
 
   // Build prompt
@@ -85,8 +80,7 @@ Brain::plan(const std::vector<Finding> & /*findings*/,
   // Parse JSON array from response
   auto start = response.find('[');
   auto end = response.rfind(']');
-  if (start == std::string::npos || end == std::string::npos)
-    return actions;
+  if (start == std::string::npos || end == std::string::npos) return actions;
 
   std::string json = response.substr(start, end - start + 1);
 
@@ -102,33 +96,26 @@ Brain::plan(const std::vector<Finding> & /*findings*/,
   while (std::getline(stream, obj, '}')) {
     PlannedAction a;
     std::smatch m;
-    if (std::regex_search(obj, m, url_re))
-      a.url = m[1].str();
-    if (std::regex_search(obj, m, method_re))
-      a.method = m[1].str();
-    if (std::regex_search(obj, m, reason_re))
-      a.reason = m[1].str();
-    if (std::regex_search(obj, m, body_re))
-      a.body = m[1].str();
-    if (!a.url.empty() && !a.method.empty())
-      actions.push_back(a);
+    if (std::regex_search(obj, m, url_re)) a.url = m[1].str();
+    if (std::regex_search(obj, m, method_re)) a.method = m[1].str();
+    if (std::regex_search(obj, m, reason_re)) a.reason = m[1].str();
+    if (std::regex_search(obj, m, body_re)) a.body = m[1].str();
+    if (!a.url.empty() && !a.method.empty()) actions.push_back(a);
   }
 
   return actions;
 }
 
-std::string Brain::execute_action(const PlannedAction &action) {
+std::string Brain::execute_action(const PlannedAction& action) {
   // Scope check
-  if (!cfg_.scope.empty() && action.url.find(cfg_.scope) == std::string::npos &&
-      action.url.find(cfg_.target) == std::string::npos) {
+  if (!cfg_.scope.empty() && action.url.find(cfg_.scope) == std::string::npos && action.url.find(cfg_.target) == std::string::npos) {
     return "[blocked: out of scope]";
   }
 
   Response resp;
   if (action.method == "POST") {
     std::string ct = "application/x-www-form-urlencoded";
-    if (action.body.find('{') == 0)
-      ct = "application/json";
+    if (action.body.find('{') == 0) ct = "application/json";
     resp = http_.post(action.url, action.body, ct);
   } else {
     resp = http_.get(action.url);
@@ -137,30 +124,25 @@ std::string Brain::execute_action(const PlannedAction &action) {
   return resp.body.substr(0, 2000);
 }
 
-std::string Brain::build_context(const std::vector<Finding> &findings,
-                                 const std::string &target) {
+std::string Brain::build_context(const std::vector<Finding>& findings, const std::string& target) {
   std::ostringstream ctx;
   ctx << "Target: " << target << "\n";
   ctx << "Findings (" << findings.size() << "):\n";
 
   int shown = 0;
-  for (const auto &f : findings) {
-    if (f.severity == "info" && shown > 5)
-      continue;
+  for (const auto& f : findings) {
+    if (f.severity == "info" && shown > 5) continue;
     ctx << "- [" << f.severity << "] " << f.type << " at " << f.url;
-    if (!f.param.empty())
-      ctx << " (param: " << f.param << ")";
-    if (!f.evidence.empty())
-      ctx << " evidence: " << f.evidence.substr(0, 100);
+    if (!f.param.empty()) ctx << " (param: " << f.param << ")";
+    if (!f.evidence.empty()) ctx << " evidence: " << f.evidence.substr(0, 100);
     ctx << "\n";
-    if (++shown >= 15)
-      break;
+    if (++shown >= 15) break;
   }
 
   return ctx.str();
 }
 
-std::string Brain::call_llm(const std::string &prompt) {
+std::string Brain::call_llm(const std::string& prompt) {
   // Write prompt to temp file
   std::string tmp = "/tmp/apex-brain-prompt.txt";
   {
@@ -169,19 +151,17 @@ std::string Brain::call_llm(const std::string &prompt) {
   }
 
   // Call ollama
-  std::string model = "qwen3:14b"; // Fast, good enough for planning
+  std::string model = "qwen3:14b";  // Fast, good enough for planning
   std::string cmd = "ollama run " + model + " < " + tmp + " 2>/dev/null";
 
   std::array<char, 4096> buffer;
   std::string result;
-  FILE *pipe = popen(cmd.c_str(), "r");
-  if (!pipe)
-    return "";
+  FILE* pipe = popen(cmd.c_str(), "r");
+  if (!pipe) return "";
 
   while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
     result += buffer.data();
-    if (result.size() > 8000)
-      break; // Cap output
+    if (result.size() > 8000) break;  // Cap output
   }
   pclose(pipe);
 
@@ -190,4 +170,4 @@ std::string Brain::call_llm(const std::string &prompt) {
   return result;
 }
 
-} // namespace apex
+}  // namespace apex

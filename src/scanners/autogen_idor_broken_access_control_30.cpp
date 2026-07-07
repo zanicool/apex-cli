@@ -1,16 +1,17 @@
 /// @file scanners/autogen_idor_broken_access_control_30.cpp
 /// @brief Auto-generated scanner: IDOR & Broken Access Control (30)
-///        Checks: UUID/GUID prediction on resour, Base64 decoded IDs revealing s, Modify other user's profile vi, Delete other user's resources, Access other user's orders/tra
-#include "scanner_base.hpp"
-#include <regex>
+///        Checks: UUID/GUID prediction on resour, Base64 decoded IDs revealing s, Modify other user's profile vi, Delete other user's
+///        resources, Access other user's orders/tra
 #include <chrono>
+#include <regex>
+
+#include "scanner_base.hpp"
 
 namespace apex {
 namespace {
 
 /// UUID/GUID prediction on resources
-std::vector<Finding> scan_uuid_guid_prediction_on_resources(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_uuid_guid_prediction_on_resources(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -23,8 +24,7 @@ std::vector<Finding> scan_uuid_guid_prediction_on_resources(const Config &, Http
 }
 
 /// Base64 decoded IDs revealing sequential numbers
-std::vector<Finding> scan_base64_decoded_ids_revealing_sequential_(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_base64_decoded_ids_revealing_sequential_(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -37,8 +37,7 @@ std::vector<Finding> scan_base64_decoded_ids_revealing_sequential_(const Config 
 }
 
 /// Modify other user's profile via PUT/PATCH
-std::vector<Finding> scan_modify_other_user_s_profile_via_put_patc(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_modify_other_user_s_profile_via_put_patc(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -51,8 +50,7 @@ std::vector<Finding> scan_modify_other_user_s_profile_via_put_patc(const Config 
 }
 
 /// Delete other user's resources
-std::vector<Finding> scan_delete_other_user_s_resources(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_delete_other_user_s_resources(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -65,8 +63,7 @@ std::vector<Finding> scan_delete_other_user_s_resources(const Config &, HttpClie
 }
 
 /// Access other user's orders/transactions
-std::vector<Finding> scan_access_other_user_s_orders_transactions(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_access_other_user_s_orders_transactions(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -79,8 +76,7 @@ std::vector<Finding> scan_access_other_user_s_orders_transactions(const Config &
 }
 
 /// Access other user's messages/DMs
-std::vector<Finding> scan_access_other_user_s_messages_dms(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_access_other_user_s_messages_dms(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -93,8 +89,7 @@ std::vector<Finding> scan_access_other_user_s_messages_dms(const Config &, HttpC
 }
 
 /// Access other user's payment methods
-std::vector<Finding> scan_access_other_user_s_payment_methods(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_access_other_user_s_payment_methods(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -107,8 +102,7 @@ std::vector<Finding> scan_access_other_user_s_payment_methods(const Config &, Ht
 }
 
 /// Access other user's address/PII
-std::vector<Finding> scan_access_other_user_s_address_pii(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_access_other_user_s_address_pii(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -121,8 +115,7 @@ std::vector<Finding> scan_access_other_user_s_address_pii(const Config &, HttpCl
 }
 
 /// Modify other user's listing/product
-std::vector<Finding> scan_modify_other_user_s_listing_product(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_modify_other_user_s_listing_product(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -135,8 +128,7 @@ std::vector<Finding> scan_modify_other_user_s_listing_product(const Config &, Ht
 }
 
 /// Cancel other user's order
-std::vector<Finding> scan_cancel_other_user_s_order(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_cancel_other_user_s_order(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -149,8 +141,7 @@ std::vector<Finding> scan_cancel_other_user_s_order(const Config &, HttpClient &
 }
 
 /// View other user's analytics/stats
-std::vector<Finding> scan_view_other_user_s_analytics_stats(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_view_other_user_s_analytics_stats(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -163,8 +154,7 @@ std::vector<Finding> scan_view_other_user_s_analytics_stats(const Config &, Http
 }
 
 /// Download other user's invoices/receipts
-std::vector<Finding> scan_download_other_user_s_invoices_receipts(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_download_other_user_s_invoices_receipts(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -177,8 +167,7 @@ std::vector<Finding> scan_download_other_user_s_invoices_receipts(const Config &
 }
 
 /// Access other user's notifications
-std::vector<Finding> scan_access_other_user_s_notifications(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_access_other_user_s_notifications(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -191,8 +180,7 @@ std::vector<Finding> scan_access_other_user_s_notifications(const Config &, Http
 }
 
 /// Modify other user's settings
-std::vector<Finding> scan_modify_other_user_s_settings(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_modify_other_user_s_settings(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -205,8 +193,7 @@ std::vector<Finding> scan_modify_other_user_s_settings(const Config &, HttpClien
 }
 
 /// Force-follow/unfollow other users
-std::vector<Finding> scan_force_follow_unfollow_other_users(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_force_follow_unfollow_other_users(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -218,8 +205,7 @@ std::vector<Finding> scan_force_follow_unfollow_other_users(const Config &, Http
   return findings;
 }
 
-
-} // namespace
+}  // namespace
 
 std::vector<Scanner> register_autogen_idor_broken_access_control_30_scanners() {
   return {
@@ -241,4 +227,4 @@ std::vector<Scanner> register_autogen_idor_broken_access_control_30_scanners() {
   };
 }
 
-} // namespace apex
+}  // namespace apex

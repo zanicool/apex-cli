@@ -1,6 +1,7 @@
 /// @file knowledge/graph.cpp
 /// @brief Security Knowledge Graph implementation with built-in knowledge base.
 #include "graph.hpp"
+
 #include <algorithm>
 #include <queue>
 
@@ -9,25 +10,21 @@ namespace knowledge {
 
 Graph::Graph() {}
 
-void Graph::add_node(const Node &node) {
-  nodes_[node.id] = node;
-}
+void Graph::add_node(const Node& node) { nodes_[node.id] = node; }
 
-void Graph::add_edge(const Edge &edge) {
-  edges_.push_back(edge);
-}
+void Graph::add_edge(const Edge& edge) { edges_.push_back(edge); }
 
-std::vector<Edge> Graph::edges_from(const std::string &node_id) const {
+std::vector<Edge> Graph::edges_from(const std::string& node_id) const {
   std::vector<Edge> result;
-  for (const auto &e : edges_) {
+  for (const auto& e : edges_) {
     if (e.from_id == node_id) result.push_back(e);
   }
   return result;
 }
 
-std::vector<Edge> Graph::edges_to(const std::string &node_id) const {
+std::vector<Edge> Graph::edges_to(const std::string& node_id) const {
   std::vector<Edge> result;
-  for (const auto &e : edges_) {
+  for (const auto& e : edges_) {
     if (e.to_id == node_id) result.push_back(e);
   }
   return result;
@@ -35,15 +32,13 @@ std::vector<Edge> Graph::edges_to(const std::string &node_id) const {
 
 std::vector<Node> Graph::nodes_of_type(NodeType type) const {
   std::vector<Node> result;
-  for (const auto &[id, node] : nodes_) {
+  for (const auto& [id, node] : nodes_) {
     if (node.type == type) result.push_back(node);
   }
   return result;
 }
 
-std::vector<std::string> Graph::traverse(const std::string &start,
-                                          const std::set<EdgeType> &follow,
-                                          int max_depth) const {
+std::vector<std::string> Graph::traverse(const std::string& start, const std::set<EdgeType>& follow, int max_depth) const {
   std::vector<std::string> visited;
   std::queue<std::pair<std::string, int>> queue;
   std::set<std::string> seen;
@@ -58,7 +53,7 @@ std::vector<std::string> Graph::traverse(const std::string &start,
 
     visited.push_back(current);
 
-    for (const auto &edge : edges_from(current)) {
+    for (const auto& edge : edges_from(current)) {
       if (follow.count(edge.type) && !seen.count(edge.to_id)) {
         seen.insert(edge.to_id);
         queue.push({edge.to_id, depth + 1});
@@ -69,16 +64,16 @@ std::vector<std::string> Graph::traverse(const std::string &start,
   return visited;
 }
 
-QueryResult Graph::risks_for(const std::string &technology) const {
+QueryResult Graph::risks_for(const std::string& technology) const {
   QueryResult result;
   auto reachable = traverse(technology, {EdgeType::HAS_RISK, EdgeType::COMMONLY_AFFECTED_BY}, 3);
 
-  for (const auto &id : reachable) {
+  for (const auto& id : reachable) {
     auto it = nodes_.find(id);
     if (it != nodes_.end()) result.nodes.push_back(it->second);
   }
 
-  for (const auto &e : edges_) {
+  for (const auto& e : edges_) {
     if (e.from_id == technology) result.edges.push_back(e);
   }
 
@@ -86,42 +81,46 @@ QueryResult Graph::risks_for(const std::string &technology) const {
   return result;
 }
 
-QueryResult Graph::paths_to_impact(const std::string &from, const std::string &impact) const {
+QueryResult Graph::paths_to_impact(const std::string& from, const std::string& impact) const {
   QueryResult result;
   auto reachable = traverse(from, {EdgeType::LEADS_TO, EdgeType::CHAINS_WITH, EdgeType::HAS_RISK}, 5);
 
   bool found = false;
-  for (const auto &id : reachable) {
-    if (id == impact) { found = true; break; }
+  for (const auto& id : reachable) {
+    if (id == impact) {
+      found = true;
+      break;
+    }
     auto it = nodes_.find(id);
-    if (it != nodes_.end() && it->second.label == impact) { found = true; break; }
+    if (it != nodes_.end() && it->second.label == impact) {
+      found = true;
+      break;
+    }
   }
 
   if (found) {
-    for (const auto &id : reachable) {
+    for (const auto& id : reachable) {
       auto it = nodes_.find(id);
       if (it != nodes_.end()) result.nodes.push_back(it->second);
     }
     result.confidence = 0.6;
-    result.explanation = "Path found from " + from + " to " + impact +
-                         " via " + std::to_string(result.nodes.size()) + " intermediate nodes";
+    result.explanation =
+        "Path found from " + from + " to " + impact + " via " + std::to_string(result.nodes.size()) + " intermediate nodes";
   }
 
   return result;
 }
 
-std::vector<std::string> Graph::suggest_next_tests(
-    const std::set<std::string> &detected_technologies,
-    const std::vector<std::string> &found_vuln_classes) const {
-
+std::vector<std::string> Graph::suggest_next_tests(const std::set<std::string>& detected_technologies,
+                                                   const std::vector<std::string>& found_vuln_classes) const {
   std::set<std::string> suggestions;
 
-  for (const auto &tech : detected_technologies) {
+  for (const auto& tech : detected_technologies) {
     auto risks = traverse(tech, {EdgeType::HAS_RISK, EdgeType::COMMONLY_AFFECTED_BY}, 2);
-    for (const auto &risk : risks) {
+    for (const auto& risk : risks) {
       // If this risk hasn't been found yet, suggest testing it
       bool already_found = false;
-      for (const auto &found : found_vuln_classes) {
+      for (const auto& found : found_vuln_classes) {
         if (risk.find(found) != std::string::npos || found.find(risk) != std::string::npos) {
           already_found = true;
           break;
@@ -139,22 +138,19 @@ std::vector<std::string> Graph::suggest_next_tests(
   return std::vector<std::string>(suggestions.begin(), suggestions.end());
 }
 
-QueryResult Graph::predict_impact(
-    const std::set<std::string> &technologies,
-    const std::vector<std::string> &vuln_classes) const {
-
+QueryResult Graph::predict_impact(const std::set<std::string>& technologies, const std::vector<std::string>& vuln_classes) const {
   QueryResult result;
   double max_confidence = 0.0;
 
-  for (const auto &vuln : vuln_classes) {
+  for (const auto& vuln : vuln_classes) {
     auto impacts = traverse(vuln, {EdgeType::LEADS_TO, EdgeType::CHAINS_WITH}, 3);
-    for (const auto &imp : impacts) {
+    for (const auto& imp : impacts) {
       auto it = nodes_.find(imp);
       if (it != nodes_.end() && it->second.type == NodeType::IMPACT) {
         result.nodes.push_back(it->second);
         // Boost confidence if technology matches
-        for (const auto &tech : technologies) {
-          for (const auto &edge : edges_from(tech)) {
+        for (const auto& tech : technologies) {
+          for (const auto& edge : edges_from(tech)) {
             if (edge.to_id == vuln) max_confidence = std::max(max_confidence, edge.weight);
           }
         }
@@ -307,5 +303,5 @@ void Graph::load_default_knowledge() {
   add_edge({"wordpress", "xss", EdgeType::HAS_RISK, 0.6, "Stored XSS in comments/posts"});
 }
 
-} // namespace knowledge
-} // namespace apex
+}  // namespace knowledge
+}  // namespace apex

@@ -1,13 +1,14 @@
 /// @file recon.cpp
 /// @brief Reconnaissance: crt.sh subdomain enum + HTTP probing.
 #include "recon.hpp"
+
 #include <iostream>
 #include <regex>
 #include <set>
 
 namespace apex {
 
-ReconResult run_recon(const Config &cfg, HttpClient &http) {
+ReconResult run_recon(const Config& cfg, HttpClient& http) {
   ReconResult result;
   std::set<std::string> subs;
 
@@ -37,7 +38,7 @@ ReconResult run_recon(const Config &cfg, HttpClient &http) {
   std::cout << "  -> " << result.subdomains.size() << " subdomains\n";
 
   // Probe: check which subdomains are live.
-  for (const auto &sub : result.subdomains) {
+  for (const auto& sub : result.subdomains) {
     std::string url = "https://" + sub;
     auto probe = http.get(url);
     if (probe.status_code > 0 && probe.error.empty()) {
@@ -56,4 +57,4 @@ ReconResult run_recon(const Config &cfg, HttpClient &http) {
   return result;
 }
 
-} // namespace apex
+}  // namespace apex

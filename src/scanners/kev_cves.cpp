@@ -7,13 +7,13 @@ namespace apex {
 namespace {
 
 struct KevEntry {
-  const char *cve;
-  const char *product;
-  const char *severity;
-  const char *desc;
-  const char *probe_path;    // HTTP path to probe (nullptr = skip)
-  const char *match;         // String to match in response body
-  int expect_status;         // 0 = any 2xx
+  const char* cve;
+  const char* product;
+  const char* severity;
+  const char* desc;
+  const char* probe_path;  // HTTP path to probe (nullptr = skip)
+  const char* match;       // String to match in response body
+  int expect_status;       // 0 = any 2xx
 };
 
 // clang-format off
@@ -180,14 +180,13 @@ const KevEntry kev_db[] = {
 constexpr size_t KEV_DB_SIZE = sizeof(kev_db) / sizeof(kev_db[0]);
 
 /// Probe targets for KEV CVEs that have HTTP-based detection paths.
-std::vector<Finding> scan_kev_probes(const Config &, HttpClient &http,
-                                     const CrawlResult &crawl) {
+std::vector<Finding> scan_kev_probes(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
   for (size_t i = 0; i < KEV_DB_SIZE; ++i) {
-    const auto &e = kev_db[i];
+    const auto& e = kev_db[i];
     if (!e.probe_path) continue;
 
     auto resp = http.get(base + e.probe_path);
@@ -205,40 +204,34 @@ std::vector<Finding> scan_kev_probes(const Config &, HttpClient &http,
 
     if (hit) {
       findings.push_back(
-          {std::string(e.cve) + " (" + e.product + ")", e.severity, base,
-           std::string(e.desc) + " — probe: " + e.probe_path, "", "", ""});
+          {std::string(e.cve) + " (" + e.product + ")", e.severity, base, std::string(e.desc) + " — probe: " + e.probe_path, "", "", ""});
     }
   }
   return findings;
 }
 
 /// Match detected server banners/headers against KEV entries.
-std::vector<Finding> scan_kev_banner_match(const Config &, HttpClient &http,
-                                           const CrawlResult &crawl) {
+std::vector<Finding> scan_kev_banner_match(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
 
   auto resp = http.get(crawl.urls[0]);
   std::string combined;
-  for (const auto &[k, v] : resp.headers)
-    combined += k + ": " + v + "\n";
+  for (const auto& [k, v] : resp.headers) combined += k + ": " + v + "\n";
   combined += resp.body.substr(0, 2000);
 
   for (size_t i = 0; i < KEV_DB_SIZE; ++i) {
-    const auto &e = kev_db[i];
-    if (!e.match || e.probe_path) continue; // skip probe-based and no-match
+    const auto& e = kev_db[i];
+    if (!e.match || e.probe_path) continue;  // skip probe-based and no-match
     if (combined.find(e.match) != std::string::npos) {
-      findings.push_back(
-          {std::string(e.cve) + " (" + e.product + ")", e.severity,
-           crawl.urls[0],
-           std::string(e.desc) + " — product fingerprint detected", "", "",
-           ""});
+      findings.push_back({std::string(e.cve) + " (" + e.product + ")", e.severity, crawl.urls[0],
+                          std::string(e.desc) + " — product fingerprint detected", "", "", ""});
     }
   }
   return findings;
 }
 
-} // namespace
+}  // namespace
 
 std::vector<Scanner> register_kev_scanners() {
   return {
@@ -247,4 +240,4 @@ std::vector<Scanner> register_kev_scanners() {
   };
 }
 
-} // namespace apex
+}  // namespace apex

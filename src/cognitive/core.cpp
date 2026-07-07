@@ -1,6 +1,7 @@
 /// @file cognitive/core.cpp
 /// @brief Apex Cognitive Security Core v1 implementation.
 #include "core.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <sstream>
@@ -12,9 +13,9 @@ namespace cognitive {
 // WORLD MODEL
 // ============================================================
 
-void WorldModel::add_belief(const Belief &belief) {
+void WorldModel::add_belief(const Belief& belief) {
   // Update existing belief or add new one
-  for (auto &b : beliefs) {
+  for (auto& b : beliefs) {
     if (b.subject == belief.subject && b.predicate == belief.predicate) {
       // Bayesian update: combine evidence
       b.confidence = 1.0 - (1.0 - b.confidence) * (1.0 - belief.confidence);
@@ -25,17 +26,16 @@ void WorldModel::add_belief(const Belief &belief) {
   beliefs.push_back(belief);
 }
 
-double WorldModel::confidence_of(const std::string &subject,
-                                  const std::string &predicate) const {
-  for (const auto &b : beliefs) {
+double WorldModel::confidence_of(const std::string& subject, const std::string& predicate) const {
+  for (const auto& b : beliefs) {
     if (b.subject == subject && b.predicate == predicate) return b.confidence;
   }
   return 0.0;
 }
 
-std::vector<Belief> WorldModel::beliefs_about(const std::string &subject) const {
+std::vector<Belief> WorldModel::beliefs_about(const std::string& subject) const {
   std::vector<Belief> result;
-  for (const auto &b : beliefs) {
+  for (const auto& b : beliefs) {
     if (b.subject == subject) result.push_back(b);
   }
   return result;
@@ -43,11 +43,10 @@ std::vector<Belief> WorldModel::beliefs_about(const std::string &subject) const 
 
 std::vector<std::string> WorldModel::priority_targets(int max) const {
   std::vector<std::pair<std::string, double>> scored;
-  for (const auto &[url, score] : endpoint_importance) {
+  for (const auto& [url, score] : endpoint_importance) {
     scored.push_back({url, score});
   }
-  std::sort(scored.begin(), scored.end(),
-            [](const auto &a, const auto &b) { return a.second > b.second; });
+  std::sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
 
   std::vector<std::string> result;
   for (int i = 0; i < max && i < (int)scored.size(); i++) {
@@ -60,28 +59,23 @@ std::vector<std::string> WorldModel::priority_targets(int max) const {
 // COGNITIVE CORE
 // ============================================================
 
-CognitiveCore::CognitiveCore() {
-  knowledge_.load_default_knowledge();
-}
+CognitiveCore::CognitiveCore() { knowledge_.load_default_knowledge(); }
 
-void CognitiveCore::observe(const CrawlResult &crawl,
-                             const std::vector<Finding> &findings,
-                             const std::set<std::string> &technologies) {
+void CognitiveCore::observe(const CrawlResult& crawl, const std::vector<Finding>& findings, const std::set<std::string>& technologies) {
   world_model_.target = crawl.urls.empty() ? "" : crawl.urls[0];
   world_model_.confirmed_technologies = technologies;
 
   // Observe endpoints and infer their nature
-  for (const auto &url : crawl.urls) {
-    world_model_.endpoint_importance[url] = 0.5; // Default
+  for (const auto& url : crawl.urls) {
+    world_model_.endpoint_importance[url] = 0.5;  // Default
   }
 
   // Learn from findings
-  for (const auto &f : findings) {
+  for (const auto& f : findings) {
     world_model_.suspected_vulnerabilities.insert(f.type);
     // Increase importance of endpoints with findings
     if (world_model_.endpoint_importance.count(f.url)) {
-      world_model_.endpoint_importance[f.url] =
-          std::min(1.0, world_model_.endpoint_importance[f.url] + 0.2);
+      world_model_.endpoint_importance[f.url] = std::min(1.0, world_model_.endpoint_importance[f.url] + 0.2);
     }
   }
 
@@ -92,7 +86,7 @@ void CognitiveCore::observe(const CrawlResult &crawl,
 }
 
 void CognitiveCore::infer_endpoint_purposes() {
-  for (auto &[url, importance] : world_model_.endpoint_importance) {
+  for (auto& [url, importance] : world_model_.endpoint_importance) {
     std::string lower = url;
     std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
 
@@ -136,7 +130,7 @@ void CognitiveCore::infer_endpoint_purposes() {
 }
 
 void CognitiveCore::infer_auth_levels() {
-  for (const auto &[url, purpose] : world_model_.endpoint_purposes) {
+  for (const auto& [url, purpose] : world_model_.endpoint_purposes) {
     if (purpose == "admin") {
       world_model_.add_belief({url, "auth_level", 0.8, "Admin endpoint likely requires auth", "inference"});
     } else if (purpose == "financial") {
@@ -146,11 +140,10 @@ void CognitiveCore::infer_auth_levels() {
 }
 
 void CognitiveCore::infer_data_sensitivity() {
-  for (const auto &tech : world_model_.confirmed_technologies) {
+  for (const auto& tech : world_model_.confirmed_technologies) {
     auto risks = knowledge_.risks_for(tech);
-    for (const auto &node : risks.nodes) {
-      world_model_.add_belief({tech, "has_risk:" + node.label, 0.6,
-                               "Knowledge graph indicates risk", "knowledge_graph"});
+    for (const auto& node : risks.nodes) {
+      world_model_.add_belief({tech, "has_risk:" + node.label, 0.6, "Knowledge graph indicates risk", "knowledge_graph"});
     }
   }
 }
@@ -165,17 +158,15 @@ void CognitiveCore::generate_vulnerability_hypotheses() {
   int id = 0;
 
   // For each technology, query knowledge graph for likely vulns
-  for (const auto &tech : world_model_.confirmed_technologies) {
+  for (const auto& tech : world_model_.confirmed_technologies) {
     auto suggestions = knowledge_.suggest_next_tests(
         world_model_.confirmed_technologies,
-        std::vector<std::string>(world_model_.suspected_vulnerabilities.begin(),
-                                 world_model_.suspected_vulnerabilities.end()));
+        std::vector<std::string>(world_model_.suspected_vulnerabilities.begin(), world_model_.suspected_vulnerabilities.end()));
 
-    for (const auto &suggestion : suggestions) {
+    for (const auto& suggestion : suggestions) {
       CognitiveHypothesis h;
       h.id = "CH" + std::to_string(++id);
-      h.statement = "The application is likely vulnerable to " + suggestion +
-                    " based on detected technology: " + tech;
+      h.statement = "The application is likely vulnerable to " + suggestion + " based on detected technology: " + tech;
       h.prior_probability = 0.4;
       h.posterior_probability = 0.4;
       h.test_method = "Run targeted " + suggestion + " checks on priority endpoints";
@@ -186,7 +177,7 @@ void CognitiveCore::generate_vulnerability_hypotheses() {
   }
 
   // For financial endpoints: race condition hypothesis
-  for (const auto &[url, purpose] : world_model_.endpoint_purposes) {
+  for (const auto& [url, purpose] : world_model_.endpoint_purposes) {
     if (purpose == "financial") {
       CognitiveHypothesis h;
       h.id = "CH" + std::to_string(++id);
@@ -201,7 +192,7 @@ void CognitiveCore::generate_vulnerability_hypotheses() {
   }
 
   // For auth endpoints: bypass hypothesis
-  for (const auto &[url, purpose] : world_model_.endpoint_purposes) {
+  for (const auto& [url, purpose] : world_model_.endpoint_purposes) {
     if (purpose == "authentication") {
       CognitiveHypothesis h;
       h.id = "CH" + std::to_string(++id);
@@ -223,9 +214,8 @@ void CognitiveCore::generate_chain_hypotheses() {
   if (world_model_.suspected_vulnerabilities.size() >= 2) {
     CognitiveHypothesis h;
     h.id = "CH" + std::to_string(++id);
-    h.statement = "Multiple weaknesses (" +
-                  std::to_string(world_model_.suspected_vulnerabilities.size()) +
-                  ") may chain into a critical attack path";
+    h.statement =
+        "Multiple weaknesses (" + std::to_string(world_model_.suspected_vulnerabilities.size()) + ") may chain into a critical attack path";
     h.prior_probability = 0.5;
     h.posterior_probability = 0.5;
     h.test_method = "Analyze finding relationships via attack graph";
@@ -238,9 +228,9 @@ std::vector<Action> CognitiveCore::decide() {
   std::vector<Action> actions;
 
   // Generate actions from hypotheses
-  for (const auto &h : hypotheses_) {
+  for (const auto& h : hypotheses_) {
     if (h.status != "untested") continue;
-    if (h.prior_probability < 0.25) continue; // Not worth testing
+    if (h.prior_probability < 0.25) continue;  // Not worth testing
 
     Action action;
     action.type = "test_hypothesis";
@@ -253,37 +243,31 @@ std::vector<Action> CognitiveCore::decide() {
 
   // Generate actions for high-importance unexplored endpoints
   auto priorities = world_model_.priority_targets(5);
-  for (const auto &url : priorities) {
+  for (const auto& url : priorities) {
     Action action;
     action.type = "deep_scan";
     action.target = url;
-    action.rationale = "High-importance endpoint (score: " +
-                       std::to_string(world_model_.endpoint_importance[url]) + ")";
+    action.rationale = "High-importance endpoint (score: " + std::to_string(world_model_.endpoint_importance[url]) + ")";
     action.expected_value = world_model_.endpoint_importance[url];
     actions.push_back(action);
   }
 
   // Sort by expected value
-  std::sort(actions.begin(), actions.end(),
-            [](const Action &a, const Action &b) {
-              return a.expected_value > b.expected_value;
-            });
+  std::sort(actions.begin(), actions.end(), [](const Action& a, const Action& b) { return a.expected_value > b.expected_value; });
 
   return actions;
 }
 
-void CognitiveCore::update(const CognitiveEvidence &evidence) {
+void CognitiveCore::update(const CognitiveEvidence& evidence) {
   // Bayesian update on the hypothesis
-  for (auto &h : hypotheses_) {
+  for (auto& h : hypotheses_) {
     if (h.id != evidence.hypothesis_id) continue;
 
     // Bayes' theorem: P(H|E) = P(E|H) * P(H) / P(E)
-    double p_e = evidence.likelihood_if_true * h.prior_probability +
-                 evidence.likelihood_if_false * (1.0 - h.prior_probability);
+    double p_e = evidence.likelihood_if_true * h.prior_probability + evidence.likelihood_if_false * (1.0 - h.prior_probability);
 
     if (p_e > 0) {
-      h.posterior_probability =
-          (evidence.likelihood_if_true * h.prior_probability) / p_e;
+      h.posterior_probability = (evidence.likelihood_if_true * h.prior_probability) / p_e;
     }
 
     h.status = evidence.supports_hypothesis ? "confirmed" : "weakened";
@@ -294,9 +278,8 @@ void CognitiveCore::update(const CognitiveEvidence &evidence) {
   }
 }
 
-std::vector<Action> CognitiveCore::think(const CrawlResult &crawl,
-                                          const std::vector<Finding> &findings,
-                                          const std::set<std::string> &technologies) {
+std::vector<Action> CognitiveCore::think(const CrawlResult& crawl, const std::vector<Finding>& findings,
+                                         const std::set<std::string>& technologies) {
   cycle_count_++;
   observe(crawl, findings, technologies);
   hypothesize();
@@ -315,10 +298,13 @@ std::string CognitiveCore::summary() const {
 
   ss << "Hypotheses: " << hypotheses_.size() << "\n";
   int untested = 0, confirmed = 0, rejected = 0;
-  for (const auto &h : hypotheses_) {
-    if (h.status == "untested") untested++;
-    else if (h.status == "confirmed") confirmed++;
-    else if (h.status == "rejected") rejected++;
+  for (const auto& h : hypotheses_) {
+    if (h.status == "untested")
+      untested++;
+    else if (h.status == "confirmed")
+      confirmed++;
+    else if (h.status == "rejected")
+      rejected++;
   }
   ss << "  Untested: " << untested << "\n";
   ss << "  Confirmed: " << confirmed << "\n";
@@ -326,12 +312,12 @@ std::string CognitiveCore::summary() const {
 
   ss << "Priority Targets:\n";
   auto targets = world_model_.priority_targets(5);
-  for (const auto &t : targets) {
+  for (const auto& t : targets) {
     ss << "  [" << (int)(world_model_.endpoint_importance.at(t) * 100) << "%] " << t << "\n";
   }
 
   return ss.str();
 }
 
-} // namespace cognitive
-} // namespace apex
+}  // namespace cognitive
+}  // namespace apex

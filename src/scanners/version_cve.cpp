@@ -1,8 +1,9 @@
 /// @file scanners/version_cve.cpp
 /// @brief Version fingerprinting and CVE lookup: server banners, SSH version,
 ///        technology detection, known CVE matching for detected versions.
-#include "scanner_base.hpp"
 #include <map>
+
+#include "scanner_base.hpp"
 
 ///
 /// @details This scanner module is part of the apex-cli security scanning
@@ -21,7 +22,13 @@ namespace apex {
 namespace {
 
 /// Known CVEs for common software versions (subset — high-impact only).
-struct CVEEntry { const char *product; const char *version_prefix; const char *cve; const char *severity; const char *desc; };
+struct CVEEntry {
+  const char* product;
+  const char* version_prefix;
+  const char* cve;
+  const char* severity;
+  const char* desc;
+};
 const CVEEntry known_cves[] = {
     // Linux kernel 2026 bugs from the Tweakers article
     {"Linux", "5.", "CVE-2026-31431", "high", "Copy Fail — local privilege escalation"},
@@ -159,8 +166,7 @@ const CVEEntry known_cves[] = {
 
 /// Scanner implementation.
 /// @brief Scan for server_banner vulnerabilities.
-std::vector<Finding> scan_server_banner(const Config &, HttpClient &http,
-                                        const CrawlResult &crawl) {
+std::vector<Finding> scan_server_banner(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
@@ -173,27 +179,22 @@ std::vector<Finding> scan_server_banner(const Config &, HttpClient &http,
   auto server_it = resp.headers.find("Server");
   if (server_it != resp.headers.end() && server_it->second.size() > 2) {
     detected["Server"] = server_it->second;
-    findings.push_back({"Server Banner Disclosure", "low", crawl.urls[0],
-                        "Server: " + server_it->second, "", "", ""});
+    findings.push_back({"Server Banner Disclosure", "low", crawl.urls[0], "Server: " + server_it->second, "", "", ""});
   }
 
   auto powered_it = resp.headers.find("X-Powered-By");
   if (powered_it != resp.headers.end()) {
     detected["X-Powered-By"] = powered_it->second;
-    findings.push_back({"Technology Disclosure", "low", crawl.urls[0],
-                        "X-Powered-By: " + powered_it->second, "", "", ""});
+    findings.push_back({"Technology Disclosure", "low", crawl.urls[0], "X-Powered-By: " + powered_it->second, "", "", ""});
   }
 
   // Match against known CVEs.
   // Iterate over targets.
-  for (const auto &[key, value] : detected) {
-    for (const auto &cve : known_cves) {
-      if (value.find(cve.product) != std::string::npos &&
-          value.find(cve.version_prefix) != std::string::npos) {
-        findings.push_back({std::string(cve.cve) + " (" + cve.product + ")",
-                            cve.severity, crawl.urls[0],
-                            std::string(cve.desc) + " — detected: " + value,
-                            "", "", ""});
+  for (const auto& [key, value] : detected) {
+    for (const auto& cve : known_cves) {
+      if (value.find(cve.product) != std::string::npos && value.find(cve.version_prefix) != std::string::npos) {
+        findings.push_back({std::string(cve.cve) + " (" + cve.product + ")", cve.severity, crawl.urls[0],
+                            std::string(cve.desc) + " — detected: " + value, "", "", ""});
       }
     }
   }
@@ -202,16 +203,12 @@ std::vector<Finding> scan_server_banner(const Config &, HttpClient &http,
 
 /// Scanner implementation.
 /// @brief Scan for ssh_version vulnerabilities.
-std::vector<Finding> scan_ssh_version(const Config &cfg, HttpClient &http,
-                                      const CrawlResult &) {
+std::vector<Finding> scan_ssh_version(const Config& cfg, HttpClient& http, const CrawlResult&) {
   std::vector<Finding> findings;
   std::string domain = cfg.target;
-  if (domain.find("://") != std::string::npos)
-    domain = domain.substr(domain.find("://") + 3);
-  if (domain.find('/') != std::string::npos)
-    domain = domain.substr(0, domain.find('/'));
-  if (domain.find(':') != std::string::npos)
-    domain = domain.substr(0, domain.find(':'));
+  if (domain.find("://") != std::string::npos) domain = domain.substr(domain.find("://") + 3);
+  if (domain.find('/') != std::string::npos) domain = domain.substr(0, domain.find('/'));
+  if (domain.find(':') != std::string::npos) domain = domain.substr(0, domain.find(':'));
 
   // Try SSH banner grab via HTTP (some proxies expose it) or direct.
   // We use a trick: connect to port 22 via our HTTP client timeout.
@@ -219,15 +216,12 @@ std::vector<Finding> scan_ssh_version(const Config &cfg, HttpClient &http,
   auto resp = http.get("http://" + domain + ":22/");
   if (resp.body.find("SSH-") != std::string::npos) {
     std::string banner = resp.body.substr(0, resp.body.find('\n'));
-    findings.push_back({"SSH Version Detected", "info", domain + ":22",
-                        "SSH banner: " + banner, "", "", ""});
+    findings.push_back({"SSH Version Detected", "info", domain + ":22", "SSH banner: " + banner, "", "", ""});
 
     // Check against known CVEs.
-    for (const auto &cve : known_cves) {
-      if (banner.find(cve.product) != std::string::npos &&
-          banner.find(cve.version_prefix) != std::string::npos) {
-        findings.push_back({std::string(cve.cve), cve.severity, domain + ":22",
-                            std::string(cve.desc) + " — " + banner, "", "", ""});
+    for (const auto& cve : known_cves) {
+      if (banner.find(cve.product) != std::string::npos && banner.find(cve.version_prefix) != std::string::npos) {
+        findings.push_back({std::string(cve.cve), cve.severity, domain + ":22", std::string(cve.desc) + " — " + banner, "", "", ""});
       }
     }
   }
@@ -236,8 +230,7 @@ std::vector<Finding> scan_ssh_version(const Config &cfg, HttpClient &http,
 
 /// Scanner implementation.
 /// @brief Scan for version_endpoints vulnerabilities.
-std::vector<Finding> scan_version_endpoints(const Config &, HttpClient &http,
-                                            const CrawlResult &crawl) {
+std::vector<Finding> scan_version_endpoints(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   // Early return if no URLs to scan.
   if (crawl.urls.empty()) return findings;
@@ -245,13 +238,12 @@ std::vector<Finding> scan_version_endpoints(const Config &, HttpClient &http,
 
   // Endpoints that commonly leak version info.
   const std::vector<std::string> paths = {
-      "/version", "/api/version", "/api/v1/version", "/status",
-      "/health", "/info", "/api/info", "/server-info",
-      "/.well-known/security.txt", "/humans.txt",
+      "/version",  "/api/version", "/api/v1/version",           "/status",     "/health", "/info",
+      "/api/info", "/server-info", "/.well-known/security.txt", "/humans.txt",
   };
 
   // Iterate over targets.
-  for (const auto &path : paths) {
+  for (const auto& path : paths) {
     auto resp = http.get(base + path);
     if (resp.status_code != 200 || resp.body.size() < 5) continue;
 
@@ -259,14 +251,13 @@ std::vector<Finding> scan_version_endpoints(const Config &, HttpClient &http,
     std::regex ver_re(R"((\d+\.\d+\.\d+))");
     std::smatch m;
     if (std::regex_search(resp.body, m, ver_re)) {
-      findings.push_back({"Version Endpoint", "info", base + path,
-                          "Version info exposed: " + m[0].str(), "", "", ""});
+      findings.push_back({"Version Endpoint", "info", base + path, "Version info exposed: " + m[0].str(), "", "", ""});
     }
   }
   return findings;
 }
 
-} // namespace
+}  // namespace
 
 std::vector<Scanner> register_version_cve_scanners() {
   return {
@@ -276,4 +267,4 @@ std::vector<Scanner> register_version_cve_scanners() {
   };
 }
 
-} // namespace apex
+}  // namespace apex

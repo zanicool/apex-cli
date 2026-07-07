@@ -16,25 +16,27 @@
 ///        - Cookie jar management for authenticated scans
 ///        - WebSocket interception
 ///        - Service Worker analysis
-#include "scanner_base.hpp"
-#include <regex>
-#include <fstream>
-#include <cstdlib>
-#include <cstdio>
-#include <array>
-#include <set>
-#include <map>
-#include <filesystem>
 #include <unistd.h>
+
+#include <array>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <map>
+#include <regex>
+#include <set>
+
+#include "scanner_base.hpp"
 
 namespace apex {
 namespace {
 
 /// Execute a command and capture output.
-std::string exec_cmd(const std::string &cmd) {
+std::string exec_cmd(const std::string& cmd) {
   std::array<char, 4096> buffer;
   std::string result;
-  FILE *pipe = popen(cmd.c_str(), "r");
+  FILE* pipe = popen(cmd.c_str(), "r");
   if (!pipe) return "";
   while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
     result += buffer.data();
@@ -45,11 +47,10 @@ std::string exec_cmd(const std::string &cmd) {
 
 /// Check if Chrome/Chromium is available.
 std::string find_chrome() {
-  std::vector<std::string> paths = {
-      "/usr/bin/chromium", "/usr/bin/chromium-browser",
-      "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable",
-      "/snap/bin/chromium", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"};
-  for (const auto &p : paths) {
+  std::vector<std::string> paths = {"/usr/bin/chromium",      "/usr/bin/chromium-browser",
+                                    "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable",
+                                    "/snap/bin/chromium",     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"};
+  for (const auto& p : paths) {
     if (std::filesystem::exists(p)) return p;
   }
   // Try which
@@ -150,8 +151,7 @@ std::string gen_extraction_script() {
 }
 
 /// Run headless Chrome to render page and extract data.
-std::string run_headless(const std::string &chrome, const std::string &url,
-                          const std::string &js_code) {
+std::string run_headless(const std::string& chrome, const std::string& url, const std::string& js_code) {
   // Create temp JS file
   std::string tmp_js = "/tmp/apex_extract_" + std::to_string(getpid()) + ".js";
   std::string tmp_out = "/tmp/apex_output_" + std::to_string(getpid()) + ".txt";
@@ -163,21 +163,28 @@ std::string run_headless(const std::string &chrome, const std::string &url,
   js_file.close();
 
   // Run Chrome headless with --dump-dom and JS evaluation
-  std::string cmd = chrome + " --headless=new --disable-gpu --no-sandbox "
+  std::string cmd = chrome +
+                    " --headless=new --disable-gpu --no-sandbox "
                     "--disable-web-security --disable-features=IsolateOrigins "
                     "--timeout=15000 --virtual-time-budget=10000 "
                     "--run-all-compositor-stages-before-draw "
                     "--js-flags=\"--max-old-space-size=256\" "
                     "--print-to-pdf=/dev/null "
-                    "\"" + url + "\" "
-                    "--evaluate-script=\"" + js_code.substr(0, 500) + "\" "
+                    "\"" +
+                    url +
+                    "\" "
+                    "--evaluate-script=\"" +
+                    js_code.substr(0, 500) +
+                    "\" "
                     "2>/dev/null | head -c 100000";
 
   // Alternative: use dump-dom for rendered HTML
-  std::string dom_cmd = chrome + " --headless=new --disable-gpu --no-sandbox "
+  std::string dom_cmd = chrome +
+                        " --headless=new --disable-gpu --no-sandbox "
                         "--disable-web-security --timeout=15000 "
                         "--virtual-time-budget=10000 --dump-dom "
-                        "\"" + url + "\" 2>/dev/null";
+                        "\"" +
+                        url + "\" 2>/dev/null";
 
   std::string result = exec_cmd(dom_cmd);
 
@@ -187,8 +194,7 @@ std::string run_headless(const std::string &chrome, const std::string &url,
 }
 
 /// Render SPA and scan DOM for vulnerabilities.
-std::vector<Finding> scan_browser_dom(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_browser_dom(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -196,10 +202,10 @@ std::vector<Finding> scan_browser_dom(const Config &, HttpClient &http,
   std::string chrome = find_chrome();
   if (chrome.empty()) {
     findings.push_back(Finding{"Browser Engine — Chrome Not Found", "info", base,
-                        "Headless Chrome/Chromium not found. Install for: "
-                        "SPA rendering, DOM XSS detection, JS secret extraction, "
-                        "authenticated scanning. (pacman -S chromium)",
-                        "", "", ""});
+                               "Headless Chrome/Chromium not found. Install for: "
+                               "SPA rendering, DOM XSS detection, JS secret extraction, "
+                               "authenticated scanning. (pacman -S chromium)",
+                               "", "", ""});
     return findings;
   }
 
@@ -213,9 +219,10 @@ std::vector<Finding> scan_browser_dom(const Config &, HttpClient &http,
 
   if (size_diff > 5000) {
     findings.push_back(Finding{"SPA Detected — " + std::to_string(size_diff) + " bytes JS-rendered", "info", base,
-                        "JavaScript renders " + std::to_string(size_diff) + " additional bytes of DOM. "
-                        "Static scanners miss this content. Browser engine scanning enabled.",
-                        "", "", ""});
+                               "JavaScript renders " + std::to_string(size_diff) +
+                                   " additional bytes of DOM. "
+                                   "Static scanners miss this content. Browser engine scanning enabled.",
+                               "", "", ""});
   }
 
   // Scan rendered DOM for secrets
@@ -224,24 +231,22 @@ std::vector<Finding> scan_browser_dom(const Config &, HttpClient &http,
   std::sregex_iterator end;
   for (; it != end; ++it) {
     findings.push_back(Finding{"Client-Side Secret in Rendered DOM", "high", base,
-                        "Secret found in JavaScript-rendered DOM: " + (*it).str().substr(0, 80),
-                        "", (*it)[1].str().substr(0, 20) + "...", ""});
+                               "Secret found in JavaScript-rendered DOM: " + (*it).str().substr(0, 80), "",
+                               (*it)[1].str().substr(0, 20) + "...", ""});
     break;
   }
 
   // Check for DOM XSS sinks in rendered content
-  std::vector<std::string> sinks = {"innerHTML", "outerHTML", "document.write(",
-                                     "eval(", ".src=", "location.href=", "location.replace("};
-  for (const auto &sink : sinks) {
+  std::vector<std::string> sinks = {"innerHTML", "outerHTML", "document.write(", "eval(", ".src=", "location.href=", "location.replace("};
+  for (const auto& sink : sinks) {
     if (rendered_dom.find(sink) != std::string::npos) {
       // Find context
       auto pos = rendered_dom.find(sink);
-      std::string context = rendered_dom.substr(
-          std::max((size_t)0, pos - 30), std::min((size_t)100, rendered_dom.size() - pos + 30));
+      std::string context = rendered_dom.substr(std::max((size_t)0, pos - 30), std::min((size_t)100, rendered_dom.size() - pos + 30));
       findings.push_back(Finding{"DOM XSS Sink — " + sink, "medium", base,
-                          "Dangerous DOM manipulation method found in rendered page. "
-                          "If user input reaches this sink, DOM XSS is possible.",
-                          "", sink, context});
+                                 "Dangerous DOM manipulation method found in rendered page. "
+                                 "If user input reaches this sink, DOM XSS is possible.",
+                                 "", sink, context});
       break;
     }
   }
@@ -252,12 +257,10 @@ std::vector<Finding> scan_browser_dom(const Config &, HttpClient &http,
   for (; cit != end; ++cit) {
     std::string val = (*cit)[1].str();
     // Filter out common false positives
-    if (val != "password" && val != "secret" && val != "changeme" &&
-        val.find("{{") == std::string::npos) {
+    if (val != "password" && val != "secret" && val != "changeme" && val.find("{{") == std::string::npos) {
       findings.push_back(Finding{"Hardcoded Credential in JS", "high", base,
-                          "Potential hardcoded password in client-side JavaScript: " +
-                          (*cit).str().substr(0, 60),
-                          "", val.substr(0, 10) + "...", ""});
+                                 "Potential hardcoded password in client-side JavaScript: " + (*cit).str().substr(0, 60), "",
+                                 val.substr(0, 10) + "...", ""});
       break;
     }
   }
@@ -271,19 +274,17 @@ std::vector<Finding> scan_browser_dom(const Config &, HttpClient &http,
   }
   if (!apis.empty()) {
     std::string api_list;
-    for (const auto &a : apis) api_list += a + "\n";
-    findings.push_back(Finding{"API Endpoints Discovered in JS", "info", base,
-                        "Found " + std::to_string(apis.size()) + " API endpoints in client-side JavaScript:\n" +
-                        api_list.substr(0, 500),
-                        "", "", ""});
+    for (const auto& a : apis) api_list += a + "\n";
+    findings.push_back(Finding{
+        "API Endpoints Discovered in JS", "info", base,
+        "Found " + std::to_string(apis.size()) + " API endpoints in client-side JavaScript:\n" + api_list.substr(0, 500), "", "", ""});
   }
 
   return findings;
 }
 
 /// Extract secrets from localStorage/sessionStorage/cookies via headless Chrome.
-std::vector<Finding> scan_browser_storage(const Config &, HttpClient &,
-                                           const CrawlResult &crawl) {
+std::vector<Finding> scan_browser_storage(const Config&, HttpClient&, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -292,9 +293,11 @@ std::vector<Finding> scan_browser_storage(const Config &, HttpClient &,
   if (chrome.empty()) return findings;
 
   // Use Chrome to dump localStorage
-  std::string cmd = chrome + " --headless=new --disable-gpu --no-sandbox "
+  std::string cmd = chrome +
+                    " --headless=new --disable-gpu --no-sandbox "
                     "--virtual-time-budget=10000 "
-                    "--dump-dom \"" + base + "\" 2>/dev/null";
+                    "--dump-dom \"" +
+                    base + "\" 2>/dev/null";
 
   // We check the raw page for localStorage usage patterns
   // (Full CDP interaction would need a proper WebSocket client)
@@ -306,9 +309,9 @@ std::vector<Finding> scan_browser_storage(const Config &, HttpClient &,
   std::sregex_iterator end;
   if (it != end) {
     findings.push_back(Finding{"JWT Token Exposed in Client-Side", "medium", base,
-                        "JWT token found in rendered page content. "
-                        "If stored in localStorage, vulnerable to XSS-based theft.",
-                        "", (*it).str().substr(0, 50) + "...", ""});
+                               "JWT token found in rendered page content. "
+                               "If stored in localStorage, vulnerable to XSS-based theft.",
+                               "", (*it).str().substr(0, 50) + "...", ""});
   }
 
   // Check for Google Maps / Firebase / Stripe keys
@@ -321,23 +324,24 @@ std::vector<Finding> scan_browser_storage(const Config &, HttpClient &,
       {"AKIA[A-Z0-9]{16}", "AWS Access Key ID"},
   };
 
-  for (const auto &[pattern, name] : key_patterns) {
+  for (const auto& [pattern, name] : key_patterns) {
     std::regex re(pattern);
     std::sregex_iterator kit(dom.begin(), dom.end(), re);
     if (kit != end) {
-      std::string severity = (name.find("Secret") != std::string::npos ||
-                              name.find("CRITICAL") != std::string::npos ||
-                              name.find("AWS") != std::string::npos) ? "critical" : "medium";
+      std::string severity =
+          (name.find("Secret") != std::string::npos || name.find("CRITICAL") != std::string::npos || name.find("AWS") != std::string::npos)
+              ? "critical"
+              : "medium";
       findings.push_back(Finding{name + " Exposed in Client-Side", severity, base,
-                          name + " found in rendered page: " + (*kit).str().substr(0, 20) + "...",
-                          "", (*kit).str().substr(0, 15) + "...", ""});
+                                 name + " found in rendered page: " + (*kit).str().substr(0, 20) + "...", "",
+                                 (*kit).str().substr(0, 15) + "...", ""});
     }
   }
 
   return findings;
 }
 
-} // namespace
+}  // namespace
 
 std::vector<Scanner> register_browser_engine_scanners() {
   return {
@@ -346,4 +350,4 @@ std::vector<Scanner> register_browser_engine_scanners() {
   };
 }
 
-} // namespace apex
+}  // namespace apex

@@ -2,14 +2,16 @@
 /// @brief Scanner orchestrator: registers all feature modules, runs scanners
 ///        concurrently, deduplicates findings.
 #include "scanner.hpp"
-#include "scanners/scanner_base.hpp"
-#include "targeting.hpp"
-#include "wildcard.hpp"
+
 #include <algorithm>
 #include <future>
 #include <iostream>
 #include <mutex>
 #include <set>
+
+#include "scanners/scanner_base.hpp"
+#include "targeting.hpp"
+#include "wildcard.hpp"
 
 namespace apex {
 
@@ -18,9 +20,8 @@ std::vector<Finding> g_all_findings;
 
 std::vector<Scanner> get_scanners() {
   std::vector<Scanner> all;
-  auto append = [&](std::vector<Scanner> &&scanners) {
-    all.insert(all.end(), std::make_move_iterator(scanners.begin()),
-               std::make_move_iterator(scanners.end()));
+  auto append = [&](std::vector<Scanner>&& scanners) {
+    all.insert(all.end(), std::make_move_iterator(scanners.begin()), std::make_move_iterator(scanners.end()));
   };
 
   append(register_core_scanners());
@@ -118,8 +119,7 @@ std::vector<Scanner> get_scanners() {
   return all;
 }
 
-std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
-                                  const CrawlResult &crawl) {
+std::vector<Finding> run_scanners(const Config& cfg, HttpClient& http, const CrawlResult& crawl) {
   auto all_scanners = get_scanners();
 
   // Intelligent Targeting: build asset profile and select relevant modules
@@ -128,9 +128,8 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
 
   // Log targeting decision
   if (!cfg.full_scan && scanners.size() < all_scanners.size()) {
-    std::cerr << "  [targeting] " << scanners.size() << "/" << all_scanners.size()
-              << " modules selected (";
-    for (const auto &t : profile.technologies) std::cerr << t << " ";
+    std::cerr << "  [targeting] " << scanners.size() << "/" << all_scanners.size() << " modules selected (";
+    for (const auto& t : profile.technologies) std::cerr << t << " ";
     if (profile.has_graphql) std::cerr << "graphql ";
     if (profile.has_jwt) std::cerr << "jwt ";
     if (profile.has_oauth) std::cerr << "oauth ";
@@ -140,76 +139,70 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
   std::vector<Finding> all_findings;
   std::mutex mu;
 
-  auto should_skip = [&](const std::string &name) {
-    if (std::any_of(cfg.skip.begin(), cfg.skip.end(),
-                    [&](const std::string &s) { return s == name; }))
-      return true;
+  auto should_skip = [&](const std::string& name) {
+    if (std::any_of(cfg.skip.begin(), cfg.skip.end(), [&](const std::string& s) { return s == name; })) return true;
     // Quick mode: only run high-value scanners.
     if (cfg.quick) {
-      static const std::vector<std::string> quick_scanners = {
-          "CMS Detection",
-          "SQLi",
-          "XSS",
-          "SSRF",
-          "CMDi",
-          "LFI",
-          "Security Headers",
-          "Open Redirect",
-          "SSTI",
-          "XXE",
-          "CORS",
-          "Clickjacking",
-          "Info Disclosure",
-          "WAF Detection",
-          "Login Security",
-          "Header Analysis",
-          "Content Discovery",
-          "Forced Browsing",
-          "GraphQL Hunter",
-          "IDOR",
-          "JWT",
-          "OAuth Misconfig",
-          "Password Reset",
-          "Race Condition",
-          "API Version Bypass",
-          "Secrets Exposure",
-          "Supply Chain: Self-Hosted Tools",
-          "Supply Chain: Cloud Storage",
-          "Supply Chain: Integrations",
-          "Supply Chain: Management Panels",
-          "Supply Chain: SSO Config",
-          "Supply Chain: API Keys",
-          "WP Plugin",
-          "WP Theme",
-          "Password Reset Poisoning",
-          "Account Takeover (Email Change)",
-          "JWT Key Confusion",
-          "GraphQL Abuse",
-          "Rate Limit Bypass",
-          "File Upload Abuse",
-          "HTTP Parameter Pollution",
-          "CRLF Response Splitting",
-          "Method Override Bypass",
-          "API Version Bypass"};
-      return std::none_of(quick_scanners.begin(), quick_scanners.end(),
-                          [&](const std::string &q) { return q == name; });
+      static const std::vector<std::string> quick_scanners = {"CMS Detection",
+                                                              "SQLi",
+                                                              "XSS",
+                                                              "SSRF",
+                                                              "CMDi",
+                                                              "LFI",
+                                                              "Security Headers",
+                                                              "Open Redirect",
+                                                              "SSTI",
+                                                              "XXE",
+                                                              "CORS",
+                                                              "Clickjacking",
+                                                              "Info Disclosure",
+                                                              "WAF Detection",
+                                                              "Login Security",
+                                                              "Header Analysis",
+                                                              "Content Discovery",
+                                                              "Forced Browsing",
+                                                              "GraphQL Hunter",
+                                                              "IDOR",
+                                                              "JWT",
+                                                              "OAuth Misconfig",
+                                                              "Password Reset",
+                                                              "Race Condition",
+                                                              "API Version Bypass",
+                                                              "Secrets Exposure",
+                                                              "Supply Chain: Self-Hosted Tools",
+                                                              "Supply Chain: Cloud Storage",
+                                                              "Supply Chain: Integrations",
+                                                              "Supply Chain: Management Panels",
+                                                              "Supply Chain: SSO Config",
+                                                              "Supply Chain: API Keys",
+                                                              "WP Plugin",
+                                                              "WP Theme",
+                                                              "Password Reset Poisoning",
+                                                              "Account Takeover (Email Change)",
+                                                              "JWT Key Confusion",
+                                                              "GraphQL Abuse",
+                                                              "Rate Limit Bypass",
+                                                              "File Upload Abuse",
+                                                              "HTTP Parameter Pollution",
+                                                              "CRLF Response Splitting",
+                                                              "Method Override Bypass",
+                                                              "API Version Bypass"};
+      return std::none_of(quick_scanners.begin(), quick_scanners.end(), [&](const std::string& q) { return q == name; });
     }
     return false;
   };
 
   std::vector<std::future<std::vector<Finding>>> futures;
-  for (const auto &scanner : scanners) {
+  for (const auto& scanner : scanners) {
     if (should_skip(scanner.name)) {
       std::cout << "    [skip] " << scanner.name << "\n";
       continue;
     }
     std::cout << "    [->] " << scanner.name << "\n";
-    futures.push_back(std::async(std::launch::async, scanner.func,
-                                 std::cref(cfg), std::ref(http),
-                                 std::cref(crawl)));
+    futures.push_back(std::async(std::launch::async, scanner.func, std::cref(cfg), std::ref(http), std::cref(crawl)));
   }
 
-  for (auto &f : futures) {
+  for (auto& f : futures) {
     auto results = f.get();
     std::lock_guard<std::mutex> lock(mu);
     all_findings.insert(all_findings.end(), results.begin(), results.end());
@@ -218,31 +211,29 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
   // Deduplicate on type+url+param.
   std::set<std::string> seen;
   std::vector<Finding> deduped;
-  for (auto &f : all_findings) {
+  for (auto& f : all_findings) {
     std::string key = f.type + "|" + f.url + "|" + f.param;
-    if (seen.insert(key).second)
-      deduped.push_back(std::move(f));
+    if (seen.insert(key).second) deduped.push_back(std::move(f));
   }
 
   // Filter wildcard/SPA false positives.
   // Get baseline for each unique host.
   std::map<std::string, BaselineFingerprint> baselines;
-  auto get_host = [](const std::string &url) -> std::string {
+  auto get_host = [](const std::string& url) -> std::string {
     auto pos = url.find("://");
-    if (pos == std::string::npos)
-      return url;
+    if (pos == std::string::npos) return url;
     auto start = pos + 3;
     auto end = url.find('/', start);
     return url.substr(0, end != std::string::npos ? end : url.size());
   };
 
   std::vector<Finding> filtered;
-  for (auto &f : deduped) {
+  for (auto& f : deduped) {
     std::string host = get_host(f.url);
     if (baselines.find(host) == baselines.end()) {
       baselines[host] = get_baseline(http, host);
     }
-    auto &bp = baselines[host];
+    auto& bp = baselines[host];
     // Skip findings on wildcard hosts unless they have specific evidence
     if (bp.is_wildcard && f.evidence.empty()) {
       continue;
@@ -251,9 +242,8 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
   }
 
   // Quality filter: downgrade critical/high findings that lack evidence
-  for (auto &f : filtered) {
-    if ((f.severity == "critical" || f.severity == "high") &&
-        f.evidence.empty()) {
+  for (auto& f : filtered) {
+    if ((f.severity == "critical" || f.severity == "high") && f.evidence.empty()) {
       // No evidence = unverified = downgrade to medium
       f.severity = "medium";
       f.type += " (unverified)";
@@ -263,28 +253,23 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
   // AI Verification: use qwen3:14b to filter false positives
   {
     int ai_checked = 0;
-    for (auto &f : filtered) {
-      if (f.severity != "critical" && f.severity != "high")
-        continue;
-      if (ai_checked >= 5)
-        break;
+    for (auto& f : filtered) {
+      if (f.severity != "critical" && f.severity != "high") continue;
+      if (ai_checked >= 5) break;
       std::string ev = f.evidence.substr(0, 80);
-      for (auto &c : ev) {
-        if (c == '"' || c == '\\' || c == '\n')
-          c = ' ';
+      for (auto& c : ev) {
+        if (c == '"' || c == '\\' || c == '\n') c = ' ';
       }
       std::string type_clean = f.type;
-      for (auto &c : type_clean) {
-        if (c == '"')
-          c = ' ';
+      for (auto& c : type_clean) {
+        if (c == '"') c = ' ';
       }
-      std::string body = "{\"model\":\"qwen3:14b\",\"prompt\":\"/no_think REAL "
-                         "or FALSE_POSITIVE? " +
-                         type_clean + " " + ev +
-                         "\",\"stream\":false,\"options\":{\"num_predict\":5}}";
-      std::string cmd = "curl -s http://127.0.0.1:11434/api/generate -d '" +
-                        body + "' 2>/dev/null";
-      FILE *fp = popen(cmd.c_str(), "r");
+      std::string body =
+          "{\"model\":\"qwen3:14b\",\"prompt\":\"/no_think REAL "
+          "or FALSE_POSITIVE? " +
+          type_clean + " " + ev + "\",\"stream\":false,\"options\":{\"num_predict\":5}}";
+      std::string cmd = "curl -s http://127.0.0.1:11434/api/generate -d '" + body + "' 2>/dev/null";
+      FILE* fp = popen(cmd.c_str(), "r");
       if (fp) {
         char buf[2048] = {};
         fread(buf, 1, sizeof(buf) - 1, fp);
@@ -301,58 +286,41 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
 
   // Remove pure noise findings that add no value
   std::vector<Finding> final_filtered;
-  for (auto &f : filtered) {
+  for (auto& f : filtered) {
     // Skip Cloud Metadata findings without actual metadata in evidence
     if (f.type.find("Cloud Metadata") != std::string::npos) {
-      if (f.evidence.find("ami-id") == std::string::npos &&
-          f.evidence.find("instance-id") == std::string::npos &&
+      if (f.evidence.find("ami-id") == std::string::npos && f.evidence.find("instance-id") == std::string::npos &&
           f.evidence.find("AccessKeyId") == std::string::npos) {
         continue;
       }
     }
     // Skip XSLT/Deserialization without evidence
-    if ((f.type.find("XSLT") != std::string::npos ||
-         f.type.find("Deserialization") != std::string::npos) &&
-        f.evidence.empty()) {
+    if ((f.type.find("XSLT") != std::string::npos || f.type.find("Deserialization") != std::string::npos) && f.evidence.empty()) {
       continue;
     }
     // Skip findings whose evidence contains WAF/CDN generic responses
     if (!f.evidence.empty() &&
-        (f.evidence.find("Access Denied") != std::string::npos ||
-         f.evidence.find("<!DOCTYPE html>") != std::string::npos ||
-         f.evidence.find("Just a moment") != std::string::npos ||
-         f.evidence.find("Checking your browser") != std::string::npos ||
-         f.evidence.find("Attention Required") != std::string::npos ||
-         f.evidence.find("cf-browser-verification") != std::string::npos ||
+        (f.evidence.find("Access Denied") != std::string::npos || f.evidence.find("<!DOCTYPE html>") != std::string::npos ||
+         f.evidence.find("Just a moment") != std::string::npos || f.evidence.find("Checking your browser") != std::string::npos ||
+         f.evidence.find("Attention Required") != std::string::npos || f.evidence.find("cf-browser-verification") != std::string::npos ||
          f.evidence.find("Page Not Found") != std::string::npos)) {
       continue;
     }
     // Skip high/critical findings that only matched based on status code 200
     // without meaningful content validation (common CDN false positive)
-    if ((f.severity == "critical" || f.severity == "high") &&
-        f.evidence.empty() && f.payload.empty()) {
+    if ((f.severity == "critical" || f.severity == "high") && f.evidence.empty() && f.payload.empty()) {
       continue;
     }
     // Skip race condition targets that are just guessed paths (not from crawl)
-    if (f.type.find("Race Condition Target") != std::string::npos &&
-        f.evidence.empty()) {
+    if (f.type.find("Race Condition Target") != std::string::npos && f.evidence.empty()) {
       continue;
     }
     // Skip subdomain takeover without actual takeover fingerprint in evidence
-    if (f.type.find("Subdomain Takeover") != std::string::npos &&
-        f.evidence.empty()) {
+    if (f.type.find("Subdomain Takeover") != std::string::npos && f.evidence.empty()) {
       continue;
     }
     final_filtered.push_back(std::move(f));
   }
-
-
-
-
-
-
-
-
 
   // Run Attack Chain Engine — combines findings into multi-step exploits
 
@@ -364,13 +332,15 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
   //    and remove findings whose evidence matches it (same page for everything = FP)
   {
     std::map<std::string, size_t> host_baseline_sizes;
-    for (auto it = final_filtered.begin(); it != final_filtered.end(); ) {
-      if (it->url.empty() || it->severity == "info") { ++it; continue; }
+    for (auto it = final_filtered.begin(); it != final_filtered.end();) {
+      if (it->url.empty() || it->severity == "info") {
+        ++it;
+        continue;
+      }
 
       std::string host = it->url.substr(0, it->url.find("/", 8));
       if (host_baseline_sizes.find(host) == host_baseline_sizes.end()) {
-        auto bl = http.get(host + "/apex_nonexistent_baseline_" +
-                           std::to_string(time(nullptr)));
+        auto bl = http.get(host + "/apex_nonexistent_baseline_" + std::to_string(time(nullptr)));
         host_baseline_sizes[host] = bl.body.size();
       }
 
@@ -435,8 +405,8 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
         {"Missing CSP", "CWE-693", "A05:2021 Security Misconfiguration", 3.7, 95},
     };
 
-    for (auto &f : final_filtered) {
-      for (const auto &meta : meta_map) {
+    for (auto& f : final_filtered) {
+      for (const auto& meta : meta_map) {
         if (f.type.find(meta.pattern) != std::string::npos) {
           if (f.cwe_id.empty()) f.cwe_id = meta.cwe;
           if (f.owasp_category.empty()) f.owasp_category = meta.owasp;
@@ -457,20 +427,19 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
   }
 
   // 3. Sort by confidence * cvss (practical exploitability ranking)
-  std::sort(final_filtered.begin(), final_filtered.end(),
-            [](const Finding &a, const Finding &b) {
-              double score_a = a.confidence * a.cvss_score;
-              double score_b = b.confidence * b.cvss_score;
-              return score_a > score_b;
-            });
+  std::sort(final_filtered.begin(), final_filtered.end(), [](const Finding& a, const Finding& b) {
+    double score_a = a.confidence * a.cvss_score;
+    double score_b = b.confidence * b.cvss_score;
+    return score_a > score_b;
+  });
 
   // ============================================================
 
   g_all_findings = final_filtered;
   auto chain_scanners = register_attack_chain_scanners();
-  for (const auto &cs : chain_scanners) {
+  for (const auto& cs : chain_scanners) {
     auto chains = cs.func(cfg, http, crawl);
-    for (auto &c : chains) {
+    for (auto& c : chains) {
       final_filtered.push_back(std::move(c));
     }
   }
@@ -478,9 +447,9 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
   // Run Exploit Generator — creates PoC scripts for confirmed vulns
   g_all_findings = final_filtered;
   auto exploit_scanners = register_exploit_gen_scanners();
-  for (const auto &es : exploit_scanners) {
+  for (const auto& es : exploit_scanners) {
     auto pocs = es.func(cfg, http, crawl);
-    for (auto &p : pocs) {
+    for (auto& p : pocs) {
       final_filtered.push_back(std::move(p));
     }
   }
@@ -488,4 +457,4 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
   return final_filtered;
 }
 
-} // namespace apex
+}  // namespace apex

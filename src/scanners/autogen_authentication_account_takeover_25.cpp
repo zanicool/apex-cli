@@ -1,16 +1,16 @@
 /// @file scanners/autogen_authentication_account_takeover_25.cpp
 /// @brief Auto-generated scanner: Authentication & Account Takeover (25)
 ///        Checks: Session not invalidated after , Concurrent session abuse (no s, Magic link token prediction
-#include "scanner_base.hpp"
-#include <regex>
 #include <chrono>
+#include <regex>
+
+#include "scanner_base.hpp"
 
 namespace apex {
 namespace {
 
 /// Session not invalidated after email change
-std::vector<Finding> scan_session_not_invalidated_after_email_chan(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_session_not_invalidated_after_email_chan(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -23,8 +23,7 @@ std::vector<Finding> scan_session_not_invalidated_after_email_chan(const Config 
 }
 
 /// Concurrent session abuse (no session limit)
-std::vector<Finding> scan_concurrent_session_abuse_no_session_limi(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_concurrent_session_abuse_no_session_limi(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -37,8 +36,7 @@ std::vector<Finding> scan_concurrent_session_abuse_no_session_limi(const Config 
 }
 
 /// Magic link token prediction
-std::vector<Finding> scan_magic_link_token_prediction(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_magic_link_token_prediction(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -50,8 +48,7 @@ std::vector<Finding> scan_magic_link_token_prediction(const Config &, HttpClient
   return findings;
 }
 
-
-} // namespace
+}  // namespace
 
 std::vector<Scanner> register_autogen_authentication_account_takeover_25_scanners() {
   return {
@@ -61,4 +58,4 @@ std::vector<Scanner> register_autogen_authentication_account_takeover_25_scanner
   };
 }
 
-} // namespace apex
+}  // namespace apex

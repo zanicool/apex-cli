@@ -2,10 +2,11 @@
 /// @brief Deep reconnaissance: DNS brute-force, Wayback URL discovery,
 ///        Google dorking, metadata extraction, GitHub recon, robots/sitemap
 ///        mining, certificate transparency deep scan.
-#include "scanner_base.hpp"
 #include <fstream>
 #include <set>
 #include <sstream>
+
+#include "scanner_base.hpp"
 
 ///
 /// @details This scanner module is part of the apex-cli security scanning
@@ -32,14 +33,13 @@ namespace {
 std::vector<std::string> load_subdomain_wordlist() {
   std::vector<std::string> words;
   // Iterate over targets.
-  for (const auto &path : {"./wordlists/subdomains-10000.txt",
-                            "../wordlists/subdomains-10000.txt"}) {
+  for (const auto& path : {"./wordlists/subdomains-10000.txt", "../wordlists/subdomains-10000.txt"}) {
     std::ifstream f(path);
     if (!f.is_open()) continue;
     std::string line;
     while (std::getline(f, line)) {
       if (!line.empty() && line[0] != '#') words.push_back(line);
-      if (words.size() >= 500) break; // Limit for speed.
+      if (words.size() >= 500) break;  // Limit for speed.
     }
     break;
   }
@@ -49,8 +49,7 @@ std::vector<std::string> load_subdomain_wordlist() {
 /// DNS brute-force subdomain enumeration.
 /// Scanner implementation.
 /// @brief Scan for dns_bruteforce vulnerabilities.
-std::vector<Finding> scan_dns_bruteforce(const Config &cfg, HttpClient &http,
-                                         const CrawlResult &) {
+std::vector<Finding> scan_dns_bruteforce(const Config& cfg, HttpClient& http, const CrawlResult&) {
   // Accumulate findings for this scanner.
   // Accumulate findings for this scanner.
   // Accumulate findings for this scanner.
@@ -62,33 +61,29 @@ std::vector<Finding> scan_dns_bruteforce(const Config &cfg, HttpClient &http,
   // Extract domain from target.
   // Extract domain from target.
   std::string domain = cfg.target;
-  if (domain.find("://") != std::string::npos)
-    domain = domain.substr(domain.find("://") + 3);
-  if (domain.find('/') != std::string::npos)
-    domain = domain.substr(0, domain.find('/'));
+  if (domain.find("://") != std::string::npos) domain = domain.substr(domain.find("://") + 3);
+  if (domain.find('/') != std::string::npos) domain = domain.substr(0, domain.find('/'));
 
   std::set<std::string> live;
   // Iterate over targets.
-  for (const auto &word : wordlist) {
+  for (const auto& word : wordlist) {
     std::string sub = word + "." + domain;
     auto resp = http.get("https://" + sub + "/");
     if (resp.status_code > 0 && resp.error.empty()) {
       live.insert(sub);
     } else {
       resp = http.get("http://" + sub + "/");
-      if (resp.status_code > 0 && resp.error.empty())
-        live.insert(sub);
+      if (resp.status_code > 0 && resp.error.empty()) live.insert(sub);
     }
   }
 
   if (!live.empty()) {
     std::string detail = "Found " + std::to_string(live.size()) + " subdomains via brute-force:";
     int count = 0;
-    for (const auto &s : live) {
+    for (const auto& s : live) {
       if (count++ < 20) detail += " " + s;
     }
-    findings.push_back({"DNS Brute-Force Discovery", "info", domain,
-                        detail, "", "", ""});
+    findings.push_back({"DNS Brute-Force Discovery", "info", domain, detail, "", "", ""});
   }
   // Return collected findings.
   // Return collected findings.
@@ -99,17 +94,13 @@ std::vector<Finding> scan_dns_bruteforce(const Config &cfg, HttpClient &http,
 /// Wayback Machine full URL discovery — find forgotten endpoints.
 /// Scanner implementation.
 /// @brief Scan for wayback_urls vulnerabilities.
-std::vector<Finding> scan_wayback_urls(const Config &cfg, HttpClient &http,
-                                       const CrawlResult &) {
+std::vector<Finding> scan_wayback_urls(const Config& cfg, HttpClient& http, const CrawlResult&) {
   std::vector<Finding> findings;
   std::string domain = cfg.target;
-  if (domain.find("://") != std::string::npos)
-    domain = domain.substr(domain.find("://") + 3);
-  if (domain.find('/') != std::string::npos)
-    domain = domain.substr(0, domain.find('/'));
+  if (domain.find("://") != std::string::npos) domain = domain.substr(domain.find("://") + 3);
+  if (domain.find('/') != std::string::npos) domain = domain.substr(0, domain.find('/'));
 
-  std::string wb_url = "https://web.archive.org/cdx/search/cdx?url=" + domain +
-                       "/*&output=text&fl=original&collapse=urlkey&limit=200";
+  std::string wb_url = "https://web.archive.org/cdx/search/cdx?url=" + domain + "/*&output=text&fl=original&collapse=urlkey&limit=200";
   // Send HTTP request.
   // Send HTTP request.
   // Send HTTP request.
@@ -118,19 +109,17 @@ std::vector<Finding> scan_wayback_urls(const Config &cfg, HttpClient &http,
   if (resp.status_code != 200) return findings;
 
   // Parse URLs and look for interesting patterns.
-    // Collect URLs matching interesting patterns.
+  // Collect URLs matching interesting patterns.
   std::set<std::string> interesting;
   const std::vector<std::string> patterns = {
-      "admin", "backup", "staging", "test", "debug", "internal",
-      "old", "beta", "dev", ".env", ".git", "config", "secret",
-      "api/v", "swagger", "graphql", "phpmyadmin", "wp-admin",
-      ".sql", ".zip", ".tar", ".bak", "jenkins", "jira", "confluence"};
+      "admin", "backup",  "staging", "test",       "debug",    "internal", "old",  "beta", "dev",  ".env",    ".git", "config",    "secret",
+      "api/v", "swagger", "graphql", "phpmyadmin", "wp-admin", ".sql",     ".zip", ".tar", ".bak", "jenkins", "jira", "confluence"};
 
   std::istringstream stream(resp.body);
   std::string line;
   while (std::getline(stream, line)) {
     if (line.empty()) continue;
-    for (const auto &p : patterns) {
+    for (const auto& p : patterns) {
       if (line.find(p) != std::string::npos) {
         interesting.insert(line);
         break;
@@ -139,28 +128,24 @@ std::vector<Finding> scan_wayback_urls(const Config &cfg, HttpClient &http,
   }
 
   // Probe interesting URLs to see if they're still live.
-    // Track which historical URLs are still accessible.
+  // Track which historical URLs are still accessible.
   std::vector<std::string> still_live;
   // Iterate over targets.
-  for (const auto &url : interesting) {
+  for (const auto& url : interesting) {
     auto probe = http.get(url);
-    if (probe.status_code == 200 && probe.body.size() > 50)
-      still_live.push_back(url);
+    if (probe.status_code == 200 && probe.body.size() > 50) still_live.push_back(url);
     if (still_live.size() >= 10) break;
   }
 
   if (!still_live.empty()) {
     std::string detail = "Wayback URLs still live:";
-    for (const auto &u : still_live) detail += "\n  " + u;
-    findings.push_back({"Wayback URL Discovery", "medium", domain,
-                        detail, "", "", ""});
+    for (const auto& u : still_live) detail += "\n  " + u;
+    findings.push_back({"Wayback URL Discovery", "medium", domain, detail, "", "", ""});
   }
 
   if (!interesting.empty()) {
     findings.push_back({"Wayback Historical URLs", "info", domain,
-                        std::to_string(interesting.size()) +
-                            " interesting historical URLs found in Wayback Machine",
-                        "", "", ""});
+                        std::to_string(interesting.size()) + " interesting historical URLs found in Wayback Machine", "", "", ""});
   }
   return findings;
 }
@@ -168,16 +153,17 @@ std::vector<Finding> scan_wayback_urls(const Config &cfg, HttpClient &http,
 /// Google dorking — automated search for exposed files/pages.
 /// Scanner implementation.
 /// @brief Scan for google_dorks vulnerabilities.
-std::vector<Finding> scan_google_dorks(const Config &cfg, HttpClient &http,
-                                       const CrawlResult &) {
+std::vector<Finding> scan_google_dorks(const Config& cfg, HttpClient& http, const CrawlResult&) {
   std::vector<Finding> findings;
   std::string domain = cfg.target;
-  if (domain.find("://") != std::string::npos)
-    domain = domain.substr(domain.find("://") + 3);
-  if (domain.find('/') != std::string::npos)
-    domain = domain.substr(0, domain.find('/'));
+  if (domain.find("://") != std::string::npos) domain = domain.substr(domain.find("://") + 3);
+  if (domain.find('/') != std::string::npos) domain = domain.substr(0, domain.find('/'));
 
-  struct Dork { const char *query; const char *desc; const char *severity; };
+  struct Dork {
+    const char* query;
+    const char* desc;
+    const char* severity;
+  };
   const Dork dorks[] = {
       {"site:%s filetype:env", "Exposed .env files", "critical"},
       {"site:%s filetype:sql", "Exposed SQL dumps", "critical"},
@@ -194,18 +180,16 @@ std::vector<Finding> scan_google_dorks(const Config &cfg, HttpClient &http,
   };
 
   // Iterate over targets.
-  for (const auto &dork : dorks) {
+  for (const auto& dork : dorks) {
     char query[256];
     snprintf(query, sizeof(query), dork.query, domain.c_str());
     std::string url = std::string("https://www.google.com/search?q=") + query + "&num=5";
     auto resp = http.get(url);
     // Check if there are actual results (not "no results found").
-    if (resp.status_code == 200 && resp.body.size() > 1000 &&
-        resp.body.find("did not match any documents") == std::string::npos &&
+    if (resp.status_code == 200 && resp.body.size() > 1000 && resp.body.find("did not match any documents") == std::string::npos &&
         resp.body.find(domain) != std::string::npos) {
-      findings.push_back({"Google Dork: " + std::string(dork.desc), dork.severity,
-                          url, std::string(dork.desc) + " — query: " + query,
-                          "", "", ""});
+      findings.push_back(
+          {"Google Dork: " + std::string(dork.desc), dork.severity, url, std::string(dork.desc) + " — query: " + query, "", "", ""});
     }
   }
   return findings;
@@ -214,8 +198,7 @@ std::vector<Finding> scan_google_dorks(const Config &cfg, HttpClient &http,
 /// Metadata extraction from PDF/DOCX files found during crawl.
 /// Scanner implementation.
 /// @brief Scan for metadata vulnerabilities.
-std::vector<Finding> scan_metadata(const Config &, HttpClient &http,
-                                   const CrawlResult &crawl) {
+std::vector<Finding> scan_metadata(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
 
   // Find document URLs from crawl.
@@ -224,10 +207,8 @@ std::vector<Finding> scan_metadata(const Config &, HttpClient &http,
   // Process each crawled URL.
   // Process each crawled URL.
   // Process each crawled URL.
-  for (const auto &url : crawl.urls) {
-    if (url.find(".pdf") != std::string::npos ||
-        url.find(".docx") != std::string::npos ||
-        url.find(".xlsx") != std::string::npos ||
+  for (const auto& url : crawl.urls) {
+    if (url.find(".pdf") != std::string::npos || url.find(".docx") != std::string::npos || url.find(".xlsx") != std::string::npos ||
         url.find(".pptx") != std::string::npos)
       doc_urls.insert(url);
   }
@@ -235,44 +216,34 @@ std::vector<Finding> scan_metadata(const Config &, HttpClient &http,
   // Also check common document paths.
   if (!crawl.urls.empty()) {
     std::string base = base_url_from(crawl.urls[0]);
-    for (const auto &path : {"/annual-report.pdf", "/privacy-policy.pdf",
-                              "/terms.pdf", "/brochure.pdf"}) {
+    for (const auto& path : {"/annual-report.pdf", "/privacy-policy.pdf", "/terms.pdf", "/brochure.pdf"}) {
       auto resp = http.get(base + path);
-      if (resp.status_code == 200 && resp.body.size() > 1000)
-        doc_urls.insert(base + path);
+      if (resp.status_code == 200 && resp.body.size() > 1000) doc_urls.insert(base + path);
     }
   }
 
   // Iterate over targets.
-  for (const auto &url : doc_urls) {
+  for (const auto& url : doc_urls) {
     auto resp = http.get(url);
     if (resp.status_code != 200) continue;
 
     // Extract PDF metadata (Creator, Producer, Author).
-    const std::vector<std::string> meta_keys = {
-        "/Author", "/Creator", "/Producer", "/Company",
-        "dc:creator", "meta:author"};
+    const std::vector<std::string> meta_keys = {"/Author", "/Creator", "/Producer", "/Company", "dc:creator", "meta:author"};
 
-    for (const auto &key : meta_keys) {
+    for (const auto& key : meta_keys) {
       size_t pos = resp.body.find(key);
       if (pos != std::string::npos && pos + key.size() + 2 < resp.body.size()) {
         // Extract value after the key.
         size_t start = pos + key.size();
         // Skip whitespace/parens.
-        while (start < resp.body.size() &&
-               (resp.body[start] == ' ' || resp.body[start] == '(' ||
-                resp.body[start] == '>'))
-          start++;
+        while (start < resp.body.size() && (resp.body[start] == ' ' || resp.body[start] == '(' || resp.body[start] == '>')) start++;
         size_t end = start;
-        while (end < resp.body.size() && end - start < 100 &&
-               resp.body[end] != ')' && resp.body[end] != '<' &&
-               resp.body[end] != '\0')
+        while (end < resp.body.size() && end - start < 100 && resp.body[end] != ')' && resp.body[end] != '<' && resp.body[end] != '\0')
           end++;
         std::string value = resp.body.substr(start, end - start);
         if (value.size() > 2 && value.size() < 80) {
-          findings.push_back({"Document Metadata: " + key, "info", url,
-                              "Metadata " + key + " = " + value, "", "", ""});
-          break; // One finding per doc is enough.
+          findings.push_back({"Document Metadata: " + key, "info", url, "Metadata " + key + " = " + value, "", "", ""});
+          break;  // One finding per doc is enough.
         }
       }
     }
@@ -281,9 +252,7 @@ std::vector<Finding> scan_metadata(const Config &, HttpClient &http,
     std::regex path_re(R"((?:C:\\Users\\[^\s\\]+|/home/[a-z]+))");
     std::smatch m;
     if (std::regex_search(resp.body, m, path_re)) {
-      findings.push_back({"Internal Path in Document", "low", url,
-                          "Internal filesystem path leaked: " + m[0].str(),
-                          "", "", ""});
+      findings.push_back({"Internal Path in Document", "low", url, "Internal filesystem path leaked: " + m[0].str(), "", "", ""});
     }
   }
   return findings;
@@ -292,14 +261,11 @@ std::vector<Finding> scan_metadata(const Config &, HttpClient &http,
 /// GitHub recon — search for leaked code/secrets related to target.
 /// Scanner implementation.
 /// @brief Scan for github_recon vulnerabilities.
-std::vector<Finding> scan_github_recon(const Config &cfg, HttpClient &http,
-                                       const CrawlResult &) {
+std::vector<Finding> scan_github_recon(const Config& cfg, HttpClient& http, const CrawlResult&) {
   std::vector<Finding> findings;
   std::string domain = cfg.target;
-  if (domain.find("://") != std::string::npos)
-    domain = domain.substr(domain.find("://") + 3);
-  if (domain.find('/') != std::string::npos)
-    domain = domain.substr(0, domain.find('/'));
+  if (domain.find("://") != std::string::npos) domain = domain.substr(domain.find("://") + 3);
+  if (domain.find('/') != std::string::npos) domain = domain.substr(0, domain.find('/'));
 
   // Search GitHub code for references to this domain.
   const std::vector<std::pair<std::string, std::string>> searches = {
@@ -310,14 +276,11 @@ std::vector<Finding> scan_github_recon(const Config &cfg, HttpClient &http,
   };
 
   // Iterate over targets.
-  for (const auto &[query, desc] : searches) {
+  for (const auto& [query, desc] : searches) {
     std::string url = "https://github.com/search?q=" + query + "&type=code";
     auto resp = http.get(url);
-    if (resp.status_code == 200 &&
-        resp.body.find("code-list") != std::string::npos &&
-        resp.body.find("We couldn") == std::string::npos) {
-      findings.push_back({"GitHub Code Leak: " + desc, "high", url,
-                          desc + " found on GitHub", "", "", ""});
+    if (resp.status_code == 200 && resp.body.find("code-list") != std::string::npos && resp.body.find("We couldn") == std::string::npos) {
+      findings.push_back({"GitHub Code Leak: " + desc, "high", url, desc + " found on GitHub", "", "", ""});
     }
   }
   return findings;
@@ -326,8 +289,7 @@ std::vector<Finding> scan_github_recon(const Config &cfg, HttpClient &http,
 /// robots.txt and sitemap.xml mining.
 /// Scanner implementation.
 /// @brief Scan for robots_sitemap vulnerabilities.
-std::vector<Finding> scan_robots_sitemap(const Config &, HttpClient &http,
-                                         const CrawlResult &crawl) {
+std::vector<Finding> scan_robots_sitemap(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   // Early return if no URLs to scan.
   // Skip if no URLs available.
@@ -349,12 +311,9 @@ std::vector<Finding> scan_robots_sitemap(const Config &, HttpClient &http,
       if (line.find("Disallow:") != std::string::npos) {
         std::string path = line.substr(line.find(':') + 1);
         while (!path.empty() && path[0] == ' ') path = path.substr(1);
-        if (path.find("admin") != std::string::npos ||
-            path.find("api") != std::string::npos ||
-            path.find("internal") != std::string::npos ||
-            path.find("debug") != std::string::npos ||
-            path.find("backup") != std::string::npos ||
-            path.find("staging") != std::string::npos) {
+        if (path.find("admin") != std::string::npos || path.find("api") != std::string::npos ||
+            path.find("internal") != std::string::npos || path.find("debug") != std::string::npos ||
+            path.find("backup") != std::string::npos || path.find("staging") != std::string::npos) {
           interesting_disallows.push_back(path);
         }
       }
@@ -362,17 +321,15 @@ std::vector<Finding> scan_robots_sitemap(const Config &, HttpClient &http,
 
     if (!interesting_disallows.empty()) {
       std::string detail = "Interesting disallowed paths:";
-      for (const auto &p : interesting_disallows) detail += " " + p;
-      findings.push_back({"robots.txt Intel", "info", base + "/robots.txt",
-                          detail, "", "", ""});
+      for (const auto& p : interesting_disallows) detail += " " + p;
+      findings.push_back({"robots.txt Intel", "info", base + "/robots.txt", detail, "", "", ""});
 
       // Probe disallowed paths.
-      for (const auto &path : interesting_disallows) {
+      for (const auto& path : interesting_disallows) {
         auto resp = http.get(base + path);
         if (resp.status_code == 200 && resp.body.size() > 100) {
-          findings.push_back({"Disallowed Path Accessible", "medium", base + path,
-                              "robots.txt disallowed path is actually accessible",
-                              "", "", ""});
+          findings.push_back(
+              {"Disallowed Path Accessible", "medium", base + path, "robots.txt disallowed path is actually accessible", "", "", ""});
         }
       }
     }
@@ -388,9 +345,8 @@ std::vector<Finding> scan_robots_sitemap(const Config &, HttpClient &http,
     int count = 0;
     for (auto it = begin; it != end; ++it) count++;
     if (count > 0) {
-      findings.push_back({"Sitemap Discovery", "info", base + "/sitemap.xml",
-                          "Sitemap contains " + std::to_string(count) + " URLs",
-                          "", "", ""});
+      findings.push_back(
+          {"Sitemap Discovery", "info", base + "/sitemap.xml", "Sitemap contains " + std::to_string(count) + " URLs", "", "", ""});
     }
   }
   return findings;
@@ -399,14 +355,11 @@ std::vector<Finding> scan_robots_sitemap(const Config &, HttpClient &http,
 /// Certificate transparency deep — find historical/expired subdomains.
 /// Scanner implementation.
 /// @brief Scan for ct_deep vulnerabilities.
-std::vector<Finding> scan_ct_deep(const Config &cfg, HttpClient &http,
-                                  const CrawlResult &) {
+std::vector<Finding> scan_ct_deep(const Config& cfg, HttpClient& http, const CrawlResult&) {
   std::vector<Finding> findings;
   std::string domain = cfg.target;
-  if (domain.find("://") != std::string::npos)
-    domain = domain.substr(domain.find("://") + 3);
-  if (domain.find('/') != std::string::npos)
-    domain = domain.substr(0, domain.find('/'));
+  if (domain.find("://") != std::string::npos) domain = domain.substr(domain.find("://") + 3);
+  if (domain.find('/') != std::string::npos) domain = domain.substr(0, domain.find('/'));
 
   // Query crt.sh for expired/historical certs.
   std::string url = "https://crt.sh/?q=%25." + domain + "&output=json&expired=true";
@@ -427,7 +380,7 @@ std::vector<Finding> scan_ct_deep(const Config &cfg, HttpClient &http,
   // Check for potential subdomain takeover on expired/dangling subs.
   std::vector<std::string> dangling;
   // Iterate over targets.
-  for (const auto &sub : all_subs) {
+  for (const auto& sub : all_subs) {
     auto probe = http.get("https://" + sub + "/");
     if (probe.status_code == 0 || !probe.error.empty()) {
       // DNS resolves but no HTTP = potential takeover.
@@ -438,32 +391,25 @@ std::vector<Finding> scan_ct_deep(const Config &cfg, HttpClient &http,
 
   if (!dangling.empty()) {
     std::string detail = "Potentially dangling subdomains (takeover risk):";
-    for (const auto &d : dangling) detail += " " + d;
-    findings.push_back({"CT Dangling Subdomains", "medium", domain,
-                        detail, "", "", ""});
+    for (const auto& d : dangling) detail += " " + d;
+    findings.push_back({"CT Dangling Subdomains", "medium", domain, detail, "", "", ""});
   }
 
   if (all_subs.size() > 10) {
     findings.push_back({"CT Historical Subdomains", "info", domain,
-                        std::to_string(all_subs.size()) +
-                            " total subdomains found in certificate transparency logs",
-                        "", "", ""});
+                        std::to_string(all_subs.size()) + " total subdomains found in certificate transparency logs", "", "", ""});
   }
   return findings;
 }
 
-} // namespace
+}  // namespace
 
 std::vector<Scanner> register_deep_recon_scanners() {
   return {
-      {"DNS Brute-Force", scan_dns_bruteforce},
-      {"Wayback URLs", scan_wayback_urls},
-      {"Google Dorks", scan_google_dorks},
-      {"Document Metadata", scan_metadata},
-      {"GitHub Recon", scan_github_recon},
-      {"robots.txt/Sitemap", scan_robots_sitemap},
+      {"DNS Brute-Force", scan_dns_bruteforce}, {"Wayback URLs", scan_wayback_urls}, {"Google Dorks", scan_google_dorks},
+      {"Document Metadata", scan_metadata},     {"GitHub Recon", scan_github_recon}, {"robots.txt/Sitemap", scan_robots_sitemap},
       {"CT Deep Scan", scan_ct_deep},
   };
 }
 
-} // namespace apex
+}  // namespace apex

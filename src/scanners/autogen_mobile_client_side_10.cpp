@@ -1,16 +1,17 @@
 /// @file scanners/autogen_mobile_client_side_10.cpp
 /// @brief Auto-generated scanner: Mobile/Client-Side (10)
-///        Checks: Certificate pinning bypass, Insecure data storage (SharedP, Intent redirection (Android), WebView JavaScript bridge expl, Binary patching (modify client
-#include "scanner_base.hpp"
-#include <regex>
+///        Checks: Certificate pinning bypass, Insecure data storage (SharedP, Intent redirection (Android), WebView JavaScript bridge expl,
+///        Binary patching (modify client
 #include <chrono>
+#include <regex>
+
+#include "scanner_base.hpp"
 
 namespace apex {
 namespace {
 
 /// Certificate pinning bypass
-std::vector<Finding> scan_certificate_pinning_bypass(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_certificate_pinning_bypass(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -20,11 +21,9 @@ std::vector<Finding> scan_certificate_pinning_bypass(const Config &, HttpClient 
   if (resp.status_code == 403 || resp.status_code == 401) {
     // Try bypass
     auto bypass = http.get(base + "/admin", {{"X-Original-URL", "/admin"}});
-    if (bypass.status_code == 200 && bypass.body.size() > 200 &&
-        bypass.body.find("{") == 0) {
-      findings.push_back(Finding{"Certificate pinning bypass", "critical", base + "/admin",
-                          "Access control bypass successful",
-                          "", "X-Original-URL", bypass.body.substr(0, 150)});
+    if (bypass.status_code == 200 && bypass.body.size() > 200 && bypass.body.find("{") == 0) {
+      findings.push_back(Finding{"Certificate pinning bypass", "critical", base + "/admin", "Access control bypass successful", "",
+                                 "X-Original-URL", bypass.body.substr(0, 150)});
     }
   }
 
@@ -32,8 +31,7 @@ std::vector<Finding> scan_certificate_pinning_bypass(const Config &, HttpClient 
 }
 
 /// Insecure data storage (SharedPreferences/Keychain)
-std::vector<Finding> scan_insecure_data_storage_sharedpreferences_(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_insecure_data_storage_sharedpreferences_(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -46,22 +44,20 @@ std::vector<Finding> scan_insecure_data_storage_sharedpreferences_(const Config 
 }
 
 /// Intent redirection (Android)
-std::vector<Finding> scan_intent_redirection_android(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_intent_redirection_android(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
   // Intent redirection (Android)
-  for (const auto &url : crawl.urls) {
+  for (const auto& url : crawl.urls) {
     if (url.find("redirect") == std::string::npos && url.find("next") == std::string::npos) continue;
     auto resp = http.get(url + "https://evil.com");
     if (resp.status_code == 302) {
       auto loc = resp.headers.find("Location");
       if (loc != resp.headers.end() && loc->second.find("evil.com") != std::string::npos) {
-        findings.push_back(Finding{"Intent redirection (Android)", "medium", url,
-                            "Open redirect confirmed",
-                            "", "https://evil.com", "Location: " + loc->second});
+        findings.push_back(Finding{"Intent redirection (Android)", "medium", url, "Open redirect confirmed", "", "https://evil.com",
+                                   "Location: " + loc->second});
         return findings;
       }
     }
@@ -72,8 +68,7 @@ std::vector<Finding> scan_intent_redirection_android(const Config &, HttpClient 
 }
 
 /// WebView JavaScript bridge exploitation
-std::vector<Finding> scan_webview_javascript_bridge_exploitation(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_webview_javascript_bridge_exploitation(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -86,8 +81,7 @@ std::vector<Finding> scan_webview_javascript_bridge_exploitation(const Config &,
 }
 
 /// Binary patching (modify client-side checks)
-std::vector<Finding> scan_binary_patching_modify_client_side_check(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_binary_patching_modify_client_side_check(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -100,8 +94,7 @@ std::vector<Finding> scan_binary_patching_modify_client_side_check(const Config 
 }
 
 /// Clipboard data leakage
-std::vector<Finding> scan_clipboard_data_leakage(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_clipboard_data_leakage(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -113,8 +106,7 @@ std::vector<Finding> scan_clipboard_data_leakage(const Config &, HttpClient &htt
   return findings;
 }
 
-
-} // namespace
+}  // namespace
 
 std::vector<Scanner> register_autogen_mobile_client_side_10_scanners() {
   return {
@@ -127,4 +119,4 @@ std::vector<Scanner> register_autogen_mobile_client_side_10_scanners() {
   };
 }
 
-} // namespace apex
+}  // namespace apex

@@ -1,16 +1,16 @@
 /// @file scanners/autogen_api_specific_25.cpp
 /// @brief Auto-generated scanner: API-Specific (25)
 ///        Checks: OpenAPI/Swagger spec exposed w
-#include "scanner_base.hpp"
-#include <regex>
 #include <chrono>
+#include <regex>
+
+#include "scanner_base.hpp"
 
 namespace apex {
 namespace {
 
 /// OpenAPI/Swagger spec exposed with internal endpoints
-std::vector<Finding> scan_openapi_swagger_spec_exposed_with_intern(const Config &, HttpClient &http,
-                                       const CrawlResult &crawl) {
+std::vector<Finding> scan_openapi_swagger_spec_exposed_with_intern(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
@@ -22,8 +22,7 @@ std::vector<Finding> scan_openapi_swagger_spec_exposed_with_intern(const Config 
   return findings;
 }
 
-
-} // namespace
+}  // namespace
 
 std::vector<Scanner> register_autogen_api_specific_25_scanners() {
   return {
@@ -31,4 +30,4 @@ std::vector<Scanner> register_autogen_api_specific_25_scanners() {
   };
 }
 
-} // namespace apex
+}  // namespace apex

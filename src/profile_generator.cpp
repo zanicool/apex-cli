@@ -3,6 +3,7 @@
 ///        detected that has no existing profile, generates one from scan intel.
 ///        Profiles accumulate over time — the system learns from each scan.
 #include "profile_generator.hpp"
+
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -13,27 +14,23 @@ namespace apex {
 
 namespace fs = std::filesystem;
 
-ProfileGenerator::ProfileGenerator(const std::string &profiles_dir)
-    : profiles_dir_(profiles_dir) {
+ProfileGenerator::ProfileGenerator(const std::string& profiles_dir) : profiles_dir_(profiles_dir) {
   fs::create_directories(profiles_dir_);
   load_known_profiles();
 }
 
 void ProfileGenerator::load_known_profiles() {
-  if (!fs::exists(profiles_dir_))
-    return;
-  for (const auto &entry : fs::directory_iterator(profiles_dir_)) {
+  if (!fs::exists(profiles_dir_)) return;
+  for (const auto& entry : fs::directory_iterator(profiles_dir_)) {
     if (entry.is_directory()) {
       known_profiles_.insert(entry.path().filename().string());
     }
   }
 }
 
-bool ProfileGenerator::has_profile(const std::string &framework) const {
-  return known_profiles_.count(normalize(framework)) > 0;
-}
+bool ProfileGenerator::has_profile(const std::string& framework) const { return known_profiles_.count(normalize(framework)) > 0; }
 
-std::string ProfileGenerator::normalize(const std::string &name) {
+std::string ProfileGenerator::normalize(const std::string& name) {
   std::string result;
   for (char c : name) {
     if (c == ' ' || c == '/')
@@ -44,8 +41,7 @@ std::string ProfileGenerator::normalize(const std::string &name) {
   return result;
 }
 
-std::string ProfileGenerator::generate_profile(const std::string &framework,
-                                               const ScanIntel &intel) {
+std::string ProfileGenerator::generate_profile(const std::string& framework, const ScanIntel& intel) {
   std::string slug = normalize(framework);
   std::string dir = profiles_dir_ + "/" + slug;
   fs::create_directories(dir);
@@ -56,8 +52,7 @@ std::string ProfileGenerator::generate_profile(const std::string &framework,
   scan << "---\n";
   scan << "# Auto-generated ZAP profile for: " << framework << "\n";
   scan << "# Generated: " << intel.scan_date << "\n";
-  scan << "# Source: apex-cli auto-learning from scan of " << intel.target
-       << "\n";
+  scan << "# Source: apex-cli auto-learning from scan of " << intel.target << "\n";
   scan << "#\n";
   scan << "# This profile was created automatically when apex-cli detected\n";
   scan << "# " << framework << " without an existing scan profile.\n";
@@ -97,7 +92,7 @@ std::string ProfileGenerator::generate_profile(const std::string &framework,
   if (!intel.interesting_paths.empty()) {
     scan << "  - type: requestor\n";
     scan << "    requests:\n";
-    for (const auto &path : intel.interesting_paths) {
+    for (const auto& path : intel.interesting_paths) {
       scan << "      - url: \"${target.url}" << path << "\"\n";
     }
   }
@@ -190,9 +185,8 @@ std::string ProfileGenerator::generate_profile(const std::string &framework,
   std::string urls_path = dir + "/urls.txt";
   std::ofstream urls(urls_path);
   urls << "# Auto-discovered paths for " << framework << "\n";
-  urls << "# From scan of " << intel.target << " on " << intel.scan_date
-       << "\n";
-  for (const auto &path : intel.interesting_paths) {
+  urls << "# From scan of " << intel.target << " on " << intel.scan_date << "\n";
+  for (const auto& path : intel.interesting_paths) {
     urls << path << "\n";
   }
   urls.close();
@@ -205,8 +199,7 @@ std::string ProfileGenerator::generate_profile(const std::string &framework,
   return dir;
 }
 
-void ProfileGenerator::update_profile(const std::string &framework,
-                                      const ScanIntel &intel) {
+void ProfileGenerator::update_profile(const std::string& framework, const ScanIntel& intel) {
   std::string slug = normalize(framework);
   std::string urls_path = profiles_dir_ + "/" + slug + "/urls.txt";
 
@@ -216,14 +209,13 @@ void ProfileGenerator::update_profile(const std::string &framework,
     std::ifstream in(urls_path);
     std::string line;
     while (std::getline(in, line)) {
-      if (!line.empty() && line[0] != '#')
-        existing.insert(line);
+      if (!line.empty() && line[0] != '#') existing.insert(line);
     }
   }
 
   int added = 0;
   std::ofstream out(urls_path, std::ios::app);
-  for (const auto &path : intel.interesting_paths) {
+  for (const auto& path : intel.interesting_paths) {
     if (existing.insert(path).second) {
       out << path << "\n";
       added++;
@@ -232,14 +224,11 @@ void ProfileGenerator::update_profile(const std::string &framework,
   out.close();
 
   if (added > 0) {
-    std::cout << "  -> Updated profile '" << slug << "': +" << added
-              << " new paths\n";
+    std::cout << "  -> Updated profile '" << slug << "': +" << added << " new paths\n";
   }
 }
 
-ScanIntel ProfileGenerator::build_intel(const std::string &target,
-                                        const CrawlResult &crawl,
-                                        const std::vector<Finding> &findings) {
+ScanIntel ProfileGenerator::build_intel(const std::string& target, const CrawlResult& crawl, const std::vector<Finding>& findings) {
   ScanIntel intel;
   intel.target = target;
 
@@ -258,25 +247,17 @@ ScanIntel ProfileGenerator::build_intel(const std::string &target,
   intel.has_ldap = false;
   intel.is_spa = false;
 
-  for (const auto &url : crawl.urls) {
-    if (url.find("/api/") != std::string::npos ||
-        url.find("/v1/") != std::string::npos)
-      intel.has_api = true;
-    if (url.find("login") != std::string::npos ||
-        url.find("auth") != std::string::npos)
-      intel.has_auth = true;
+  for (const auto& url : crawl.urls) {
+    if (url.find("/api/") != std::string::npos || url.find("/v1/") != std::string::npos) intel.has_api = true;
+    if (url.find("login") != std::string::npos || url.find("auth") != std::string::npos) intel.has_auth = true;
   }
 
   // Analyze findings for intel.
-  for (const auto &f : findings) {
-    if (f.type == "File Upload Found")
-      intel.has_file_upload = true;
-    if (f.type.find("LDAP") != std::string::npos)
-      intel.has_ldap = true;
-    if (f.type.find("SPA") != std::string::npos ||
-        f.detail.find("React") != std::string::npos ||
-        f.detail.find("Angular") != std::string::npos ||
-        f.detail.find("Vue") != std::string::npos ||
+  for (const auto& f : findings) {
+    if (f.type == "File Upload Found") intel.has_file_upload = true;
+    if (f.type.find("LDAP") != std::string::npos) intel.has_ldap = true;
+    if (f.type.find("SPA") != std::string::npos || f.detail.find("React") != std::string::npos ||
+        f.detail.find("Angular") != std::string::npos || f.detail.find("Vue") != std::string::npos ||
         f.detail.find("Next") != std::string::npos)
       intel.is_spa = true;
 
@@ -285,18 +266,16 @@ ScanIntel ProfileGenerator::build_intel(const std::string &target,
       size_t path_start = f.url.find('/', f.url.find("://") + 3);
       if (path_start != std::string::npos) {
         std::string path = f.url.substr(path_start);
-        if (path.size() > 1 && path.size() < 100)
-          intel.interesting_paths.push_back(path);
+        if (path.size() > 1 && path.size() < 100) intel.interesting_paths.push_back(path);
       }
     }
   }
 
   // Deduplicate paths.
-  std::set<std::string> unique(intel.interesting_paths.begin(),
-                               intel.interesting_paths.end());
+  std::set<std::string> unique(intel.interesting_paths.begin(), intel.interesting_paths.end());
   intel.interesting_paths.assign(unique.begin(), unique.end());
 
   return intel;
 }
 
-} // namespace apex
+}  // namespace apex

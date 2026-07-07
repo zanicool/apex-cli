@@ -1,6 +1,7 @@
 /// @file targeting.cpp
 /// @brief Intelligent Targeting Engine implementation.
 #include "targeting.hpp"
+
 #include <algorithm>
 #include <regex>
 
@@ -10,44 +11,39 @@ namespace apex {
 // ENDPOINT SENSITIVITY CLASSIFICATION
 // ============================================================
 
-Sensitivity classify_endpoint(const std::string &url,
-                               const std::set<std::string> &params) {
+Sensitivity classify_endpoint(const std::string& url, const std::set<std::string>& params) {
   std::string lower = url;
   std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
 
   // Critical: payment, admin, financial operations
-  static const std::vector<std::string> critical_patterns = {
-      "payment", "checkout", "billing", "invoice", "withdraw", "transfer",
-      "admin", "manage", "superuser", "staff", "internal", "ops",
-      "api/key", "apikey", "secret", "credential", "token/create"};
-  for (const auto &p : critical_patterns) {
+  static const std::vector<std::string> critical_patterns = {"payment", "checkout", "billing",   "invoice",    "withdraw",    "transfer",
+                                                             "admin",   "manage",   "superuser", "staff",      "internal",    "ops",
+                                                             "api/key", "apikey",   "secret",    "credential", "token/create"};
+  for (const auto& p : critical_patterns) {
     if (lower.find(p) != std::string::npos) return Sensitivity::CRITICAL;
   }
 
   // High: auth, user data, settings
   static const std::vector<std::string> high_patterns = {
-      "auth", "login", "register", "signup", "password", "reset",
-      "profile", "account", "settings", "session", "oauth", "sso",
-      "2fa", "mfa", "verify", "confirm", "user/", "users/",
-      "email", "phone", "address", "delete"};
-  for (const auto &p : high_patterns) {
+      "auth", "login", "register", "signup", "password", "reset", "profile", "account", "settings", "session", "oauth",
+      "sso",  "2fa",   "mfa",      "verify", "confirm",  "user/", "users/",  "email",   "phone",    "address", "delete"};
+  for (const auto& p : high_patterns) {
     if (lower.find(p) != std::string::npos) return Sensitivity::HIGH;
   }
 
   // Check params for sensitive indicators
-  for (const auto &param : params) {
+  for (const auto& param : params) {
     std::string p = param;
     std::transform(p.begin(), p.end(), p.begin(), ::tolower);
-    if (p.find("token") != std::string::npos || p.find("key") != std::string::npos ||
-        p.find("secret") != std::string::npos || p.find("pass") != std::string::npos ||
-        p.find("credit") != std::string::npos || p.find("amount") != std::string::npos) {
+    if (p.find("token") != std::string::npos || p.find("key") != std::string::npos || p.find("secret") != std::string::npos ||
+        p.find("pass") != std::string::npos || p.find("credit") != std::string::npos || p.find("amount") != std::string::npos) {
       return Sensitivity::HIGH;
     }
   }
 
   // Medium: API endpoints, user-facing features
-  if (lower.find("api") != std::string::npos || lower.find("/v1/") != std::string::npos ||
-      lower.find("/v2/") != std::string::npos || lower.find("graphql") != std::string::npos) {
+  if (lower.find("api") != std::string::npos || lower.find("/v1/") != std::string::npos || lower.find("/v2/") != std::string::npos ||
+      lower.find("graphql") != std::string::npos) {
     return Sensitivity::MEDIUM;
   }
 
@@ -58,7 +54,7 @@ Sensitivity classify_endpoint(const std::string &url,
 // ASSET PROFILE BUILDER
 // ============================================================
 
-AssetProfile build_profile(const CrawlResult &crawl, HttpClient &http) {
+AssetProfile build_profile(const CrawlResult& crawl, HttpClient& http) {
   AssetProfile profile;
 
   if (crawl.urls.empty()) return profile;
@@ -87,8 +83,7 @@ AssetProfile build_profile(const CrawlResult &crawl, HttpClient &http) {
   if (profile.server.find("cloudflare") != std::string::npos) {
     profile.cloud_provider = "cloudflare";
     profile.waf = "cloudflare";
-  } else if (profile.server.find("AmazonS3") != std::string::npos ||
-             profile.server.find("CloudFront") != std::string::npos) {
+  } else if (profile.server.find("AmazonS3") != std::string::npos || profile.server.find("CloudFront") != std::string::npos) {
     profile.cloud_provider = "aws";
   } else if (profile.server.find("Microsoft") != std::string::npos) {
     profile.cloud_provider = "azure";
@@ -98,23 +93,21 @@ AssetProfile build_profile(const CrawlResult &crawl, HttpClient &http) {
 
   // Detect JWT usage
   auto home = http.get(crawl.urls[0]);
-  if (home.body.find("jwt") != std::string::npos ||
-      home.body.find("Bearer") != std::string::npos ||
+  if (home.body.find("jwt") != std::string::npos || home.body.find("Bearer") != std::string::npos ||
       home.body.find("eyJ") != std::string::npos) {
     profile.has_jwt = true;
   }
 
   // Detect OAuth
-  if (home.body.find("oauth") != std::string::npos ||
-      home.body.find("client_id") != std::string::npos ||
+  if (home.body.find("oauth") != std::string::npos || home.body.find("client_id") != std::string::npos ||
       home.body.find("redirect_uri") != std::string::npos) {
     profile.has_oauth = true;
   }
 
   // Build endpoint list with classification
-  for (const auto &url : crawl.urls) {
+  for (const auto& url : crawl.urls) {
     std::set<std::string> params;
-    for (const auto &p : crawl.params) {
+    for (const auto& p : crawl.params) {
       if (url.find(p.url) != std::string::npos) params.insert(p.name);
     }
 
@@ -129,7 +122,7 @@ AssetProfile build_profile(const CrawlResult &crawl, HttpClient &http) {
 
   // Detect if primarily an API service
   int api_count = 0;
-  for (const auto &ep : profile.endpoints) {
+  for (const auto& ep : profile.endpoints) {
     if (ep.is_api) api_count++;
   }
   if (profile.endpoint_count > 0 && api_count > profile.endpoint_count / 2) {
@@ -143,15 +136,13 @@ AssetProfile build_profile(const CrawlResult &crawl, HttpClient &http) {
 // MODULE RELEVANCE SCORING
 // ============================================================
 
-double AssetProfile::module_relevance(const std::string &module_name) const {
+double AssetProfile::module_relevance(const std::string& module_name) const {
   std::string name = module_name;
   std::transform(name.begin(), name.end(), name.begin(), ::tolower);
 
   // Always relevant (universal checks)
-  if (name.find("security header") != std::string::npos ||
-      name.find("info disclosure") != std::string::npos ||
-      name.find("cors") != std::string::npos ||
-      name.find("waf") != std::string::npos) {
+  if (name.find("security header") != std::string::npos || name.find("info disclosure") != std::string::npos ||
+      name.find("cors") != std::string::npos || name.find("waf") != std::string::npos) {
     return 1.0;
   }
 
@@ -181,8 +172,7 @@ double AssetProfile::module_relevance(const std::string &module_name) const {
   }
 
   // SPA-specific checks
-  if (name.find("dom") != std::string::npos || name.find("prototype") != std::string::npos ||
-      name.find("browser") != std::string::npos) {
+  if (name.find("dom") != std::string::npos || name.find("prototype") != std::string::npos || name.find("browser") != std::string::npos) {
     return is_spa ? 1.0 : 0.4;
   }
 
@@ -192,10 +182,10 @@ double AssetProfile::module_relevance(const std::string &module_name) const {
   }
 
   // E-commerce checks
-  if (name.find("payment") != std::string::npos || name.find("cart") != std::string::npos ||
-      name.find("ecommerce") != std::string::npos || name.find("coupon") != std::string::npos) {
+  if (name.find("payment") != std::string::npos || name.find("cart") != std::string::npos || name.find("ecommerce") != std::string::npos ||
+      name.find("coupon") != std::string::npos) {
     // Only if we found payment/commerce endpoints
-    for (const auto &ep : endpoints) {
+    for (const auto& ep : endpoints) {
       if (ep.sensitivity == Sensitivity::CRITICAL) return 0.8;
     }
     return 0.2;
@@ -213,9 +203,8 @@ double AssetProfile::module_relevance(const std::string &module_name) const {
   }
 
   // Injection checks: always somewhat relevant
-  if (name.find("sqli") != std::string::npos || name.find("xss") != std::string::npos ||
-      name.find("injection") != std::string::npos || name.find("ssrf") != std::string::npos ||
-      name.find("ssti") != std::string::npos || name.find("lfi") != std::string::npos) {
+  if (name.find("sqli") != std::string::npos || name.find("xss") != std::string::npos || name.find("injection") != std::string::npos ||
+      name.find("ssrf") != std::string::npos || name.find("ssti") != std::string::npos || name.find("lfi") != std::string::npos) {
     return param_count > 0 ? 0.9 : 0.3;
   }
 
@@ -230,9 +219,7 @@ double AssetProfile::module_relevance(const std::string &module_name) const {
 std::vector<Endpoint> AssetProfile::get_priority_targets() const {
   auto sorted = endpoints;
   std::sort(sorted.begin(), sorted.end(),
-            [](const Endpoint &a, const Endpoint &b) {
-              return static_cast<int>(a.sensitivity) > static_cast<int>(b.sensitivity);
-            });
+            [](const Endpoint& a, const Endpoint& b) { return static_cast<int>(a.sensitivity) > static_cast<int>(b.sensitivity); });
   return sorted;
 }
 
@@ -240,12 +227,10 @@ std::vector<Endpoint> AssetProfile::get_priority_targets() const {
 // SMART MODULE SELECTION
 // ============================================================
 
-std::vector<Scanner> select_modules(const std::vector<Scanner> &all_scanners,
-                                     const AssetProfile &profile,
-                                     double threshold) {
+std::vector<Scanner> select_modules(const std::vector<Scanner>& all_scanners, const AssetProfile& profile, double threshold) {
   std::vector<Scanner> selected;
 
-  for (const auto &scanner : all_scanners) {
+  for (const auto& scanner : all_scanners) {
     double relevance = profile.module_relevance(scanner.name);
     if (relevance >= threshold) {
       selected.push_back(scanner);
@@ -254,12 +239,9 @@ std::vector<Scanner> select_modules(const std::vector<Scanner> &all_scanners,
 
   // Sort by relevance (most relevant first = run first)
   std::sort(selected.begin(), selected.end(),
-            [&profile](const Scanner &a, const Scanner &b) {
-              return profile.module_relevance(a.name) >
-                     profile.module_relevance(b.name);
-            });
+            [&profile](const Scanner& a, const Scanner& b) { return profile.module_relevance(a.name) > profile.module_relevance(b.name); });
 
   return selected;
 }
 
-} // namespace apex
+}  // namespace apex

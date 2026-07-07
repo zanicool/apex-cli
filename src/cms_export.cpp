@@ -1,16 +1,16 @@
 #include "cms_export.hpp"
+
 #include <fstream>
 #include <sstream>
 
 namespace apex {
 
-std::string export_cms_inventory(const std::vector<Finding> &findings) {
+std::string export_cms_inventory(const std::vector<Finding>& findings) {
   std::ostringstream csv;
   csv << "URL,CMS,Version,Latest Version,Status,Severity\n";
 
-  for (const auto &f : findings) {
-    if (f.type != "CMS Detection")
-      continue;
+  for (const auto& f : findings) {
+    if (f.type != "CMS Detection") continue;
 
     // Parse evidence: "CMS|version|latest"
     std::string cms, version, latest;
@@ -25,15 +25,13 @@ std::string export_cms_inventory(const std::vector<Finding> &findings) {
 
     std::string status = (f.severity == "medium") ? "OUTDATED" : "OK";
 
-    csv << f.url << "," << cms << "," << version << "," << latest << ","
-        << status << "," << f.severity << "\n";
+    csv << f.url << "," << cms << "," << version << "," << latest << "," << status << "," << f.severity << "\n";
   }
 
   return csv.str();
 }
 
-void write_cms_inventory(const std::vector<Finding> &findings,
-                         const std::string &filename) {
+void write_cms_inventory(const std::vector<Finding>& findings, const std::string& filename) {
   std::ofstream file(filename);
   if (file.is_open()) {
     file << export_cms_inventory(findings);
@@ -41,4 +39,4 @@ void write_cms_inventory(const std::vector<Finding> &findings,
   }
 }
 
-} // namespace apex
+}  // namespace apex

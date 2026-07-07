@@ -1,8 +1,9 @@
 /// @file scanners/otap_discovery.cpp
 /// @brief OTAP/DTAP environment discovery: find development, test, acceptance,
 ///        staging, preview environments that are often less protected.
-#include "scanner_base.hpp"
 #include <set>
+
+#include "scanner_base.hpp"
 
 ///
 /// @details This scanner module is part of the apex-cli security scanning
@@ -22,20 +23,18 @@ namespace {
 
 /// Scanner implementation.
 /// @brief Scan for otap_environments vulnerabilities.
-std::vector<Finding> scan_otap_environments(const Config &cfg, HttpClient &http,
-                                            const CrawlResult &) {
+std::vector<Finding> scan_otap_environments(const Config& cfg, HttpClient& http, const CrawlResult&) {
   std::vector<Finding> findings;
   std::string domain = cfg.target;
-  if (domain.find("://") != std::string::npos)
-    domain = domain.substr(domain.find("://") + 3);
-  if (domain.find('/') != std::string::npos)
-    domain = domain.substr(0, domain.find('/'));
+  if (domain.find("://") != std::string::npos) domain = domain.substr(domain.find("://") + 3);
+  if (domain.find('/') != std::string::npos) domain = domain.substr(0, domain.find('/'));
 
   // Split domain: "example.com" or "app.example.com"
   std::string base_domain = domain;
   std::string subdomain_prefix;
   size_t dots = 0;
-  for (char c : domain) if (c == '.') dots++;
+  for (char c : domain)
+    if (c == '.') dots++;
   if (dots >= 2) {
     size_t first_dot = domain.find('.');
     subdomain_prefix = domain.substr(0, first_dot);
@@ -45,25 +44,61 @@ std::vector<Finding> scan_otap_environments(const Config &cfg, HttpClient &http,
   // OTAP patterns: prefix-based, subdomain-based, and path-based.
   const std::vector<std::string> env_prefixes = {
       // Dutch OTAP
-      "ontwikkel", "test", "acceptatie", "productie",
-      "ont", "tst", "acc", "prd",
+      "ontwikkel",
+      "test",
+      "acceptatie",
+      "productie",
+      "ont",
+      "tst",
+      "acc",
+      "prd",
       // English DTAP
-      "dev", "development", "test", "testing", "staging",
-      "stage", "stg", "accept", "acceptance", "uat",
-      "qa", "qas", "preprod", "pre-prod", "pre",
-      "demo", "sandbox", "preview", "beta", "alpha",
-      "canary", "nightly", "edge", "next", "rc",
+      "dev",
+      "development",
+      "test",
+      "testing",
+      "staging",
+      "stage",
+      "stg",
+      "accept",
+      "acceptance",
+      "uat",
+      "qa",
+      "qas",
+      "preprod",
+      "pre-prod",
+      "pre",
+      "demo",
+      "sandbox",
+      "preview",
+      "beta",
+      "alpha",
+      "canary",
+      "nightly",
+      "edge",
+      "next",
+      "rc",
       // CI/CD
-      "ci", "cd", "build", "deploy", "release",
+      "ci",
+      "cd",
+      "build",
+      "deploy",
+      "release",
       // Internal
-      "internal", "corp", "intranet", "local",
-      "debug", "perf", "load", "stress",
+      "internal",
+      "corp",
+      "intranet",
+      "local",
+      "debug",
+      "perf",
+      "load",
+      "stress",
   };
 
   std::set<std::string> live_envs;
 
   // Iterate over targets.
-  for (const auto &env : env_prefixes) {
+  for (const auto& env : env_prefixes) {
     std::vector<std::string> candidates;
 
     // Pattern 1: env.domain.com
@@ -78,7 +113,7 @@ std::vector<Finding> scan_otap_environments(const Config &cfg, HttpClient &http,
     std::string org = base_domain.substr(0, base_domain.find('.'));
     candidates.push_back(org + "-" + env + "." + base_domain);
 
-    for (const auto &candidate : candidates) {
+    for (const auto& candidate : candidates) {
       if (candidate == domain) continue;
       auto resp = http.get("https://" + candidate + "/");
       if (resp.status_code > 0 && resp.status_code < 500 && resp.error.empty()) {
@@ -90,15 +125,13 @@ std::vector<Finding> scan_otap_environments(const Config &cfg, HttpClient &http,
         std::string detail = "OTAP environment '" + env + "' is live";
 
         // Check for missing auth.
-        if (resp.status_code == 200 && resp.body.size() > 200 &&
-            resp.body.find("login") == std::string::npos) {
+        if (resp.status_code == 200 && resp.body.size() > 200 && resp.body.find("login") == std::string::npos) {
           severity = "high";
           detail += " — accessible without authentication";
         }
 
         // Check for debug headers/info.
-        if (resp.headers.find("X-Debug") != resp.headers.end() ||
-            resp.headers.find("X-Debug-Token") != resp.headers.end() ||
+        if (resp.headers.find("X-Debug") != resp.headers.end() || resp.headers.find("X-Debug-Token") != resp.headers.end() ||
             resp.body.find("debug") != std::string::npos) {
           severity = "high";
           detail += " — debug mode detected";
@@ -110,8 +143,7 @@ std::vector<Finding> scan_otap_environments(const Config &cfg, HttpClient &http,
           detail += " — missing security headers";
         }
 
-        findings.push_back({"OTAP Environment: " + candidate, severity,
-                            "https://" + candidate, detail, "", "", ""});
+        findings.push_back({"OTAP Environment: " + candidate, severity, "https://" + candidate, detail, "", "", ""});
       }
     }
   }
@@ -119,23 +151,20 @@ std::vector<Finding> scan_otap_environments(const Config &cfg, HttpClient &http,
   // Also check path-based environments on the same host.
   std::string base = "https://" + domain;
   const std::vector<std::string> env_paths = {
-      "/dev", "/test", "/staging", "/uat", "/qa", "/demo",
-      "/sandbox", "/beta", "/preview", "/internal",
+      "/dev", "/test", "/staging", "/uat", "/qa", "/demo", "/sandbox", "/beta", "/preview", "/internal",
   };
   // Iterate over targets.
-  for (const auto &path : env_paths) {
+  for (const auto& path : env_paths) {
     auto resp = http.get(base + path);
-    if (resp.status_code == 200 && resp.body.size() > 200 &&
-        resp.body.find("404") == std::string::npos) {
-      findings.push_back({"OTAP Path: " + path, "low", base + path,
-                          "Environment path accessible on production host", "", "", ""});
+    if (resp.status_code == 200 && resp.body.size() > 200 && resp.body.find("404") == std::string::npos) {
+      findings.push_back({"OTAP Path: " + path, "low", base + path, "Environment path accessible on production host", "", "", ""});
     }
   }
 
   return findings;
 }
 
-} // namespace
+}  // namespace
 
 std::vector<Scanner> register_otap_scanners() {
   return {
@@ -143,4 +172,4 @@ std::vector<Scanner> register_otap_scanners() {
   };
 }
 
-} // namespace apex
+}  // namespace apex

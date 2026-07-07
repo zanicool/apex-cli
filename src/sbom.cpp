@@ -1,6 +1,7 @@
 /// @file sbom.cpp
 /// @brief SBOM generation (CycloneDX) and OSV.dev vulnerability lookup.
 #include "sbom.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <fstream>
@@ -15,7 +16,7 @@ namespace apex {
 namespace {
 
 /// Normalize product name for PURL.
-std::string normalize(const std::string &name) {
+std::string normalize(const std::string& name) {
   std::string out;
   for (char c : name) {
     if (std::isalnum(c) || c == '-' || c == '.')
@@ -28,17 +29,14 @@ std::string normalize(const std::string &name) {
 
 /// Map severity string from CVSS score.
 std::string severity_from_cvss(double cvss) {
-  if (cvss >= 9.0)
-    return "critical";
-  if (cvss >= 7.0)
-    return "high";
-  if (cvss >= 4.0)
-    return "medium";
+  if (cvss >= 9.0) return "critical";
+  if (cvss >= 7.0) return "high";
+  if (cvss >= 4.0) return "medium";
   return "low";
 }
 
 /// Simple JSON string escape.
-std::string json_escape(const std::string &s) {
+std::string json_escape(const std::string& s) {
   std::string out;
   for (char c : s) {
     if (c == '"')
@@ -53,13 +51,13 @@ std::string json_escape(const std::string &s) {
   return out;
 }
 
-} // namespace
+}  // namespace
 
-std::vector<SBOMComponent> extract_sbom(const std::vector<Finding> &findings) {
+std::vector<SBOMComponent> extract_sbom(const std::vector<Finding>& findings) {
   std::set<std::string> seen;
   std::vector<SBOMComponent> components;
 
-  for (const auto &f : findings) {
+  for (const auto& f : findings) {
     // CMS Detection findings: "Detected: Joomla v4.4.14 (OUTDATED ...)"
     if (f.type == "CMS Detection") {
       std::regex cms_re(R"re(Detected:\s+(\S+)\s+v([\d.]+))re");
@@ -109,8 +107,7 @@ std::vector<SBOMComponent> extract_sbom(const std::vector<Finding> &findings) {
   return components;
 }
 
-void write_sbom(const std::vector<SBOMComponent> &components,
-                const std::string &target, const std::string &path) {
+void write_sbom(const std::vector<SBOMComponent>& components, const std::string& target, const std::string& path) {
   auto now = std::chrono::system_clock::now();
   auto t = std::chrono::system_clock::to_time_t(now);
   std::ostringstream ts;
@@ -125,13 +122,12 @@ void write_sbom(const std::vector<SBOMComponent> &components,
   out << "    \"timestamp\": \"" << ts.str() << "\",\n";
   out << "    \"tools\": [{\"name\": \"apex-cli\", \"version\": "
          "\"11.0-cpp\"}],\n";
-  out << "    \"component\": {\"type\": \"application\", \"name\": \""
-      << json_escape(target) << "\"}\n";
+  out << "    \"component\": {\"type\": \"application\", \"name\": \"" << json_escape(target) << "\"}\n";
   out << "  },\n";
   out << "  \"components\": [\n";
 
   for (size_t i = 0; i < components.size(); ++i) {
-    const auto &c = components[i];
+    const auto& c = components[i];
     out << "    {\n";
     out << "      \"type\": \"" << c.type << "\",\n";
     out << "      \"name\": \"" << json_escape(c.name) << "\",\n";
@@ -144,46 +140,36 @@ void write_sbom(const std::vector<SBOMComponent> &components,
   out << "}\n";
 }
 
-std::vector<SBOMVuln> check_osv(HttpClient &http,
-                                const std::vector<SBOMComponent> &components) {
+std::vector<SBOMVuln> check_osv(HttpClient& http, const std::vector<SBOMComponent>& components) {
   std::vector<SBOMVuln> vulns;
 
-  for (const auto &comp : components) {
-    if (comp.version.empty())
-      continue;
+  for (const auto& comp : components) {
+    if (comp.version.empty()) continue;
 
     // OSV.dev API: POST https://api.osv.dev/v1/query
-    std::string body = "{\"package\":{\"name\":\"" + normalize(comp.name) +
-                       "\",\"ecosystem\":\"" + "Packagist" +
-                       "\"},\"version\":\"" + comp.version + "\"}";
+    std::string body = "{\"package\":{\"name\":\"" + normalize(comp.name) + "\",\"ecosystem\":\"" + "Packagist" + "\"},\"version\":\"" +
+                       comp.version + "\"}";
 
     // Try multiple ecosystems for better coverage.
     std::vector<std::string> ecosystems = {"Packagist", "npm", "PyPI", "Maven"};
 
-    for (const auto &eco : ecosystems) {
-      std::string req = "{\"package\":{\"name\":\"" + normalize(comp.name) +
-                        "\",\"ecosystem\":\"" + eco + "\"},\"version\":\"" +
-                        comp.version + "\"}";
+    for (const auto& eco : ecosystems) {
+      std::string req =
+          "{\"package\":{\"name\":\"" + normalize(comp.name) + "\",\"ecosystem\":\"" + eco + "\"},\"version\":\"" + comp.version + "\"}";
 
-      auto resp =
-          http.post("https://api.osv.dev/v1/query", req, "application/json");
+      auto resp = http.post("https://api.osv.dev/v1/query", req, "application/json");
 
-      if (resp.status_code == 200 && resp.body.size() > 10 &&
-          resp.body.find("\"vulns\"") != std::string::npos) {
+      if (resp.status_code == 200 && resp.body.size() > 10 && resp.body.find("\"vulns\"") != std::string::npos) {
         // Parse vulnerabilities from response.
         std::regex id_re(R"re("id"\s*:\s*"([^"]+)")re");
         std::regex sum_re(R"re("summary"\s*:\s*"([^"]*)")re");
         std::regex score_re(R"re("score"\s*:\s*([\d.]+))re");
         std::regex fixed_re(R"re("fixed"\s*:\s*"([^"]+)")re");
 
-        auto id_it =
-            std::sregex_iterator(resp.body.begin(), resp.body.end(), id_re);
-        auto sum_it =
-            std::sregex_iterator(resp.body.begin(), resp.body.end(), sum_re);
-        auto score_it =
-            std::sregex_iterator(resp.body.begin(), resp.body.end(), score_re);
-        auto fixed_it =
-            std::sregex_iterator(resp.body.begin(), resp.body.end(), fixed_re);
+        auto id_it = std::sregex_iterator(resp.body.begin(), resp.body.end(), id_re);
+        auto sum_it = std::sregex_iterator(resp.body.begin(), resp.body.end(), sum_re);
+        auto score_it = std::sregex_iterator(resp.body.begin(), resp.body.end(), score_re);
+        auto fixed_it = std::sregex_iterator(resp.body.begin(), resp.body.end(), fixed_re);
 
         for (; id_it != std::sregex_iterator(); ++id_it) {
           SBOMVuln v;
@@ -209,11 +195,11 @@ std::vector<SBOMVuln> check_osv(HttpClient &http,
           vulns.push_back(v);
         }
 
-        break; // Found results in this ecosystem, stop trying others.
+        break;  // Found results in this ecosystem, stop trying others.
       }
     }
   }
   return vulns;
 }
 
-} // namespace apex
+}  // namespace apex
