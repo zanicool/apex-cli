@@ -100,6 +100,26 @@ std::vector<Scanner> get_scanners() {
   append(register_recon_deep2_scanners());
   append(register_auth_scanner_scanners());
   append(register_prototype_pollution_deep_scanners());
+  append(register_autogen_azure_ad_microsoft_365_20_scanners());
+  append(register_autogen_sso_identity_provider_20_scanners());
+  append(register_autogen_payment_financial_25_scanners());
+  append(register_autogen_email_security_15_scanners());
+  append(register_autogen_dns_domain_20_scanners());
+  append(register_autogen_api_authentication_20_scanners());
+  append(register_autogen_session_management_20_scanners());
+  append(register_autogen_input_validation_25_scanners());
+  append(register_autogen_file_operations_20_scanners());
+  append(register_autogen_cloud_storage_20_scanners());
+  append(register_autogen_container_orchestration_15_scanners());
+  append(register_autogen_ci_cd_security_15_scanners());
+  append(register_autogen_serverless_edge_15_scanners());
+  append(register_autogen_mobile_app_security_20_scanners());
+  append(register_autogen_rate_limiting_dos_15_scanners());
+  append(register_autogen_information_disclosure_extended_25_scanners());
+  append(register_autogen_cryptography_15_scanners());
+  append(register_autogen_business_logic_extended_25_scanners());
+  append(register_autogen_privacy_compliance_15_scanners());
+  append(register_autogen_third_party_integration_12_scanners());
   append(register_autogen_authentication_account_takeover_25_scanners());
   append(register_autogen_idor_broken_access_control_30_scanners());
   append(register_autogen_injection_30_scanners());
@@ -321,6 +341,26 @@ std::vector<Finding> run_scanners(const Config& cfg, HttpClient& http, const Cra
     }
     final_filtered.push_back(std::move(f));
   }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   // Run Attack Chain Engine — combines findings into multi-step exploits
 

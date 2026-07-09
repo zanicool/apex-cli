@@ -2,7 +2,7 @@
 """
 Apex Scanner Auto-Expander — Generates new scanner modules automatically.
 
-Reads the roadmap (docs/critical-checks-roadmap.md), compares against existing
+Reads the roadmap (docs/extended-roadmap-407.md), compares against existing
 scanners, identifies gaps, and generates new scanner modules until every check
 in the roadmap is covered.
 
