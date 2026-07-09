@@ -170,3 +170,16 @@ namespace apex { std::vector<Scanner> register_autogen_cryptography_15_scanners(
 namespace apex { std::vector<Scanner> register_autogen_business_logic_extended_25_scanners(); }
 namespace apex { std::vector<Scanner> register_autogen_privacy_compliance_15_scanners(); }
 namespace apex { std::vector<Scanner> register_autogen_third_party_integration_12_scanners(); }
+namespace apex { std::vector<Scanner> register_autogen_wordpress_deep_20_scanners(); }
+namespace apex { std::vector<Scanner> register_autogen_next_js_react_deep_15_scanners(); }
+namespace apex { std::vector<Scanner> register_autogen_laravel_php_deep_15_scanners(); }
+namespace apex { std::vector<Scanner> register_autogen_django_python_deep_15_scanners(); }
+namespace apex { std::vector<Scanner> register_autogen_spring_java_deep_15_scanners(); }
+namespace apex { std::vector<Scanner> register_autogen_node_js_express_deep_15_scanners(); }
+namespace apex { std::vector<Scanner> register_autogen_oauth_2_0_oidc_deep_15_scanners(); }
+namespace apex { std::vector<Scanner> register_autogen_cache_cdn_deep_15_scanners(); }
+namespace apex { std::vector<Scanner> register_autogen_http_protocol_15_scanners(); }
+namespace apex { std::vector<Scanner> register_autogen_subdomain_dns_extended_15_scanners(); }
+namespace apex { std::vector<Scanner> register_autogen_encoding_parser_differential_15_scanners(); }
+namespace apex { std::vector<Scanner> register_autogen_monitoring_observability_10_scanners(); }
+namespace apex { std::vector<Scanner> register_autogen_ai_llm_security_20_scanners(); }

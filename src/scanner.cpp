@@ -120,6 +120,19 @@ std::vector<Scanner> get_scanners() {
   append(register_autogen_business_logic_extended_25_scanners());
   append(register_autogen_privacy_compliance_15_scanners());
   append(register_autogen_third_party_integration_12_scanners());
+  append(register_autogen_wordpress_deep_20_scanners());
+  append(register_autogen_next_js_react_deep_15_scanners());
+  append(register_autogen_laravel_php_deep_15_scanners());
+  append(register_autogen_django_python_deep_15_scanners());
+  append(register_autogen_spring_java_deep_15_scanners());
+  append(register_autogen_node_js_express_deep_15_scanners());
+  append(register_autogen_oauth_2_0_oidc_deep_15_scanners());
+  append(register_autogen_cache_cdn_deep_15_scanners());
+  append(register_autogen_http_protocol_15_scanners());
+  append(register_autogen_subdomain_dns_extended_15_scanners());
+  append(register_autogen_encoding_parser_differential_15_scanners());
+  append(register_autogen_monitoring_observability_10_scanners());
+  append(register_autogen_ai_llm_security_20_scanners());
   append(register_autogen_authentication_account_takeover_25_scanners());
   append(register_autogen_idor_broken_access_control_30_scanners());
   append(register_autogen_injection_30_scanners());
@@ -341,6 +354,19 @@ std::vector<Finding> run_scanners(const Config& cfg, HttpClient& http, const Cra
     }
     final_filtered.push_back(std::move(f));
   }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
