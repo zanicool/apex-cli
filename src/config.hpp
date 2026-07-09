@@ -47,6 +47,7 @@ struct Config {
   bool full_scan = false; // Disable intelligent targeting, run all modules
   bool delta_scan = false; // Only scan new/changed endpoints vs last scan
   bool verify_mode = false; // Deep verification of all high/critical findings
+  bool pentest_mode = false; // Full pentest: auth → exploit → post-exploit → report
 
   // Authentication
   std::string auth_cookie; // Cookie header value for authenticated scanning
@@ -54,6 +55,7 @@ struct Config {
   std::string auth_basic;  // Basic auth (user:pass)
   std::string login_user;  // Username/email for auto-login
   std::string login_pass;  // Password for auto-login
+  std::string auth_token;  // Bearer token for API auth
 };
 
 } // namespace apex

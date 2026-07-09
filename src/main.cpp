@@ -39,6 +39,7 @@
 #include "targeting.hpp"
 #include "toolchain.hpp"
 #include "verification.hpp"
+#include "exploit/attack_planner.hpp"
 
 namespace {
 
@@ -89,6 +90,10 @@ void print_usage() {
   std::cout << "  --chain        Escalate findings into full exploit chains\n";
   std::cout << "  --program NAME HackerOne program handle (enables hacktivity "
                "check)\n";
+  std::cout << "  --pentest      Full pentest: auth → exploit → post-exploit → report\n";
+  std::cout << "  --user USER    Username for authenticated scanning\n";
+  std::cout << "  --pass PASS    Password for authenticated scanning\n";
+  std::cout << "  --token TOKEN  Bearer token for authenticated scanning\n";
   std::cout << "  --help         Show this help\n";
 }
 
@@ -212,12 +217,16 @@ int main(int argc, char* argv[]) {
       cfg.login_user = argv[++i];
     } else if (arg == "--pass" && i + 1 < argc) {
       cfg.login_pass = argv[++i];
+    } else if (arg == "--token" && i + 1 < argc) {
+      cfg.auth_token = argv[++i];
     } else if (arg == "--full-scan" || arg == "--full") {
       cfg.full_scan = true;
     } else if (arg == "--delta") {
       cfg.delta_scan = true;
     } else if (arg == "--verify") {
       cfg.verify_mode = true;
+    } else if (arg == "--pentest") {
+      cfg.pentest_mode = true;
     } else if (arg[0] != '-') {
       target = arg;
     }
@@ -1182,6 +1191,43 @@ int main(int argc, char* argv[]) {
       // Update report for next iteration
       apex::generate_report(cfg, new_findings, elapsed);
     }
+  }
+
+  // ============================================================
+  // PENTEST MODE — Full exploitation pipeline
+  // ============================================================
+  if (cfg.pentest_mode) {
+    std::cout << "\n[PENTEST MODE] Initiating full exploitation pipeline...\n";
+
+    apex::exploit::PentestPlan plan;
+    plan.target = target;
+    plan.aggressive = true;
+    plan.max_exploit_attempts = 50;
+
+    // Build credentials from provided args
+    if (!cfg.login_user.empty() && !cfg.login_pass.empty()) {
+      apex::exploit::Credential cred;
+      cred.username = cfg.login_user;
+      cred.password = cfg.login_pass;
+      cred.type = apex::exploit::AuthType::FORM_LOGIN;
+      plan.credentials.push_back(cred);
+
+      // Also try as basic auth
+      apex::exploit::Credential basic_cred;
+      basic_cred.username = cfg.login_user;
+      basic_cred.password = cfg.login_pass;
+      basic_cred.type = apex::exploit::AuthType::BASIC_AUTH;
+      plan.credentials.push_back(basic_cred);
+    }
+    if (!cfg.auth_token.empty()) {
+      apex::exploit::Credential token_cred;
+      token_cred.token = cfg.auth_token;
+      token_cred.type = apex::exploit::AuthType::BEARER_TOKEN;
+      plan.credentials.push_back(token_cred);
+    }
+
+    apex::exploit::AttackPlanner planner(http, cfg);
+    auto pentest_report = planner.execute_pentest(plan, crawl, findings);
   }
 
   return 0;
