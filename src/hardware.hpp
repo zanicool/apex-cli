@@ -26,8 +26,8 @@ inline HardwareProfile detect_hardware() {
     std::ifstream cpuinfo("/proc/cpuinfo");
     if (cpuinfo.is_open()) {
         std::string line;
-        int core_ids_seen = 0;
-        std::string last_core_id;
+        
+        
         while (std::getline(cpuinfo, line)) {
             if (line.find("model name") != std::string::npos && hw.cpu_model.empty()) {
                 auto pos = line.find(':');

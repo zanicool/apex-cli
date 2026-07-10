@@ -163,7 +163,7 @@ std::vector<Finding> scan_app_api_security(const Config&, HttpClient& http, cons
       // Found a live mobile API endpoint — check headers
       auto pinning = resp.headers.find("Public-Key-Pins");
       auto hsts = resp.headers.find("Strict-Transport-Security");
-      auto server = resp.headers.find("Server");
+      // auto server = resp.headers.find("Server");
 
       if (pinning == resp.headers.end() && hsts == resp.headers.end()) {
         findings.push_back({"Mobile API — No Certificate Pinning Headers", "medium", base + path,
