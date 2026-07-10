@@ -348,8 +348,33 @@ std::vector<Finding> run_scanners(const Config& cfg, HttpClient& http, const Cra
     if (f.type.find("Race Condition Target") != std::string::npos && f.evidence.empty()) {
       continue;
     }
-    // Skip subdomain takeover without actual takeover fingerprint in evidence
-    if (f.type.find("Subdomain Takeover") != std::string::npos && f.evidence.empty()) {
+    // Skip subdomain takeover without actual CNAME/dangling DNS evidence
+    if (f.type.find("Subdomain Takeover") != std::string::npos) {
+      if (f.evidence.find("CNAME") == std::string::npos && f.evidence.find("NXDOMAIN") == std::string::npos &&
+          f.evidence.find("dangling") == std::string::npos && f.evidence.find("NoSuchBucket") == std::string::npos &&
+          f.evidence.find("There isn't a GitHub Pages") == std::string::npos &&
+          f.evidence.find("ENOTFOUND") == std::string::npos) {
+        continue;
+      }
+    }
+    // Skip business logic findings that target guessed API paths without evidence
+    // (coupon, cart, refund, discount endpoints that don't actually exist)
+    if ((f.type.find("Coupon") != std::string::npos || f.type.find("Refund") != std::string::npos ||
+         f.type.find("Cart") != std::string::npos || f.type.find("Discount") != std::string::npos ||
+         f.type.find("Shipping") != std::string::npos || f.type.find("Gift Card") != std::string::npos ||
+         f.type.find("Inventory") != std::string::npos || f.type.find("Quantity") != std::string::npos) &&
+        f.evidence.find("JSON") == std::string::npos && f.evidence.find("response") == std::string::npos &&
+        f.evidence.find("applied") == std::string::npos && f.evidence.find("success") == std::string::npos) {
+      // Only keep if we have evidence it's a real e-commerce API
+      if (f.evidence.empty() || f.evidence.find("No ") == 0) continue;
+    }
+    // Skip LDAP/Mass Assignment findings without injection proof
+    if ((f.type.find("LDAP") != std::string::npos || f.type.find("Mass Assignment") != std::string::npos) &&
+        f.evidence.empty()) {
+      continue;
+    }
+    // Skip Auto-Escalate findings (chain engine speculative)
+    if (f.type.find("Auto-Escalate") != std::string::npos && f.confidence < 0.7) {
       continue;
     }
     final_filtered.push_back(std::move(f));

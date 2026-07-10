@@ -5,6 +5,7 @@
 #include <thread>
 
 #include "scanner_base.hpp"
+#include "../response_validator.hpp"
 
 namespace apex {
 namespace {

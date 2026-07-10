@@ -6,6 +6,7 @@
 #include <regex>
 
 #include "scanner_base.hpp"
+#include "../response_validator.hpp"
 
 namespace apex {
 namespace {
@@ -316,6 +317,11 @@ std::vector<Finding> scan_discount_bruteforce(const Config&, HttpClient& http, c
 
   for (const auto& path : discount_paths) {
     std::string url = base + path;
+
+    // First verify the endpoint actually exists and is a real API
+    auto probe = http.post(url, R"({"code":"PROBE"})", "application/json");
+    if (!is_real_api_response(probe)) continue;
+
     int accepted = 0;
     int rate_limited = 0;
     std::string valid_code;

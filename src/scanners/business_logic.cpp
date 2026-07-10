@@ -5,6 +5,7 @@
 #include <regex>
 
 #include "scanner_base.hpp"
+#include "../response_validator.hpp"
 
 namespace apex {
 namespace {
@@ -19,16 +20,23 @@ std::vector<Finding> scan_coupon_abuse(const Config&, HttpClient& http, const Cr
                                                  "/api/checkout/coupon"};
 
   for (const auto& path : coupon_paths) {
+    // First check if endpoint actually exists
+    auto probe = http.get(base + path);
+    if (!is_real_api_response(probe) && probe.status_code != 405) continue;
+
     // Try applying same coupon twice
     auto r1 = http.post(base + path, R"({"code":"TEST10"})", "application/json");
+    if (!is_real_api_response(r1)) continue;
     if (r1.status_code != 200) continue;
     auto r2 = http.post(base + path, R"({"code":"TEST10"})", "application/json");
+    if (!is_real_api_response(r2)) continue;
     if (r2.status_code == 200 && r2.body.find("error") == std::string::npos && r2.body.find("already") == std::string::npos) {
       findings.push_back({"Coupon Reuse", "medium", base + path, "Same coupon code can be applied multiple times", "code", "TEST10",
                           "No duplicate check"});
     }
     // Try stacking different codes
     auto r3 = http.post(base + path, R"({"code":"SAVE20"})", "application/json");
+    if (!is_real_api_response(r3)) continue;
     if (r3.status_code == 200 && r3.body.find("error") == std::string::npos) {
       findings.push_back({"Coupon Stacking", "medium", base + path, "Multiple coupon codes can be stacked", "code", "TEST10 + SAVE20",
                           "No stacking prevention"});
