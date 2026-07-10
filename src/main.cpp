@@ -142,7 +142,13 @@ int main(int argc, char* argv[]) {
     } else if (arg == "--no-oob") {
       cfg.no_oob = true;
     } else if (arg == "--quick") {
+  std::cout << "  --blitz        Ultra-fast: top 20 bounty checks in <30s\n";
       cfg.quick = true;
+    } else if (arg == "--blitz") {
+      cfg.blitz = true;
+      cfg.quick = true;
+      cfg.timeout = 3;
+      cfg.crawl_depth = 1;
     } else if (arg == "--dupecheck" && i + 2 < argc) {
       // --dupecheck <program> <finding>
       std::string program = argv[++i];
@@ -311,8 +317,16 @@ int main(int argc, char* argv[]) {
   apex::ReconLogger logger(cfg.output_dir);
 
   // Phase 1: Recon.
-  std::cout << "\n[Phase 1] Recon — Subdomain enumeration + probing\n";
-  auto recon = apex::run_recon(cfg, http);
+  apex::ReconResult recon;
+  if (cfg.blitz) {
+    // Blitz: skip recon, use target directly
+    std::cout << "\n[Phase 1] Recon — skipped (blitz mode)\n";
+    recon.subdomains = {cfg.target};
+    recon.live_targets = {"https://" + cfg.target};
+  } else {
+    std::cout << "\n[Phase 1] Recon — Subdomain enumeration + probing\n";
+    recon = apex::run_recon(cfg, http);
+  }
 
   // Origin IP Discovery — find real server behind WAF
   {
@@ -356,8 +370,8 @@ int main(int argc, char* argv[]) {
   std::cout << "  -> " << crawl.urls.size() << " URLs, " << crawl.params.size() << " params, " << crawl.forms.size() << " forms\n";
 
   // Phase 2b: Browser Deep Crawl — if regular crawl found little (WAF/SPA) or
-  // deep mode
-  if (crawl.urls.size() <= 5 || crawl.params.empty() || cfg.deep) {
+  // deep mode (skip in blitz mode for speed)
+  if (!cfg.blitz && (crawl.urls.size() <= 5 || crawl.params.empty() || cfg.deep)) {
     std::cout << "\n[Phase 2b] Browser Deep Crawl — Playwright Firefox\n";
     std::string browser_target = seeds.empty() ? "https://" + cfg.target : seeds[0];
     std::string browser_script;

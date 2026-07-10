@@ -183,3 +183,4 @@ namespace apex { std::vector<Scanner> register_autogen_subdomain_dns_extended_15
 namespace apex { std::vector<Scanner> register_autogen_encoding_parser_differential_15_scanners(); }
 namespace apex { std::vector<Scanner> register_autogen_monitoring_observability_10_scanners(); }
 namespace apex { std::vector<Scanner> register_autogen_ai_llm_security_20_scanners(); }
+namespace apex { std::vector<Scanner> register_js_secrets_scanners(); }

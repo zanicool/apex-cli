@@ -14,6 +14,7 @@ namespace apex {
 struct ReconResult {
   std::vector<std::string> subdomains;
   std::vector<std::string> live_targets;
+  std::vector<std::string> wayback_urls;
 };
 
 /// Run reconnaissance phase.

@@ -30,6 +30,7 @@ struct Config {
   int max_urls = 500;
   bool osint_mode = false;    // Enable OSINT reconnaissance
   bool quick = false;         // Quick mode: only high-value scanners
+  bool blitz = false;         // Blitz mode: top 20 checks, under 30 seconds
   bool smart = false;         // Smart mode: crawl-first scanner selection
   bool watch = false;         // Watch mode: continuous monitoring
   int watch_interval = 3600;  // Watch interval in seconds (default 1h)

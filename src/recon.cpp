@@ -5,6 +5,7 @@
 #include <iostream>
 #include <regex>
 #include <set>
+#include <sstream>
 
 namespace apex {
 
@@ -54,6 +55,24 @@ ReconResult run_recon(const Config& cfg, HttpClient& http) {
   }
 
   std::cout << "  -> " << result.live_targets.size() << " live targets\n";
+
+  // Passive: Wayback Machine historical URLs
+  std::string wb_url = "https://web.archive.org/cdx/search/cdx?url=*." + cfg.target +
+                        "/*&output=text&fl=original&collapse=urlkey&limit=200";
+  auto wb_resp = http.get(wb_url);
+  if (wb_resp.status_code == 200 && !wb_resp.body.empty()) {
+    std::istringstream wb_stream(wb_resp.body);
+    std::string line;
+    std::set<std::string> wb_urls;
+    while (std::getline(wb_stream, line)) {
+      if (line.find("http") == 0) wb_urls.insert(line);
+    }
+    result.wayback_urls.assign(wb_urls.begin(), wb_urls.end());
+    if (!result.wayback_urls.empty()) {
+      std::cout << "  -> " << result.wayback_urls.size() << " Wayback URLs\n";
+    }
+  }
+
   return result;
 }
 

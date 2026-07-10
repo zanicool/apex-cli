@@ -133,6 +133,7 @@ std::vector<Scanner> get_scanners() {
   append(register_autogen_encoding_parser_differential_15_scanners());
   append(register_autogen_monitoring_observability_10_scanners());
   append(register_autogen_ai_llm_security_20_scanners());
+  append(register_js_secrets_scanners());
   append(register_autogen_authentication_account_takeover_25_scanners());
   append(register_autogen_idor_broken_access_control_30_scanners());
   append(register_autogen_injection_30_scanners());
@@ -175,6 +176,17 @@ std::vector<Finding> run_scanners(const Config& cfg, HttpClient& http, const Cra
   auto should_skip = [&](const std::string& name) {
     if (std::any_of(cfg.skip.begin(), cfg.skip.end(), [&](const std::string& s) { return s == name; })) return true;
     // Quick mode: only run high-value scanners.
+    if (cfg.blitz) {
+      // Ultra-fast: only the 20 checks most likely to find bounty-worthy bugs
+      static const std::vector<std::string> blitz_scanners = {
+        "Open Redirect", "SSRF", "IDOR", "Secrets Exposure", "GraphQL Hunter",
+        "JWT", "Security Headers", "CORS", "SQLi", "XSS",
+        "SSTI", "Default Credentials", "Git Exposure", "Env File Exposed",
+        "S3 Buckets", "Subdomain Takeover", "Hidden Admin Panel",
+        "OAuth Misconfig", "Password Reset Poisoning", "CRLF Response Splitting"
+      };
+      return std::none_of(blitz_scanners.begin(), blitz_scanners.end(), [&](const std::string& q) { return name.find(q) != std::string::npos; });
+    }
     if (cfg.quick) {
       static const std::vector<std::string> quick_scanners = {"CMS Detection",
                                                               "SQLi",
