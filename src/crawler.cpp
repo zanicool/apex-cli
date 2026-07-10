@@ -1,6 +1,7 @@
 /// @file crawler.cpp
 /// @brief Web crawler: BFS spider with link/form/parameter extraction.
 #include "crawler.hpp"
+#include "fingerprint.hpp"
 
 #include <iostream>
 #include <queue>
@@ -191,23 +192,32 @@ CrawlResult run_crawler(const Config& cfg, HttpClient& http, const std::vector<s
     // Server header
     auto srv = home.headers.find("Server");
     if (srv != home.headers.end()) result.server_header = srv->second;
-    auto powered = home.headers.find("X-Powered-By");
-    if (powered != home.headers.end()) {
-      if (powered->second.find("Express") != std::string::npos) result.technologies.insert("express");
-      if (powered->second.find("PHP") != std::string::npos) result.technologies.insert("php");
-      if (powered->second.find("ASP") != std::string::npos) result.technologies.insert("aspnet");
+
+    // Advanced fingerprinting with version detection
+    apex::Fingerprinter fp;
+    auto techs = fp.fingerprint(body, home.headers, seeds[0], {});
+    for (auto &t : techs) {
+      std::string name = t.name;
+      std::transform(name.begin(), name.end(), name.begin(), ::tolower);
+      result.technologies.insert(name);
+      if (!t.version.empty()) {
+        result.technologies.insert(name + "/" + t.version);
+      }
     }
 
-    // Framework detection from HTML
-    if (body.find("__next") != std::string::npos || body.find("_next/static") != std::string::npos) result.technologies.insert("nextjs");
-    if (body.find("__nuxt") != std::string::npos) result.technologies.insert("nuxtjs");
-    if (body.find("ng-version") != std::string::npos) result.technologies.insert("angular");
-    if (body.find("data-reactroot") != std::string::npos || body.find("__REACT") != std::string::npos) result.technologies.insert("react");
-    if (body.find("wp-content") != std::string::npos) result.technologies.insert("wordpress");
-    if (body.find("Drupal") != std::string::npos) result.technologies.insert("drupal");
-    if (body.find("laravel") != std::string::npos || body.find("csrf-token") != std::string::npos) result.technologies.insert("laravel");
-    if (body.find("django") != std::string::npos || body.find("csrfmiddlewaretoken") != std::string::npos)
-      result.technologies.insert("django");
+    // Print detected technologies
+    if (!techs.empty()) {
+      std::cout << "  [Fingerprint] Detected " << techs.size() << " technologies:\n";
+      for (auto &t : techs) {
+        std::cout << "    • " << t.name;
+        if (!t.version.empty()) std::cout << " v" << t.version;
+        std::cout << " [" << t.category << "] (confidence=" << (int)(t.confidence * 100) << "%";
+        if (!t.evidence.empty()) std::cout << ", " << t.evidence;
+        std::cout << ")\n";
+      }
+    }
+
+    // Flags from body content
     if (body.find("graphql") != std::string::npos || body.find("GraphQL") != std::string::npos) result.has_graphql = true;
     if (body.find("wss://") != std::string::npos || body.find("ws://") != std::string::npos) result.has_websocket = true;
     if (body.find("<div id=\"root\">") != std::string::npos || body.find("<div id=\"app\">") != std::string::npos) result.is_spa = true;
