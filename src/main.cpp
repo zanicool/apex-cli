@@ -40,6 +40,7 @@
 #include "toolchain.hpp"
 #include "verification.hpp"
 #include "exploit/attack_planner.hpp"
+#include "hardware.hpp"
 
 namespace {
 
@@ -230,6 +231,19 @@ int main(int argc, char* argv[]) {
     } else if (arg[0] != '-') {
       target = arg;
     }
+  }
+
+  // Hardware detection & thread auto-tuning
+  {
+    auto hw = apex::detect_hardware();
+    bool user_set_threads = false;
+    for (int j = 1; j < argc; j++) {
+      if (std::string(argv[j]) == "--threads") { user_set_threads = true; break; }
+    }
+    cfg.threads = apex::auto_threads(user_set_threads ? cfg.threads : 0);
+    std::cout << "[CPU] " << hw.cpu_model << " (" << hw.logical_cores << " threads, "
+              << hw.physical_cores << " cores)\n";
+    std::cout << "[CPU] Using " << cfg.threads << " workers (reserved 25% for OS)\n";
   }
 
   if (target.empty()) {
