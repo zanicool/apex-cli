@@ -66,14 +66,19 @@ std::vector<Finding> scan_auth_surface_map(const Config&, HttpClient& http, cons
 
     // Check what fields the registration accepts
     auto resp = http.post(base + ep.path, "{}", "application/json");
-    if (resp.body.find("email") != std::string::npos || resp.body.find("required") != std::string::npos) {
-      // Registration endpoint exists and validates input
-      // Try to register with extra admin fields
+    if (resp.status_code == 415 || resp.body.find("email") != std::string::npos || resp.body.find("required") != std::string::npos) {
+      // Baseline: normal registration response without admin payload.
+      auto baseline = http.post(base + ep.path, R"({"email":"apextest_" + std::to_string(time(nullptr)) + "@test.com","password":"ApexTest123!"})", "application/json");
+
+      // Try to register with extra admin fields.
       std::string payload = R"({"email":"apextest_)" + std::to_string(time(nullptr)) +
                             R"(@test.com","password":"ApexTest123!","role":"admin","is_staff":true})";
       auto reg = http.post(base + ep.path, payload, "application/json");
       if (reg.status_code == 200 || reg.status_code == 201) {
-        if (reg.body.find("admin") != std::string::npos || reg.body.find("staff") != std::string::npos) {
+        // Differential: admin/staff only counts as finding if absent from baseline.
+        bool new_admin = reg.body.find("admin") != std::string::npos && baseline.body.find("admin") == std::string::npos;
+        bool new_staff = reg.body.find("staff") != std::string::npos && baseline.body.find("staff") == std::string::npos;
+        if (new_admin || new_staff) {
           findings.push_back(Finding{"Registration Mass Assignment", "critical", base + ep.path,
                                      "Registration accepts role/privilege fields. "
                                      "User can self-assign admin at signup.",
@@ -143,9 +148,14 @@ std::vector<Finding> scan_account_takeover(const Config&, HttpClient& http, cons
                                            "/api/user/password"};
 
   for (const auto& path : change_paths) {
+    // Baseline: normal password field presence.
+    auto baseline = http.post(base + path, R"({"current_password":"old","new_password":"NewPass123!"})", "application/json");
+
     auto resp = http.post(base + path, R"({"new_password":"NewPass123!"})", "application/json");
-    if (resp.status_code == 200 && resp.body.find("success") != std::string::npos &&
-        resp.body.find("current_password") == std::string::npos && resp.body.find("{") == 0) {
+    // Differential: success only counts if absent from baseline.
+    bool new_success = (resp.body.find("success") != std::string::npos && baseline.body.find("success") == std::string::npos) ||
+                       (resp.status_code == 200 && baseline.status_code >= 400);
+    if (new_success && resp.body.find("{") == 0) {
       findings.push_back(Finding{"Password Change Without Current Password", "high", base + path,
                                  "Password can be changed without providing current password. "
                                  "Any session hijack (XSS, CSRF) leads to permanent account takeover.",
@@ -169,9 +179,14 @@ std::vector<Finding> scan_2fa_bypass(const Config&, HttpClient& http, const Craw
     auto resp = http.get(base + path);
     if (resp.status_code == 404) continue;
 
-    // Try null/empty code
+    // Baseline: normal (valid-looking) response for comparison.
+    auto baseline = http.post(base + path, R"({"code":"123456","user_id":"1"})", "application/json");
+
+    // Try null/empty code — differential vs baseline.
     auto null_resp = http.post(base + path, R"({"code":"","user_id":"1"})", "application/json");
-    if (null_resp.status_code == 200 && null_resp.body.find("success") != std::string::npos && null_resp.body.find("{") == 0) {
+    if (null_resp.status_code == 200 &&
+        (null_resp.body.find("success") != std::string::npos && baseline.body.find("success") == std::string::npos) &&
+        null_resp.body.find("{") == 0) {
       findings.push_back(Finding{"2FA Bypass — Empty Code Accepted", "critical", base + path,
                                  "2FA verification accepts empty/null code. "
                                  "Complete authentication bypass.",
@@ -179,20 +194,24 @@ std::vector<Finding> scan_2fa_bypass(const Config&, HttpClient& http, const Craw
       return findings;
     }
 
-    // Try code manipulation
+    // Try code manipulation — differential vs baseline.
     auto zero_resp = http.post(base + path, R"({"code":"000000","user_id":"1"})", "application/json");
-    if (zero_resp.status_code == 200 && zero_resp.body.find("success") != std::string::npos && zero_resp.body.find("{") == 0) {
+    if (zero_resp.status_code == 200 &&
+        (zero_resp.body.find("success") != std::string::npos && baseline.body.find("success") == std::string::npos) &&
+        zero_resp.body.find("{") == 0) {
       findings.push_back(Finding{"2FA Bypass — Default Code", "critical", base + path,
                                  "2FA accepts code '000000'. Possible backdoor or broken validation.", "code", "000000", ""});
       return findings;
     }
 
-    // Check rate limiting on 2FA
+    // Check rate limiting on 2FA — differential: success only if absent from baseline.
     int success_count = 0;
     for (int i = 0; i < 10; i++) {
       std::string code = std::to_string(100000 + i);
       auto r = http.post(base + path, "{\"code\":\"" + code + "\",\"user_id\":\"1\"}", "application/json");
-      if (r.status_code != 429) success_count++;
+      bool new_success = (r.body.find("success") != std::string::npos && baseline.body.find("success") == std::string::npos) ||
+                         (r.status_code == 200 && baseline.status_code >= 400);
+      if (new_success || r.status_code != 429) success_count++;
     }
     if (success_count >= 10) {
       findings.push_back(Finding{"2FA — No Rate Limiting", "high", base + path,

@@ -15,11 +15,16 @@ std::vector<Finding> scan_nosql(const Config&, HttpClient& http, const CrawlResu
     auto targets = get_targets(crawl, url);
     for (const auto& [base, param] : targets) {
       auto baseline = http.get(base + "test");
+      int anomaly_trials = 0;
       for (const auto& payload : payloads) {
         auto resp = http.get(base + payload);
         if (resp.body.size() > baseline.body.size() + 50) {
-          findings.push_back({"NoSQL Injection", "high", url, "Response size anomaly", param, payload, ""});
-          break;
+          anomaly_trials++;
+          if (anomaly_trials >= 2) {
+            // Multiple trials confirm size anomaly — not a single-shot FP
+            findings.push_back({"NoSQL Injection", "high", url, "Response size anomaly confirmed across multiple trials", param, payload, ""});
+            break;
+          }
         }
       }
     }
@@ -36,10 +41,12 @@ std::vector<Finding> scan_ldap(const Config&, HttpClient& http, const CrawlResul
   for (const auto& url : crawl.urls) {
     auto targets = get_targets(crawl, url, "username");
     for (const auto& [base, param] : targets) {
+      auto baseline = http.get(base + "safe_test_ldap_baseline");
       for (const auto& payload : payloads) {
         auto resp = http.get(base + payload);
-        if (contains_any(resp.body, errors)) {
-          findings.push_back({"LDAP Injection", "high", url, "LDAP error in response", param, payload, ""});
+        // Differential check: error string must appear in response but NOT in baseline
+        if (contains_any(resp.body, errors) && !contains_any(baseline.body, errors)) {
+          findings.push_back({"LDAP Injection", "high", url, "LDAP error appears only with malicious input", param, payload, ""});
           break;
         }
       }
@@ -57,10 +64,12 @@ std::vector<Finding> scan_xpath(const Config&, HttpClient& http, const CrawlResu
   for (const auto& url : crawl.urls) {
     auto targets = get_targets(crawl, url);
     for (const auto& [base, param] : targets) {
+      auto baseline = http.get(base + "safe_test_xpath_baseline");
       for (const auto& payload : payloads) {
         auto resp = http.get(base + payload);
-        if (contains_any(resp.body, errors)) {
-          findings.push_back({"XPath Injection", "high", url, "XPath error in response", param, payload, ""});
+        // Differential check: error string must appear in response but NOT in baseline
+        if (contains_any(resp.body, errors) && !contains_any(baseline.body, errors)) {
+          findings.push_back({"XPath Injection", "high", url, "XPath error appears only with malicious input", param, payload, ""});
           break;
         }
       }
@@ -112,9 +121,11 @@ std::vector<Finding> scan_php_object(const Config&, HttpClient& http, const Craw
   for (const auto& url : crawl.urls) {
     auto targets = get_targets(crawl, url, "data");
     for (const auto& [base, param] : targets) {
+      auto baseline = http.get(base + "safe_test_php_baseline");
       auto resp = http.get(base + payload);
-      if (contains_any(resp.body, errors)) {
-        findings.push_back({"PHP Object Injection", "high", url, "PHP deserialization detected", param, payload, ""});
+      // Differential check: error string must appear only with payload, not in baseline
+      if (contains_any(resp.body, errors) && !contains_any(baseline.body, errors)) {
+        findings.push_back({"PHP Object Injection", "high", url, "PHP deserialization detected — error only with payload", param, payload, ""});
       }
     }
   }

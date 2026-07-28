@@ -83,15 +83,19 @@ std::vector<Finding> scan_sqli(const Config&, HttpClient& http, const CrawlResul
   const std::vector<std::string> errors = {"SQL syntax", "mysql_fetch", "ORA-", "PostgreSQL", "sqlite3", "SQLSTATE", "unclosed quotation"};
   for (const auto& url : crawl.urls) {
     auto targets = get_targets(crawl, url);
+    // Baseline: normal response for this URL before injection.
+    std::string clean_url = url;
+    auto qpos = clean_url.find('?');
+    if (qpos != std::string::npos) clean_url = clean_url.substr(0, qpos);
+    auto baseline = http.get(clean_url);
+
     for (const auto& payload : payloads) {
       for (const auto& [base, param] : targets) {
         auto resp = http.get(base + payload);
-        for (const auto& err : errors) {
-          if (resp.body.find(err) != std::string::npos) {
-            findings.push_back({"SQLi", "critical", url, "SQL error: " + err, param, payload, err});
-            break;
-          }
-        }
+        // Require error indicator only appears with payload, not in baseline.
+        if (!has_baseline_diff_any(resp.body, baseline.body, errors)) continue;
+        findings.push_back({"SQLi", "critical", url, "Differential confirmed: SQL error after injection", param, payload, resp.body.substr(0, 300)});
+        break;
       }
     }
   }
@@ -104,11 +108,20 @@ std::vector<Finding> scan_xss(const Config&, HttpClient& http, const CrawlResult
   if (payloads.empty()) payloads = {"<script>alert(1)</script>", "\"><img src=x onerror=alert(1)>"};
   for (const auto& url : crawl.urls) {
     auto targets = get_targets(crawl, url, "q");
+    // Baseline: normal response before injection.
+    std::string clean_url = url;
+    auto qpos = clean_url.find('?');
+    if (qpos != std::string::npos) clean_url = clean_url.substr(0, qpos);
+    auto baseline = http.get(clean_url);
+
     for (const auto& payload : payloads) {
       for (const auto& [base, param] : targets) {
         auto resp = http.get(base + payload);
-        if (resp.body.find(payload) != std::string::npos) {
-          findings.push_back({"XSS", "high", url, "Reflected XSS", param, payload, payload});
+        // XSS confirmed only if payload string appears in response AND NOT in baseline.
+        bool in_resp = has_indicator_in_resp(resp.body, payload);
+        bool in_baseline = has_indicator_in_resp(baseline.body, payload);
+        if (in_resp && !in_baseline) {
+          findings.push_back({"XSS", "high", url, "Differential confirmed: XSS reflection", param, payload, resp.body.substr(0, 300)});
           break;
         }
       }
@@ -123,10 +136,19 @@ std::vector<Finding> scan_ssrf(const Config&, HttpClient& http, const CrawlResul
                                              "http://metadata.google.internal/computeMetadata/v1/", "http://127.0.0.1:80",
                                              "http://[::1]:80"};
   for (const auto& url : crawl.urls) {
+    // Baseline: normal response before SSRF attempt.
+    std::string clean_url = url;
+    auto qpos = clean_url.find('?');
+    if (qpos != std::string::npos) clean_url = clean_url.substr(0, qpos);
+    auto baseline = http.get(clean_url);
+
     for (const auto& payload : payloads) {
       auto resp = http.get(url + "?url=" + payload);
-      if (resp.status_code == 200 && (resp.body.find("ami-id") != std::string::npos || resp.body.find("instance") != std::string::npos)) {
-        findings.push_back({"SSRF", "critical", url, "SSRF to cloud metadata", "url", payload, resp.body.substr(0, 200)});
+      // Only flag if metadata indicators appear with payload but NOT in normal response.
+      bool has_meta = has_baseline_diff_any(resp.body, baseline.body, {"ami-", "instance-id", "project-id"});
+      if (resp.status_code == 200 && has_meta) {
+        findings.push_back({"SSRF", "critical", url, "Differential confirmed: SSRF to cloud metadata", "url", payload, resp.body.substr(0, 200)});
+        break;
       }
     }
   }
@@ -137,10 +159,20 @@ std::vector<Finding> scan_cmdi(const Config&, HttpClient& http, const CrawlResul
   std::vector<Finding> findings;
   const std::vector<std::string> payloads = {"; sleep 5", "| sleep 5", "$(sleep 5)", "`sleep 5`", "& timeout 5"};
   for (const auto& url : crawl.urls) {
+    // Take 2-3 baseline timing samples before testing.
+    std::vector<std::chrono::milliseconds> baseline_timings;
+    std::string clean_url = url;
+    auto qpos = clean_url.find('?');
+    if (qpos != std::string::npos) clean_url = clean_url.substr(0, qpos);
+    for (int i = 0; i < 3; ++i) {
+      baseline_timings.push_back(http.get(clean_url).duration);
+    }
+
     for (const auto& payload : payloads) {
       auto resp = http.get(url + "?cmd=" + payload);
-      if (resp.duration.count() >= 4500) {
-        findings.push_back({"CMDi", "critical", url, "Time-based CMDi", "cmd", payload, std::to_string(resp.duration.count()) + "ms"});
+      // Require timing anomaly: payload time > 2× average of baseline samples.
+      if (has_timing_anomaly(resp.duration, baseline_timings)) {
+        findings.push_back({"CMDi", "critical", url, "Differential confirmed: Time-based CMDi", "cmd", payload, std::to_string(resp.duration.count()) + "ms"});
         break;
       }
     }
@@ -154,11 +186,18 @@ std::vector<Finding> scan_lfi(const Config&, HttpClient& http, const CrawlResult
                                              "php://filter/convert.base64-encode/resource=index"};
   const std::vector<std::string> indicators = {"root:", "daemon:", "[boot"};
   for (const auto& url : crawl.urls) {
+    // Baseline: normal response before LFI attempt.
+    std::string clean_url = url;
+    auto qpos = clean_url.find('?');
+    if (qpos != std::string::npos) clean_url = clean_url.substr(0, qpos);
+    auto baseline = http.get(clean_url);
+
     for (const auto& payload : payloads) {
       auto resp = http.get(url + "?file=" + payload);
-      if (contains_any(resp.body, indicators)) {
-        findings.push_back({"LFI", "high", url, "Local file inclusion", "file", payload, ""});
-      }
+      // Indicator must appear only with payload injection, not in normal response.
+      if (!has_baseline_diff_any(resp.body, baseline.body, indicators)) continue;
+      findings.push_back({"LFI", "high", url, "Differential confirmed: Local file inclusion", "file", payload, resp.body.substr(0, 300)});
+      break; // Critical — stop after first confirmation.
     }
   }
   return findings;

@@ -1,0 +1,21 @@
+{
+  "target": "https://hackthebox.com",
+  "timestamp": "2026-07-11T21:52:35Z",
+  "endpoints": [
+    "https://https://hackthebox.com"
+  ],
+  "technologies": [
+  ],
+  "finding_count": 9,
+  "findings": [
+    {"type": "Blind SQLi OOB", "severity": "info", "url": "https://https://hackthebox.com", "state": 2, "confidence": 90, "reason": ""},
+    {"type": "Blind SSRF", "severity": "info", "url": "https://https://hackthebox.com", "state": 2, "confidence": 80, "reason": ""},
+    {"type": "Blind XSS", "severity": "info", "url": "https://https://hackthebox.com", "state": 1, "confidence": 70, "reason": ""},
+    {"type": "Missing Header", "severity": "low", "url": "https://https://hackthebox.com", "state": 2, "confidence": 95, "reason": ""},
+    {"type": "Missing Content-Security-Policy", "severity": "medium", "url": "https://https:", "state": 1, "confidence": 0, "reason": ""},
+    {"type": "Missing Strict-Transport-Security", "severity": "medium", "url": "https://https:", "state": 1, "confidence": 0, "reason": ""},
+    {"type": "Missing X-Content-Type-Options", "severity": "low", "url": "https://https:", "state": 1, "confidence": 0, "reason": ""},
+    {"type": "Missing X-Frame-Options", "severity": "low", "url": "https://https:", "state": 1, "confidence": 0, "reason": ""},
+    {"type": "Missing Permissions-Policy", "severity": "low", "url": "https://https:", "state": 1, "confidence": 0, "reason": ""}
+  ]
+}

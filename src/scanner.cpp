@@ -4,10 +4,12 @@
 #include "scanner.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <future>
 #include <iostream>
 #include <mutex>
 #include <set>
+#include <thread>
 
 #include "scanners/scanner_base.hpp"
 #include "targeting.hpp"
@@ -238,13 +240,25 @@ std::vector<Finding> run_scanners(const Config& cfg, HttpClient& http, const Cra
   };
 
   std::vector<std::future<std::vector<Finding>>> futures;
+  std::atomic<int> active_threads{0};
+  int max_concurrent = std::min(cfg.threads, 100); // Cap at 100 concurrent HTTP operations
+
   for (const auto& scanner : scanners) {
     if (should_skip(scanner.name)) {
       std::cout << "    [skip] " << scanner.name << "\n";
       continue;
     }
     std::cout << "    [->] " << scanner.name << "\n";
-    futures.push_back(std::async(std::launch::async, scanner.func, std::cref(cfg), std::ref(http), std::cref(crawl)));
+    futures.push_back(std::async(std::launch::async, [&, scanner]() {
+      // Wait until slot available
+      while (active_threads.load() >= max_concurrent) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      }
+      active_threads.fetch_add(1);
+      auto result = scanner.func(cfg, http, crawl);
+      active_threads.fetch_sub(1);
+      return result;
+    }));
   }
 
   for (auto& f : futures) {

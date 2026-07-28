@@ -25,8 +25,11 @@ std::vector<Finding> scan_weak_password_policy(const Config&, HttpClient& http, 
       std::string email = "apex_pwtest_" + std::to_string(time(nullptr)) + "@test.com";
       auto resp = http.post(base + path, R"({"email":")" + email + R"(","password":")" + pwd + "\"}", "application/json");
       if (resp.status_code == 200 || resp.status_code == 201) {
-        if (resp.body.find("error") == std::string::npos && resp.body.find("weak") == std::string::npos &&
-            resp.body.find("short") == std::string::npos) {
+        // Differential: rejection only counts as real finding if absent from baseline.
+        auto baseline = http.post(base + path, R"({"email":"apex_pwtest_baseline@test.com","password":"TestPass123!"})", "application/json");
+        bool new_accept = (resp.body.find("error") == std::string::npos && baseline.body.find("error") != std::string::npos) ||
+                          (resp.status_code == 200 && baseline.status_code >= 400);
+        if (new_accept && resp.body.find("weak") == std::string::npos && resp.body.find("short") == std::string::npos) {
           findings.push_back({"Weak Password Policy", "medium", base + path, "Registration accepts password: '" + pwd + "'", "password",
                               pwd, "No password strength enforcement"});
           return findings;
@@ -166,10 +169,17 @@ std::vector<Finding> scan_registration_role(const Config&, HttpClient& http, con
 
   for (const auto& path : reg_paths) {
     std::string email = "apex_roletest_" + std::to_string(time(nullptr)) + "@test.com";
-    // Try registering with admin role
+
+    // Baseline: normal registration without role field.
+    auto baseline = http.post(base + path, R"({"email":")" + email + R"(","password":"Test12345!"})", "application/json");
+
+    // Try registering with admin role.
     auto resp = http.post(base + path, R"({"email":")" + email + R"(","password":"Test12345!","role":"admin"})", "application/json");
     if (resp.status_code == 200 || resp.status_code == 201) {
-      if (resp.body.find("\"role\":\"admin\"") != std::string::npos || resp.body.find("\"is_admin\":true") != std::string::npos) {
+      // Differential: admin role only counts as finding if absent from baseline.
+      bool new_admin = (resp.body.find("\"role\":\"admin\"") != std::string::npos && baseline.body.find("\"role\":\"admin\"") == std::string::npos) ||
+                       (resp.body.find("\"is_admin\":true") != std::string::npos && baseline.body.find("\"is_admin\":true") == std::string::npos);
+      if (new_admin) {
         findings.push_back({"Registration Role Injection", "critical", base + path, "Admin role assigned during registration", "role",
                             "admin", "Response confirms admin role"});
         break;
@@ -213,10 +223,17 @@ std::vector<Finding> scan_invite_link(const Config&, HttpClient& http, const Cra
   const std::vector<std::string> invite_paths = {"/invite", "/api/invite/verify", "/join", "/api/team/invite"};
 
   for (const auto& path : invite_paths) {
-    // Try common/predictable tokens
+    // Baseline: normal response without token param.
+    auto baseline = http.get(base + path);
+
+    // Try common/predictable tokens — differential vs baseline.
     auto resp = http.get(base + path + "?token=test");
-    if (resp.status_code == 200 && resp.body.find("expired") == std::string::npos && resp.body.find("invalid") == std::string::npos &&
-        resp.body.size() > 100) {
+    bool new_content = (resp.body.find("expired") == std::string::npos && baseline.body.find("expired") != std::string::npos) ||
+                       (resp.body.find("invalid") == std::string::npos && baseline.body.find("invalid") != std::string::npos);
+    // Or: response became different from baseline without error.
+    bool diff_resp = resp.status_code == 200 && baseline.status_code >= 400;
+
+    if ((new_content || diff_resp) && resp.body.size() > 100) {
       findings.push_back({"Invite Link Weakness", "medium", base + path, "Invite endpoint accepts arbitrary token values", "token", "test",
                           "No proper validation of invite token"});
       break;

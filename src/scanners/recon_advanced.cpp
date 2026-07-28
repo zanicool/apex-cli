@@ -4,6 +4,7 @@
 ///        internal IP disclosure, email harvesting, social engineering surface,
 ///        JS library vulnerabilities, outdated framework detection, DNS misconfig,
 ///        SPF/DMARC weakness, exposed metrics, k8s/docker indicators, CI/CD leak.
+#include <algorithm>
 #include <regex>
 #include <set>
 
@@ -21,21 +22,30 @@ std::vector<Finding> scan_internal_ip(const Config&, HttpClient& http, const Cra
 
   for (const auto& url : crawl.urls) {
     auto resp = http.get(url);
-    // Check headers
+
+    // Check headers — require IP-specific header context to avoid FP from docs/examples.
+    std::smatch m;
     for (const auto& [h, v] : resp.headers) {
-      std::smatch m;
-      if (std::regex_search(v, m, ip_re)) {
+      if (!std::regex_search(v, m, ip_re)) continue;
+      // Require the header is one known to carry client/source IPs.
+      const std::string hl = h;
+      std::string hl_lower(hl);
+      std::transform(hl_lower.begin(), hl_lower.end(), hl_lower.begin(),
+                     [](unsigned char c) { return std::tolower(c); });
+      if ((hl_lower == "x-forwarded-for" || hl_lower == "x-real-ip" || hl_lower == "true-client-ip" || hl_lower == "remote_ip")) {
         findings.push_back({"Internal IP Disclosed (Header)", "low", url, "Internal IP in header " + h + ": " + m[0].str(), "", "",
                             h + ": " + v.substr(0, 80)});
-        return findings;
       }
     }
-    // Check body
-    std::smatch m;
-    if (std::regex_search(resp.body, m, ip_re)) {
+
+    // Check body — require baseline comparison. If the same IP appears in both probe and clean response, skip as FP.
+    const std::string probe_body = resp.body;
+    auto baseline = http.get(url + "?fp=check");  // add param to get a different clean response
+    if (std::regex_search(baseline.body, m, ip_re)) {
+      // IP appears in clean baseline too → likely documentation or page content. Skip.
+    } else if (std::regex_search(probe_body, m, ip_re)) {
       findings.push_back(
           {"Internal IP Disclosed (Body)", "low", url, "Internal IP found in response: " + m[0].str(), "", "", "IP: " + m[0].str()});
-      return findings;
     }
     break;  // Only check first URL
   }
@@ -48,10 +58,28 @@ std::vector<Finding> scan_staging_env(const Config& cfg, HttpClient& http, const
   const std::vector<std::string> prefixes = {"staging.", "stage.", "dev.", "test.", "uat.",     "preprod.",
                                              "sandbox.", "demo.",  "qa.",  "beta.", "internal."};
 
+  // Baseline: check main domain to compare error rates.
+  auto baseline = http.get("https://" + cfg.target);
+  const bool baseline_200 = (baseline.status_code == 200);
+  const std::string baseline_body = baseline.body;
+
   for (const auto& prefix : prefixes) {
     std::string subdomain = prefix + cfg.target;
     auto resp = http.get("https://" + subdomain);
-    if (resp.status_code == 200 && resp.body.size() > 100) {
+    if (resp.status_code != 200 || resp.body.size() <= 100) continue;
+
+    // Differential check: indicator must exist in probe but NOT in baseline.
+    const std::vector<std::string> staging_indicators = {
+        "staging", "sandbox", "development", "test environment", "this is a test"};
+    bool has_indicator = false;
+    for (const auto& ind : staging_indicators) {
+      if ((resp.body.find(ind) != std::string::npos && baseline_body.find(ind) == std::string::npos)) {
+        has_indicator = true; break;
+      }
+    }
+
+    // Also require status differs from baseline to avoid FP on sites that are always 200.
+    if (has_indicator || resp.status_code != baseline.status_code) {
       findings.push_back({"Staging Environment Found", "medium", "https://" + subdomain,
                           prefix.substr(0, prefix.size() - 1) + " environment publicly accessible", "", subdomain,
                           std::to_string(resp.body.size()) + " bytes"});

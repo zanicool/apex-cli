@@ -50,6 +50,57 @@ inline bool contains_any(const std::string &s,
                      });
 }
 
+/// Baseline helpers for FP reduction.
+inline bool has_indicator_in_resp(const std::string &body, const std::string &indicator) {
+  return body.find(indicator) != std::string::npos;
+}
+
+/// Check if an indicator appears ONLY in the payload response and not in baseline.
+/// This is the core FP filter: a real vulnerability manifests as indicator present
+/// after payload injection but absent from normal (baseline) response.
+inline bool has_baseline_diff_indicator(const std::string &payload_resp_body,
+                                       const std::string &baseline_body,
+                                       const std::string &indicator) {
+  if (indicator.empty()) return false;
+  bool in_payload = payload_resp_body.find(indicator) != std::string::npos;
+  bool in_baseline = baseline_body.find(indicator) != std::string::npos;
+  return in_payload && !in_baseline;
+}
+
+/// Check multiple indicators — all must be absent from baseline if present in payload.
+inline bool has_baseline_diff_any(const std::string &payload_resp_body,
+                                  const std::string &baseline_body,
+                                  const std::vector<std::string> &indicators) {
+  for (const auto &ind : indicators) {
+    if (has_baseline_diff_indicator(payload_resp_body, baseline_body, ind))
+      return true;
+  }
+  return false;
+}
+
+/// Size-based diff: payload body significantly larger than baseline.
+/// Returns true only when the delta exceeds threshold AND both have content.
+inline bool has_size_diff(const std::string &payload_resp_body,
+                          const std::string &baseline_body,
+                          size_t min_delta = 50) {
+  if (baseline_body.empty() || payload_resp_body.size() <= baseline_body.size())
+    return false;
+  auto delta = payload_resp_body.size() - baseline_body.size();
+  return delta > min_delta;
+}
+
+/// Timing-based anomaly: requires baseline average and confirms significant deviation.
+inline bool has_timing_anomaly(std::chrono::milliseconds payload_duration,
+                               const std::vector<std::chrono::milliseconds> &baseline_samples) {
+  if (baseline_samples.empty() || baseline_samples.size() < 2) return false;
+  // Compute mean of baseline samples
+  int64_t sum = 0;
+  for (auto s : baseline_samples) sum += static_cast<int64_t>(s.count());
+  double avg_ms = static_cast<double>(sum) / baseline_samples.size();
+  if (avg_ms < 1.0) return false; // Baseline too fast to be meaningful
+  return payload_duration.count() > 2.0 * avg_ms;
+}
+
 /// Registration functions — each module provides one.
 std::vector<Scanner> register_core_scanners();
 std::vector<Scanner> register_smart_scanners();

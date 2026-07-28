@@ -3,9 +3,11 @@
 ///        exposed debug endpoints, default credentials, backup files,
 ///        source code disclosure, path traversal, directory listing,
 ///        server info disclosure, cookie manipulation.
+#include <map>
 #include <regex>
 
 #include "scanner_base.hpp"
+#include "../response_validator.hpp"
 
 namespace apex {
 namespace {
@@ -52,9 +54,40 @@ std::vector<Finding> scan_debug_endpoints(const Config&, HttpClient& http, const
       {"/console", "H2/Debug Console"},
   };
 
+  // Fingerprint patterns per debug endpoint (prevents FP on normal pages).
+  struct EndpointSig { const char* sig; int minBody; };
+  static const std::map<std::string, EndpointSig> debug_sigs = {
+      {"debug/pprof",   {"pprof",              100}},
+      {"debug/vars",    {"Go variables",       100}},
+      {"_debugbar",     {"DebugBar",           100}},
+      {"__debug__",     {"django.debug",       100}},
+      {"elmah.axd",     {"ELMAH",              200}},
+      {"_profiler",     {"Profiler",           200}},
+      {"actuator/heapdump", {"Heap Dump",      500}},
+      {"actuator/threaddump", {"Thread Dump",  500}},
+      {"actuator/loggers",  {"loggers",        100}},
+      {"metrics",       {"# TYPE ",            100}},
+      {"/health",       {"status",             100}},
+      {"openid-configuration", {"issuer",      100}},
+      {"/info",         {"applications",       100}},
+      {"jolokia",       {"jolokia",            200}},
+      {"/console",      {"h2console",          100}},
+  };
+
   for (const auto& [path, name] : debug_paths) {
     auto resp = http.get(base + path);
-    if (resp.status_code == 200 && resp.body.size() > 100) {
+    if (resp.status_code == 200 && resp.body.size() > 50) {
+      // Find matching signature to confirm it's the actual debug endpoint.
+      bool matched = false;
+      for (const auto& [key, sig] : debug_sigs) {
+        if (path.find(key) != std::string::npos && resp.body.size() > sig.minBody &&
+            resp.body.find(sig.sig) != std::string::npos) {
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) continue;
+
       std::string sev = "medium";
       if (path.find("heapdump") != std::string::npos || path.find("jolokia") != std::string::npos ||
           path.find("console") != std::string::npos)
@@ -115,21 +148,58 @@ std::vector<Finding> scan_backup_files(const Config&, HttpClient& http, const Cr
       {"/composer.json", "PHP deps"}, {"/package.json", "Node deps"},
   };
 
+  // File-specific signature patterns to prevent FP on normal pages.
+  // Returns true if response body matches any known-signature for the file type.
+  auto has_real_content = [](const std::string& path, const std::string& body) -> bool {
+    std::string fname = path.substr(path.rfind('/') + 1);
+    if (fname == "backup.zip" || fname == "backup.tar.gz") return body.size() > 50 && (body[0] == 'P' || body.find("CREATE") != std::string::npos);
+    if (fname == "db.sql" || fname == "dump.sql" || fname == "database.sql") {
+      return body.find("CREATE TABLE") != std::string::npos || body.find("INSERT INTO") != std::string::npos;
+    }
+    if (fname == ".env" || fname == ".env.production" || fname == ".env.local") {
+      return body.find("_") != std::string::npos && body.size() > 20;
+    }
+    if (fname == "config.yml") return body.find("---") != std::string::npos || body.find(": ") != std::string::npos;
+    if (fname == "config.json" || fname == "wp-config.php.bak" || fname == "web.config.bak") {
+      return !body.empty() && (body[0] == '{' || body[0] == '[' || body.find("<configuration>") != std::string::npos);
+    }
+    if (fname == ".htpasswd") return body.size() > 10; // htpasswd entries are always long
+    if (fname == ".DS_Store") return body.find("BpO!") != std::string::npos || body.size() > 100;
+    if (fname == ".git/config") {
+      return body.find("[core]") != std::string::npos || body.find("repositoryformatversion") != std::string::npos;
+    }
+    if (fname == "composer.json" || fname == "package.json") {
+      return body.find("\"name\"") != std::string::npos || body.find("\"dependencies\"") != std::string::npos;
+    }
+    // Generic: non-empty body that isn't just a 404/placeholder page.
+    if (body.size() > 20 && body.find("not found") == std::string::npos) return true;
+    return false;
+  };
+
   for (const auto& [path, type] : backup_paths) {
     auto resp = http.get(base + path);
-    if (resp.status_code == 200 && resp.body.size() > 20) {
-      // Verify it's not a soft 404
-      if (resp.body.find("<html") != std::string::npos && resp.body.find("not found") != std::string::npos) continue;
+    if (!is_real_api_response(resp)) continue;
 
-      std::string sev = "high";
-      if (path.find(".sql") != std::string::npos || path.find(".env") != std::string::npos || path.find("htpasswd") != std::string::npos)
-        sev = "critical";
+    // Baseline: confirm the response differs from normal site content.
+    auto baseline = http.get(base + "/");
+    bool has_content = resp.body.size() > 20 && responses_differ(resp, baseline, 30);
+    if (!has_content) continue;
 
-      findings.push_back({"Backup/Source Exposed: " + path, sev, base + path, type + " file publicly accessible", "", "",
-                          std::to_string(resp.body.size()) + " bytes"});
-    }
+    // Verify it's not a soft 404 / placeholder page.
+    if (resp.body.find("<html") != std::string::npos && resp.body.find("not found") != std::string::npos) continue;
+
+    // File-specific signature match for real content confirmation.
+    bool verified = has_real_content(path, resp.body);
+
+    if (!verified) continue;
+
+    std::string sev = "high";
+    if (path.find(".sql") != std::string::npos || path.find(".env") != std::string::npos || path.find("htpasswd") != std::string::npos)
+      sev = "critical";
+
+    findings.push_back({"Backup/Source Exposed: " + path, sev, base + path, type + " file publicly accessible", "", "",
+                        std::to_string(resp.body.size()) + " bytes"});
   }
-  return findings;
 }
 
 /// Directory listing enabled.

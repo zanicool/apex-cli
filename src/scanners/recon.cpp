@@ -18,10 +18,13 @@ std::vector<Finding> scan_api_version_bypass(const Config&, HttpClient& http, co
   const std::vector<std::string> versions = {"/api/v1/", "/api/v2/", "/api/v3/", "/v1/", "/v2/", "/v3/"};
   const std::vector<std::string> endpoints = {"users", "admin", "config", "settings", "debug"};
 
+  auto baseline = http.get(base);  // clean response for FP comparison
   for (const auto& ver : versions) {
     for (const auto& ep : endpoints) {
       auto resp = http.get(base + ver + ep);
-      if (resp.status_code == 200 && resp.body.size() > 50) {
+      if (resp.status_code == 200 && resp.body.size() > 50 &&
+          (resp.body.find("api") != std::string::npos || resp.body.find("json") != std::string::npos) &&
+          baseline.body.find("/api/") == std::string::npos) {
         findings.push_back({"API Version Bypass", "medium", base + ver + ep, "Accessible API endpoint", "", "", ""});
       }
     }
@@ -69,11 +72,23 @@ std::vector<Finding> scan_cloud_metadata(const Config&, HttpClient& http, const 
   for (const auto& url : crawl.urls) {
     auto targets = get_targets(crawl, url, "url");
     for (const auto& [base, param] : targets) {
-      for (const auto& [meta_url, provider] : endpoints) {
+      // Probe local metadata endpoints — these should never be reachable from the internet.
+      const std::vector<std::pair<std::string, std::string>> probe = {
+          {"http://169.254.169.254/latest/meta-data/", "AWS"},
+          {"http://metadata.google.internal/computeMetadata/v1/", "GCP"}};
+      for (const auto& [meta_url, provider] : probe) {
         auto resp = http.get(base + meta_url);
         if (resp.status_code == 200 && resp.body.size() > 10) {
-          findings.push_back(
-              {"Cloud Metadata", "critical", url, provider + " metadata accessible via SSRF", param, meta_url, resp.body.substr(0, 100)});
+          // Require a real metadata key to avoid generic HTML matches.
+          const std::vector<std::string> indicators = {"ami-", "instance/", "hostname", "public-keys", "iam-security-credentials"};
+          bool is_metadata = false;
+          for (const auto& ind : indicators) {
+            if (resp.body.find(ind) != std::string::npos) { is_metadata = true; break; }
+          }
+          if (is_metadata) {
+            findings.push_back(
+                {"Cloud Metadata", "critical", url, provider + " metadata accessible via SSRF", param, meta_url, resp.body.substr(0, 100)});
+          }
         }
       }
     }

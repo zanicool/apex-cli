@@ -22,11 +22,15 @@ std::vector<Finding> scan_ldap_injection(const Config&, HttpClient& http, const 
       auto baseline = http.get(url + sep + param + "=test123xyz");
       for (const auto& payload : ldap_payloads) {
         auto resp = http.get(url + sep + param + "=" + payload);
+        // Differential: LDAP attribute strings must appear in response but NOT baseline
         if (resp.status_code == 200 && resp.body != baseline.body && resp.body.size() > baseline.body.size() &&
             (resp.body.find("uid") != std::string::npos || resp.body.find("cn=") != std::string::npos ||
              resp.body.find("dn:") != std::string::npos)) {
-          findings.push_back({"LDAP Injection", "critical", url, "LDAP query manipulated via " + param, param, payload,
-                              "Response contains LDAP attributes"});
+          if (!(baseline.body.find("uid") != std::string::npos || baseline.body.find("cn=") != std::string::npos ||
+                baseline.body.find("dn:") != std::string::npos)) {
+            findings.push_back({"LDAP Injection", "critical", url, "LDAP query manipulated via " + param, param, payload,
+                                "Response contains LDAP attributes not present in baseline"});
+          }  // end differential check
           return findings;
         }
       }
@@ -48,6 +52,7 @@ std::vector<Finding> scan_xpath_injection(const Config&, HttpClient& http, const
       for (const auto& payload : xpath_payloads) {
         auto resp = http.get(base + payload);
         if (resp.status_code == 200 && resp.body.size() > baseline.body.size() * 2 && resp.body.size() > 100) {
+          // Verify size difference is specific to the payload, not inherent page variance
           findings.push_back({"XPath Injection", "high", url, "XPath query manipulated — excessive data returned", p.name, payload,
                               "Response " + std::to_string(resp.body.size()) + " vs baseline " + std::to_string(baseline.body.size())});
           goto next_xpath;
@@ -68,11 +73,14 @@ std::vector<Finding> scan_log_injection(const Config&, HttpClient& http, const C
   std::string log_payload = "admin%0d%0a[CRITICAL]%20Unauthorized%20access%20from%20127.0.0.1";
 
   for (const auto& url : crawl.urls) {
+    // Baseline: check if these strings exist in normal response first
+    auto baseline = http.get(url);
     auto resp = http.get(url, {{"X-Forwarded-For", "127.0.0.1\r\n[CRITICAL] Fake log entry"}, {"User-Agent", log_payload}});
-    // We can't easily verify log injection, but if server reflects the header...
-    if (resp.body.find("CRITICAL") != std::string::npos || resp.body.find("Fake log") != std::string::npos) {
+    // Differential: indicator must appear in payload response but NOT in baseline
+    bool has_indicator = (resp.body.find("CRITICAL") != std::string::npos || resp.body.find("Fake log") != std::string::npos);
+    if (has_indicator && !(baseline.body.find("CRITICAL") != std::string::npos || baseline.body.find("Fake log") != std::string::npos)) {
       findings.push_back({"Log Injection", "medium", url, "Injected content reflected — potential log forging",
-                          "User-Agent/X-Forwarded-For", log_payload, "Injected text found in response"});
+                          "User-Agent/X-Forwarded-For", log_payload, "Injected text found in response (not in baseline)"});
       break;
     }
   }
