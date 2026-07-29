@@ -181,9 +181,9 @@ std::vector<Finding> scan_log_injection(const Config&, HttpClient& http, const C
     auto targets = get_targets(crawl, url, "username");
     for (const auto& [base, param] : targets) {
       auto resp = http.get(base + payload);
-      // Can't directly verify log injection, but report if no error.
-      if (resp.status_code == 200) {
-        findings.push_back({"Log Injection", "low", url, "CRLF in parameter accepted (potential log injection)", param, payload, ""});
+      // Only report if the injected content is actually reflected in response
+      if (resp.status_code == 200 && resp.body.find("INJECTED_LOG_ENTRY") != std::string::npos) {
+        findings.push_back({"Log Injection", "low", url, "CRLF in parameter reflected in response (log/header injection)", param, payload, ""});
         break;
       }
     }

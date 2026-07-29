@@ -312,11 +312,13 @@ std::vector<Finding> scan_user_enum(const Config& cfg, HttpClient& http, const C
                         R"({"Username":"nonexistent_user_xyz@)" + domain + R"("})", "application/json");
   // Check response status.
   if (resp.status_code == 200) {
-    // If IfExistsResult == 0, user exists; 1 = doesn't exist.
-    // If both return same response, enumeration is not possible.
+    // If IfExistsResult == 0, user exists; 1 = doesn't exist; 5/6 = throttled
     auto resp2 = http.post("https://login.microsoftonline.com/common/GetCredentialType", R"({"Username":"admin@)" + domain + R"("})",
                            "application/json");
-    if (resp.body != resp2.body) {
+    // Only confirm enumeration if nonexistent user gets 1 and known user gets 0
+    bool nonexist_gets_1 = resp.body.find("\"IfExistsResult\":1") != std::string::npos;
+    bool admin_gets_0 = resp2.body.find("\"IfExistsResult\":0") != std::string::npos;
+    if (nonexist_gets_1 && admin_gets_0) {
       findings.push_back({"M365 User Enumeration", "medium", domain,
                           "Microsoft login reveals whether accounts exist — aids password spraying", "", "", ""});
     }

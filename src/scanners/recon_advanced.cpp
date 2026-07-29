@@ -190,7 +190,11 @@ std::vector<Finding> scan_email_security(const Config& cfg, HttpClient&, const C
   std::vector<Finding> findings;
 
   // Check SPF
-  std::string spf_cmd = "dig +short TXT " + cfg.target + " 2>/dev/null | grep spf";
+  std::string domain = cfg.target;
+  if (domain.find("://") != std::string::npos) domain = domain.substr(domain.find("://") + 3);
+  if (domain.find('/') != std::string::npos) domain = domain.substr(0, domain.find('/'));
+
+  std::string spf_cmd = "dig +short TXT " + domain + " 2>/dev/null | grep spf";
   FILE* fp = popen(spf_cmd.c_str(), "r");
   if (fp) {
     char buf[1024] = {};
@@ -206,7 +210,7 @@ std::vector<Finding> scan_email_security(const Config& cfg, HttpClient&, const C
   }
 
   // Check DMARC
-  std::string dmarc_cmd = "dig +short TXT _dmarc." + cfg.target + " 2>/dev/null";
+  std::string dmarc_cmd = "dig +short TXT _dmarc." + domain + " 2>/dev/null";
   fp = popen(dmarc_cmd.c_str(), "r");
   if (fp) {
     char buf[1024] = {};
