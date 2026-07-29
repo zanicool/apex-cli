@@ -40,6 +40,9 @@
 #include "toolchain.hpp"
 #include "verification.hpp"
 #include "exploit/attack_planner.hpp"
+#include "fuzzer.hpp"
+#include "discovery.hpp"
+#include "oob_server.hpp"
 #include "hardware.hpp"
 
 namespace {
@@ -1222,9 +1225,53 @@ int main(int argc, char* argv[]) {
   }
 
   // ============================================================
+  // ============================================================
+  // DEEP SCANNING — Fuzzer + Discovery + OOB
+  // ============================================================
+  if (!cfg.quick && !cfg.blitz) {
+    // Discovery: brute-force hidden paths
+    apex::Discovery discovery(http, cfg);
+    auto discovery_findings = discovery.discover(crawl);
+    findings.insert(findings.end(), discovery_findings.begin(), discovery_findings.end());
+
+    // Fuzzer: smart parameter fuzzing
+    if (!crawl.params.empty() || !crawl.forms.empty()) {
+      apex::Fuzzer fuzzer(http, cfg);
+      auto fuzz_findings = fuzzer.fuzz_all(crawl);
+      findings.insert(findings.end(), fuzz_findings.begin(), fuzz_findings.end());
+    }
+
+    // OOB: blind vulnerability detection via callbacks
+    apex::OOBDetector oob(http, cfg);
+    auto oob_findings = oob.inject_and_check(crawl);
+    findings.insert(findings.end(), oob_findings.begin(), oob_findings.end());
+  }
+
   // PENTEST MODE — Full exploitation pipeline
   // ============================================================
   if (cfg.pentest_mode) {
+  // ============================================================
+  // DEEP SCANNING — Fuzzer + Discovery + OOB
+  // ============================================================
+  if (!cfg.quick && !cfg.blitz) {
+    // Discovery: brute-force hidden paths
+    apex::Discovery discovery(http, cfg);
+    auto discovery_findings = discovery.discover(crawl);
+    findings.insert(findings.end(), discovery_findings.begin(), discovery_findings.end());
+
+    // Fuzzer: smart parameter fuzzing
+    if (!crawl.params.empty() || !crawl.forms.empty()) {
+      apex::Fuzzer fuzzer(http, cfg);
+      auto fuzz_findings = fuzzer.fuzz_all(crawl);
+      findings.insert(findings.end(), fuzz_findings.begin(), fuzz_findings.end());
+    }
+
+    // OOB: blind vulnerability detection via callbacks
+    apex::OOBDetector oob(http, cfg);
+    auto oob_findings = oob.inject_and_check(crawl);
+    findings.insert(findings.end(), oob_findings.begin(), oob_findings.end());
+  }
+
     std::cout << "\n[PENTEST MODE] Initiating full exploitation pipeline...\n";
 
     apex::exploit::PentestPlan plan;
