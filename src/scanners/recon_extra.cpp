@@ -79,7 +79,16 @@ std::vector<Finding> scan_broken_links(const Config& cfg, HttpClient& http, cons
 std::vector<Finding> scan_s3_write(const Config& cfg, HttpClient& http, const CrawlResult& crawl) {
   (void)crawl;
   std::vector<Finding> findings;
-  std::vector<std::string> buckets = {cfg.target, cfg.target + "-assets", cfg.target + "-uploads", cfg.target + "-backup"};
+  // Extract org name from target URL
+  std::string target = cfg.target;
+  auto start = target.find("://");
+  if (start != std::string::npos) target = target.substr(start + 3);
+  auto dot = target.find('.');
+  std::string org = (dot != std::string::npos) ? target.substr(0, dot) : target;
+  // Skip generic/short names that produce false positives
+  if (org.length() <= 6) return findings;
+
+  std::vector<std::string> buckets = {org, org + "-assets", org + "-uploads", org + "-backup"};
   // Only test listing, NOT writing (safe)
   for (auto& b : buckets) {
     std::string url = "https://" + b + ".s3.amazonaws.com";

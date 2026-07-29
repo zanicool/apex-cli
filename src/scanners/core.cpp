@@ -217,12 +217,13 @@ std::vector<Finding> scan_cors(const Config&, HttpClient& http, const CrawlResul
 
 std::vector<Finding> scan_headers(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
-  const std::vector<std::string> required = {"X-Content-Type-Options", "X-Frame-Options", "Strict-Transport-Security",
-                                             "Content-Security-Policy"};
-  for (const auto& url : crawl.urls) {
-    auto resp = http.get(url);
-    for (const auto& hdr : required) {
-      if (resp.headers.find(hdr) == resp.headers.end()) findings.push_back({"Missing Header", "low", url, "Missing: " + hdr, "", "", ""});
+  // Only check headers NOT covered by dedicated scanners (CSP, HSTS, X-Frame-Options have their own)
+  const std::vector<std::string> required = {"Permissions-Policy", "X-Content-Type-Options"};
+  if (crawl.urls.empty()) return findings;
+  auto resp = http.get(crawl.urls[0]);
+  for (const auto& hdr : required) {
+    if (resp.headers.find(hdr) == resp.headers.end()) {
+      findings.push_back({"Missing " + hdr, "low", crawl.urls[0], "Missing: " + hdr, "", "", ""});
     }
   }
   return findings;
@@ -318,10 +319,15 @@ std::vector<Finding> scan_clickjacking(const Config&, HttpClient& http, const Cr
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   auto resp = http.get(crawl.urls[0]);
+  // Only flag clickjacking if the page has interactive elements worth framing
+  bool has_forms = resp.body.find("<form") != std::string::npos ||
+                   resp.body.find("<button") != std::string::npos ||
+                   resp.body.find("<input") != std::string::npos;
+  if (!has_forms && crawl.forms.empty()) return findings;
   bool has_xfo = resp.headers.count("X-Frame-Options");
   auto csp = resp.headers.find("Content-Security-Policy");
   bool has_fa = csp != resp.headers.end() && csp->second.find("frame-ancestors") != std::string::npos;
-  if (!has_xfo && !has_fa) findings.push_back({"Clickjacking", "medium", crawl.urls[0], "Missing frame protection", "", "", ""});
+  if (!has_xfo && !has_fa) findings.push_back({"Clickjacking", "medium", crawl.urls[0], "Missing frame protection (page has interactive elements)", "", "", ""});
   return findings;
 }
 

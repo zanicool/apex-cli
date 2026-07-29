@@ -1,0 +1,19 @@
+{
+  "target": "https://example.com",
+  "timestamp": "2026-07-29T00:06:21Z",
+  "endpoints": [
+    "https://example.com"
+  ],
+  "technologies": [
+    "cloudflare"
+  ],
+  "finding_count": 6,
+  "findings": [
+    {"type": "Missing Referrer-Policy", "severity": "low", "url": "https://example.com", "state": 1, "confidence": 0, "reason": ""},
+    {"type": "Missing Cross-Origin-Opener-Policy", "severity": "low", "url": "https://example.com", "state": 1, "confidence": 0, "reason": ""},
+    {"type": "Missing Cross-Origin-Embedder-Policy", "severity": "low", "url": "https://example.com", "state": 1, "confidence": 0, "reason": ""},
+    {"type": "Missing Permissions-Policy", "severity": "low", "url": "https://example.com", "state": 1, "confidence": 0, "reason": ""},
+    {"type": "Missing X-Content-Type-Options", "severity": "low", "url": "https://example.com", "state": 1, "confidence": 0, "reason": ""},
+    {"type": "WAF Detected — Cloudflare", "severity": "info", "url": "https://example.com", "state": 1, "confidence": 0, "reason": ""}
+  ]
+}

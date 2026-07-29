@@ -24,6 +24,10 @@ std::string base_url(const std::string& url) {
 /// Resolve a relative URL against a base.
 std::string resolve_url(const std::string& href, const std::string& page_url) {
   if (href.empty() || href[0] == '#') return "";
+  // Skip non-HTTP schemes
+  if (href.find("data:") == 0 || href.find("javascript:") == 0 ||
+      href.find("mailto:") == 0 || href.find("blob:") == 0 ||
+      href.find("tel:") == 0 || href.find("ftp:") == 0) return "";
   if (href.find("://") != std::string::npos) return href;
   if (href.size() >= 2 && href.substr(0, 2) == "//") return "https:" + href;
   std::string base = base_url(page_url);

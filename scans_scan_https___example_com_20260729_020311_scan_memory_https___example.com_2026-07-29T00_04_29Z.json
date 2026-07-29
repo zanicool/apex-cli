@@ -1,0 +1,20 @@
+{
+  "target": "https://example.com",
+  "timestamp": "2026-07-29T00:04:29Z",
+  "endpoints": [
+    "https://example.com"
+  ],
+  "technologies": [
+    "cloudflare"
+  ],
+  "finding_count": 7,
+  "findings": [
+    {"type": "Missing Content-Security-Policy", "severity": "medium", "url": "https://example.com", "state": 1, "confidence": 0, "reason": ""},
+    {"type": "Missing Strict-Transport-Security", "severity": "medium", "url": "https://example.com", "state": 1, "confidence": 0, "reason": ""},
+    {"type": "Missing X-Content-Type-Options", "severity": "low", "url": "https://example.com", "state": 1, "confidence": 0, "reason": ""},
+    {"type": "Missing X-Frame-Options", "severity": "low", "url": "https://example.com", "state": 1, "confidence": 0, "reason": ""},
+    {"type": "Missing Permissions-Policy", "severity": "low", "url": "https://example.com", "state": 1, "confidence": 0, "reason": ""},
+    {"type": "WAF Detected — Cloudflare", "severity": "info", "url": "https://example.com", "state": 1, "confidence": 0, "reason": ""},
+    {"type": "Supply Chain: S3 Public (unverified)", "severity": "medium", "url": "https://example-db.s3.amazonaws.com/", "state": 1, "confidence": 10, "reason": ""}
+  ]
+}

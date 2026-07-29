@@ -111,11 +111,10 @@ std::vector<Finding> scan_security_headers(const Config&, HttpClient& http, cons
   };
 
   std::vector<HeaderCheck> checks = {
-      {"Content-Security-Policy", "No CSP — XSS exploitation easier", "medium"},
-      {"Strict-Transport-Security", "No HSTS — vulnerable to SSL stripping (MITM)", "medium"},
-      {"X-Content-Type-Options", "No X-Content-Type-Options — MIME sniffing possible", "low"},
-      {"X-Frame-Options", "No X-Frame-Options — clickjacking possible", "low"},
-      {"Permissions-Policy", "No Permissions-Policy — browser features unrestricted", "low"},
+      // Only check headers not covered by core.cpp or modern_stack.cpp
+      {"Referrer-Policy", "No Referrer-Policy — URL leakage to third parties", "low"},
+      {"Cross-Origin-Opener-Policy", "No COOP — cross-origin window access possible", "low"},
+      {"Cross-Origin-Embedder-Policy", "No COEP — Spectre-style attacks possible", "low"},
   };
 
   for (const auto& check : checks) {

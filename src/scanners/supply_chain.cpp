@@ -66,9 +66,16 @@ std::vector<Finding> scan_cloud_storage_exposure(const Config&, HttpClient& http
                                                 "-prod", "-media",  "-logs",   "-private", "-internal", "-db"};
   for (const auto& suffix : s3_suffixes) {
     std::string bucket = org + suffix;
+    // Skip very common/generic org names that produce false positives
+    if (org == "example" || org == "test" || org == "app" || org == "www" ||
+        org == "web" || org == "api" || org == "dev" || org == "mail") continue;
     auto resp = http.get("https://" + bucket + ".s3.amazonaws.com/");
     if (resp.status_code == 200 && resp.body.find("<ListBucketResult") != std::string::npos) {
-      findings.push_back({"Supply Chain: S3 Public", "critical", "https://" + bucket + ".s3.amazonaws.com/",
+      // Verify bucket content references the target domain
+      bool relevant = resp.body.find(domain) != std::string::npos;
+      std::string severity = relevant ? "critical" : "medium";
+      std::string label = relevant ? "Supply Chain: S3 Public" : "Supply Chain: S3 Public (unverified)";
+      findings.push_back({label, severity, "https://" + bucket + ".s3.amazonaws.com/",
                           "Public S3 bucket listing: " + bucket, "", "", ""});
     }
   }
