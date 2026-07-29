@@ -51,6 +51,13 @@
 #include "nuclei_runner.hpp"
 #include "spa_crawler.hpp"
 #include "dom_xss.hpp"
+#include "auth_bypass.hpp"
+#include "race_engine.hpp"
+#include "subdomain_enum.hpp"
+#include "header_inject.hpp"
+#include "param_miner.hpp"
+#include "cors_exploit.hpp"
+#include "graphql_exploit.hpp"
 
 namespace {
 
@@ -1313,6 +1320,51 @@ int main(int argc, char* argv[]) {
     apex::OOBDetector oob(http, cfg);
     auto oob_findings = oob.inject_and_check(crawl);
     findings.insert(findings.end(), oob_findings.begin(), oob_findings.end());
+
+    // Auth Bypass: JWT manipulation, verb tampering, IP spoofing
+    apex::AuthBypass auth_bypass;
+    auto ab_findings = auth_bypass.test(crawl, http, cfg);
+    findings.insert(findings.end(), ab_findings.begin(), ab_findings.end());
+
+    // Race Conditions: double-spend, TOCTOU, limit bypass
+    apex::RaceEngine race_engine;
+    auto race_findings = race_engine.test_races(crawl, http, cfg);
+    findings.insert(findings.end(), race_findings.begin(), race_findings.end());
+
+    // Header Injection: CRLF, host header attacks, smuggling
+    apex::HeaderInjector header_injector;
+    auto hi_findings = header_injector.test(crawl, http, cfg);
+    findings.insert(findings.end(), hi_findings.begin(), hi_findings.end());
+
+    // Param Miner: hidden parameter discovery
+    apex::ParamMiner param_miner;
+    auto pm_findings = param_miner.mine(crawl, http, cfg);
+    findings.insert(findings.end(), pm_findings.begin(), pm_findings.end());
+
+    // CORS Exploit: misconfiguration detection
+    apex::CORSExploit cors_exploit;
+    auto cors_findings = cors_exploit.test(crawl, http, cfg);
+    findings.insert(findings.end(), cors_findings.begin(), cors_findings.end());
+
+    // GraphQL Exploit: deep exploitation
+    apex::GraphQLExploit graphql_exploit;
+    auto gql_findings = graphql_exploit.exploit(target, http, cfg);
+    findings.insert(findings.end(), gql_findings.begin(), gql_findings.end());
+
+    // Subdomain Enumeration (only in non-quick mode)
+    if (!cfg.quick) {
+      apex::SubdomainEnum subdomain_enum;
+      // Extract domain from target
+      std::string domain = target;
+      auto scheme_pos = domain.find("://");
+      if (scheme_pos != std::string::npos) domain = domain.substr(scheme_pos + 3);
+      auto slash_pos = domain.find('/');
+      if (slash_pos != std::string::npos) domain = domain.substr(0, slash_pos);
+      auto colon_pos = domain.find(':');
+      if (colon_pos != std::string::npos) domain = domain.substr(0, colon_pos);
+      auto sub_findings = subdomain_enum.enumerate(domain, http);
+      findings.insert(findings.end(), sub_findings.begin(), sub_findings.end());
+    }
   }
 
     std::cout << "\n[PENTEST MODE] Initiating full exploitation pipeline...\n";
