@@ -44,6 +44,13 @@
 #include "discovery.hpp"
 #include "oob_server.hpp"
 #include "hardware.hpp"
+#include "idor_detector.hpp"
+#include "api_schema.hpp"
+#include "workflow_tester.hpp"
+#include "js_extractor.hpp"
+#include "nuclei_runner.hpp"
+#include "spa_crawler.hpp"
+#include "dom_xss.hpp"
 
 namespace {
 
@@ -1245,6 +1252,42 @@ int main(int argc, char* argv[]) {
     apex::OOBDetector oob(http, cfg);
     auto oob_findings = oob.inject_and_check(crawl);
     findings.insert(findings.end(), oob_findings.begin(), oob_findings.end());
+
+    // IDOR: insecure direct object reference detection
+    apex::IDORDetector idor(http, cfg);
+    auto idor_findings = idor.detect(crawl);
+    findings.insert(findings.end(), idor_findings.begin(), idor_findings.end());
+
+    // API Schema: exploit OpenAPI/Swagger endpoints
+    apex::APISchemaExploiter api_schema(http, cfg);
+    auto api_findings = api_schema.exploit(crawl);
+    findings.insert(findings.end(), api_findings.begin(), api_findings.end());
+
+    // Workflow: business logic and multi-step bypass testing
+    apex::WorkflowTester workflow(http, cfg);
+    auto workflow_findings = workflow.test_workflows(crawl);
+    findings.insert(findings.end(), workflow_findings.begin(), workflow_findings.end());
+
+    // JS Secrets: extract hardcoded secrets from JavaScript
+    apex::JSExtractor js_extractor(http, cfg);
+    auto js_findings = js_extractor.extract(crawl);
+    findings.insert(findings.end(), js_findings.begin(), js_findings.end());
+
+    // Nuclei: run nuclei templates if binary available
+    apex::NucleiRunner nuclei(cfg);
+    if (nuclei.is_available()) {
+      auto nuclei_findings = nuclei.run(cfg.target);
+      findings.insert(findings.end(), nuclei_findings.begin(), nuclei_findings.end());
+    }
+
+    // SPA Crawler: deep JavaScript route discovery
+    apex::SPACrawler spa_crawler(http, cfg);
+    crawl = spa_crawler.deep_crawl(cfg.target, crawl);
+
+    // DOM XSS: source-to-sink analysis
+    apex::DOMXSSDetector dom_xss(http, cfg);
+    auto dom_xss_findings = dom_xss.detect(crawl);
+    findings.insert(findings.end(), dom_xss_findings.begin(), dom_xss_findings.end());
   }
 
   // PENTEST MODE — Full exploitation pipeline
