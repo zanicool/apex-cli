@@ -301,6 +301,13 @@ std::vector<Finding> scan_user_enum(const Config& cfg, HttpClient& http, const C
   if (domain.find('/') != std::string::npos) domain = domain.substr(0, domain.find('/'));
 
   // Microsoft user enumeration via GetCredentialType.
+  // First verify the domain uses M365 (check OpenID config)
+  auto oidc = http.get("https://login.microsoftonline.com/" + domain + "/.well-known/openid-configuration");
+  if (oidc.status_code != 200 || oidc.body.find("AADSTS90002") != std::string::npos || 
+      oidc.body.find("error") != std::string::npos) {
+    return findings; // Domain not on Azure AD / M365
+  }
+
   auto resp = http.post("https://login.microsoftonline.com/common/GetCredentialType",
                         R"({"Username":"nonexistent_user_xyz@)" + domain + R"("})", "application/json");
   // Check response status.

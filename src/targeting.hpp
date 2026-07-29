@@ -56,6 +56,9 @@ struct AssetProfile {
   bool is_spa = false;
   bool is_api_service = false;
   bool is_wordpress = false;
+  bool has_mobile_indicators = false;
+  bool is_containerized = false;
+  bool is_serverless = false;
   int endpoint_count = 0;
   int param_count = 0;
 

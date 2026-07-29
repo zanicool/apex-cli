@@ -103,6 +103,12 @@ std::vector<Finding> scan_bucket_takeover(const Config&, HttpClient& http, const
     name = (dot != std::string::npos) ? domain.substr(0, dot) : domain;
   }
 
+  // Skip generic org names that always produce false positives
+  static const std::vector<std::string> skip_names = {"example", "test", "app", "www", "web", "api", "dev", "admin", "demo"};
+  if (std::find(skip_names.begin(), skip_names.end(), name) != skip_names.end() || name.length() <= 4) {
+    return findings;
+  }
+
   // S3 bucket variations
   std::vector<std::string> bucket_names = {name,           name + "-assets",  name + "-backup", name + "-dev",    name + "-staging",
                                            name + "-prod", name + "-uploads", name + "-media",  name + "-static", name + "-data",

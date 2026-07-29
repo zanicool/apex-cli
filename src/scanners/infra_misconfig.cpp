@@ -303,7 +303,7 @@ std::vector<Finding> scan_server_disclosure(const Config&, HttpClient& http, con
 std::vector<Scanner> register_infra_misconfig_scanners() {
   return {
       {"DNS Zone Transfer", scan_zone_transfer},      {"Debug Endpoints", scan_debug_endpoints},
-      {"Default Credentials", scan_default_creds},    {"Backup Files", scan_backup_files},
+      {"Default Credentials", scan_default_creds},    // {"Backup Files", scan_backup_files}, // disabled: duplicate of secrets_scan version
       {"Directory Listing", scan_directory_listing},  {"Cookie Security", scan_cookie_security},
       {"Path Traversal (Deep)", scan_path_traversal}, {"Server Disclosure", scan_server_disclosure},
   };

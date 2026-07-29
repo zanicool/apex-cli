@@ -276,16 +276,24 @@ std::vector<Finding> scan_orphaned_resources(const Config& cfg, HttpClient& http
   }
 
   // Check for forgotten Heroku/Vercel/Netlify deployments.
-  const std::vector<std::pair<std::string, std::string>> deploy_patterns = {
-      {"https://" + org + ".herokuapp.com", "Heroku"},     {"https://" + org + ".vercel.app", "Vercel"},
-      {"https://" + org + ".netlify.app", "Netlify"},      {"https://" + org + ".azurewebsites.net", "Azure App Service"},
-      {"https://" + org + ".firebaseapp.com", "Firebase"}, {"https://" + org + ".web.app", "Firebase"},
+  // Skip generic org names that always produce FPs
+  static const std::vector<std::string> generic_orgs = {
+    "example", "test", "app", "www", "web", "api", "dev", "admin", "demo", "staging", "beta"
   };
-  for (const auto& [url, platform] : deploy_patterns) {
-    auto resp = http.get(url);
-    if (resp.status_code == 200 && resp.body.size() > 200) {
-      findings.push_back(
-          {"Shadow Deployment: " + platform, "medium", url, platform + " deployment found — possibly unmanaged/forgotten", "", "", ""});
+  bool is_generic = std::find(generic_orgs.begin(), generic_orgs.end(), org) != generic_orgs.end() || org.length() <= 4;
+
+  if (!is_generic) {
+    const std::vector<std::pair<std::string, std::string>> deploy_patterns = {
+        {"https://" + org + ".herokuapp.com", "Heroku"},     {"https://" + org + ".vercel.app", "Vercel"},
+        {"https://" + org + ".netlify.app", "Netlify"},      {"https://" + org + ".azurewebsites.net", "Azure App Service"},
+        {"https://" + org + ".firebaseapp.com", "Firebase"}, {"https://" + org + ".web.app", "Firebase"},
+    };
+    for (const auto& [url, platform] : deploy_patterns) {
+      auto resp = http.get(url);
+      if (resp.status_code == 200 && resp.body.size() > 200) {
+        findings.push_back(
+            {"Shadow Deployment: " + platform, "medium", url, platform + " deployment found — possibly unmanaged/forgotten", "", "", ""});
+      }
     }
   }
 

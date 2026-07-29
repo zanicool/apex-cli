@@ -132,6 +132,10 @@ std::vector<Finding> scan_timing_oracle(const Config&, HttpClient& http, const C
   const std::vector<std::string> login_paths = {"/login", "/api/login", "/auth/login", "/api/auth/signin"};
 
   for (const auto& path : login_paths) {
+    // Skip if endpoint doesn't exist
+    auto probe = http.get(base + path);
+    if (probe.status_code == 404 || probe.status_code == 0) continue;
+
     // Warm up: one normal request.
     http.get(base + path);
 

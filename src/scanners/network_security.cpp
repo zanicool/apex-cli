@@ -106,7 +106,7 @@ std::vector<Finding> scan_tls(const Config& cfg, HttpClient& http, const CrawlRe
   if (!crawl.urls.empty()) {
     auto resp = http.get(crawl.urls[0]);
     if (resp.headers.find("Strict-Transport-Security") == resp.headers.end()) {
-      findings.push_back({"Missing HSTS", "medium", domain, "Strict-Transport-Security header not set", "", "", ""});
+      // Covered by compliance scanner
     }
   }
 

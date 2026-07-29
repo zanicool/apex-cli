@@ -32,6 +32,8 @@ constexpr size_t kNumAgents = sizeof(kUserAgents) / sizeof(kUserAgents[0]);
 size_t write_callback(char* ptr, size_t size, size_t nmemb, void* userdata) {
   auto* buf = static_cast<std::string*>(userdata);
   size_t bytes = size * nmemb;
+  // Abort if response exceeds 5MB — prevents OOM on binary downloads
+  if (buf->size() + bytes > 5 * 1024 * 1024) return 0;
   buf->append(ptr, bytes);
   return bytes;
 }
@@ -133,6 +135,7 @@ Response HttpClient::do_request(const std::string& method, const std::string& ur
   curl_easy_setopt(curl, CURLOPT_HEADERDATA, &resp_headers);
   curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(cfg_.timeout));
   curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
+  curl_easy_setopt(curl, CURLOPT_MAXFILESIZE, 5L * 1024 * 1024); // 5MB max response
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
   curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);

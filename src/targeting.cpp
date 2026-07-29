@@ -79,6 +79,36 @@ AssetProfile build_profile(const CrawlResult& crawl, HttpClient& http) {
   // Detect specific platforms
   profile.is_wordpress = crawl.technologies.count("wordpress") > 0;
 
+  // Detect mobile app indicators (app store links, mobile API endpoints, deep links)
+  for (const auto& url : crawl.urls) {
+    if (url.find("itunes.apple.com") != std::string::npos ||
+        url.find("play.google.com") != std::string::npos ||
+        url.find("apps.apple.com") != std::string::npos ||
+        url.find("/api/mobile") != std::string::npos ||
+        url.find("/.well-known/apple-app-site-association") != std::string::npos ||
+        url.find("/.well-known/assetlinks.json") != std::string::npos) {
+      profile.has_mobile_indicators = true;
+      break;
+    }
+  }
+
+  // Detect container/K8s indicators
+  if (profile.server.find("istio") != std::string::npos ||
+      profile.server.find("envoy") != std::string::npos ||
+      crawl.technologies.count("kubernetes") > 0 ||
+      crawl.technologies.count("docker") > 0) {
+    profile.is_containerized = true;
+  }
+
+  // Detect serverless
+  if (profile.server.find("Vercel") != std::string::npos ||
+      profile.server.find("Netlify") != std::string::npos ||
+      crawl.technologies.count("vercel") > 0 ||
+      crawl.technologies.count("netlify") > 0 ||
+      crawl.technologies.count("lambda") > 0) {
+    profile.is_serverless = true;
+  }
+
   // Detect cloud provider from headers/DNS
   if (profile.server.find("cloudflare") != std::string::npos) {
     profile.cloud_provider = "cloudflare";
@@ -206,6 +236,29 @@ double AssetProfile::module_relevance(const std::string& module_name) const {
   if (name.find("sqli") != std::string::npos || name.find("xss") != std::string::npos || name.find("injection") != std::string::npos ||
       name.find("ssrf") != std::string::npos || name.find("ssti") != std::string::npos || name.find("lfi") != std::string::npos) {
     return param_count > 0 ? 0.9 : 0.3;
+  }
+
+  // Mobile app scanners: only relevant if target is a mobile app or has mobile indicators
+  if (name.find("Mobile") != std::string::npos || name.find("mobile") != std::string::npos ||
+      name.find("Android") != std::string::npos || name.find("iOS") != std::string::npos ||
+      name.find("android") != std::string::npos || name.find("biometric") != std::string::npos ||
+      name.find("keychain") != std::string::npos || name.find("keystore") != std::string::npos ||
+      name.find("obfuscation") != std::string::npos || name.find("jailbreak") != std::string::npos) {
+    return has_mobile_indicators ? 0.8 : 0.1;
+  }
+
+  // Container/K8s: only if indicators present
+  if (name.find("Container") != std::string::npos || name.find("container") != std::string::npos ||
+      name.find("Docker") != std::string::npos || name.find("Kubernetes") != std::string::npos ||
+      name.find("Helm") != std::string::npos || name.find("etcd") != std::string::npos) {
+    return is_containerized ? 0.8 : 0.2;
+  }
+
+  // Serverless: only if platform detected
+  if (name.find("Lambda") != std::string::npos || name.find("serverless") != std::string::npos ||
+      name.find("Vercel") != std::string::npos || name.find("Netlify") != std::string::npos ||
+      name.find("Cloudflare Worker") != std::string::npos) {
+    return is_serverless ? 0.9 : 0.2;
   }
 
   // Default: moderate relevance

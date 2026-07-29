@@ -240,31 +240,38 @@ std::vector<Finding> run_scanners(const Config& cfg, HttpClient& http, const Cra
   };
 
   std::vector<std::future<std::vector<Finding>>> futures;
-  std::atomic<int> active_threads{0};
-  int max_concurrent = std::min(cfg.threads, 100); // Cap at 100 concurrent HTTP operations
+  int max_concurrent = std::min(cfg.threads, 20);
 
+  // Collect scanners to run
+  std::vector<Scanner> to_run;
   for (const auto& scanner : scanners) {
     if (should_skip(scanner.name)) {
       std::cout << "    [skip] " << scanner.name << "\n";
       continue;
     }
     std::cout << "    [->] " << scanner.name << "\n";
-    futures.push_back(std::async(std::launch::async, [&, scanner]() {
-      // Wait until slot available
-      while (active_threads.load() >= max_concurrent) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-      }
-      active_threads.fetch_add(1);
-      auto result = scanner.func(cfg, http, crawl);
-      active_threads.fetch_sub(1);
-      return result;
-    }));
+    to_run.push_back(scanner);
   }
 
-  for (auto& f : futures) {
-    auto results = f.get();
-    std::lock_guard<std::mutex> lock(mu);
-    all_findings.insert(all_findings.end(), results.begin(), results.end());
+  // Execute in batches to avoid thread exhaustion
+  for (size_t i = 0; i < to_run.size(); i += max_concurrent) {
+    size_t batch_end = std::min(i + (size_t)max_concurrent, to_run.size());
+    std::vector<std::future<std::vector<Finding>>> batch;
+    for (size_t j = i; j < batch_end; j++) {
+      auto scanner_func = to_run[j].func;
+      batch.push_back(std::async(std::launch::async, [scanner_func, &cfg, &http, &crawl]() -> std::vector<Finding> {
+        try {
+          return scanner_func(cfg, http, crawl);
+        } catch (...) {
+          return {};
+        }
+      }));
+    }
+    for (auto& f : batch) {
+      auto results = f.get();
+      std::lock_guard<std::mutex> lock(mu);
+      all_findings.insert(all_findings.end(), results.begin(), results.end());
+    }
   }
 
   // Deduplicate on type+url+param.

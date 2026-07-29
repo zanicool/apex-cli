@@ -150,6 +150,17 @@ std::vector<Finding> scan_dns_rebinding(const Config&, HttpClient& http, const C
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   auto resp = http.get(crawl.urls[0]);
+  // Skip if behind CDN/WAF (they route by SNI, Host header is irrelevant)
+  for (const auto& [key, val] : resp.headers) {
+    std::string lower_key = key, lower_val = val;
+    std::transform(lower_key.begin(), lower_key.end(), lower_key.begin(), ::tolower);
+    std::transform(lower_val.begin(), lower_val.end(), lower_val.begin(), ::tolower);
+    if (lower_key == "server" && (lower_val.find("cloudflare") != std::string::npos ||
+        lower_val.find("cloudfront") != std::string::npos || lower_val.find("akamai") != std::string::npos ||
+        lower_val.find("fastly") != std::string::npos || lower_val.find("vercel") != std::string::npos)) {
+      return findings; // CDN handles host routing
+    }
+  }
   // If no Host header validation, DNS rebinding is possible.
   auto resp2 = http.get(crawl.urls[0], {{"Host", "127.0.0.1"}});
   if (resp2.status_code == 200 && resp2.body == resp.body) {
