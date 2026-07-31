@@ -30,3 +30,11 @@ nuclei_*/
 .playwright-mcp/
 .env
 .amazonq/
+
+# Secrets and keys
+server/keys.json
+server/__pycache__/
+
+# Binaries
+dist/
+

@@ -1,6 +1,6 @@
 # 🎯 Bug Bounty Learning Kit
 
-**For Zani - Your Path to Ethical Hacking**
+**Your Path to Ethical Hacking**
 
 This is a complete, self-guided learning system. Use CPM to help you understand and practice.
 
@@ -302,6 +302,6 @@ q chat "Quiz me on IDOR from BUG_TYPES.md"
 
 ---
 
-**Good luck, Zani! 🚀**
+**Good luck!**
 
-*- Dad*
+*- The Author*

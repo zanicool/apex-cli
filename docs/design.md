@@ -73,7 +73,7 @@ apex-cli/
 │   │   ├── headers.cpp
 │   │   ├── lfi.cpp
 │   │   ├── redirect.cpp
-│   │   └── ...                  — Port remaining from Zani's 179
+│   │   └── ...                  — Port remaining (unmapped)
 │   ├── oob.hpp/cpp              — OOB callback client
 │   ├── zap.hpp/cpp              — ZAP automation bridge
 │   ├── reporter.hpp/cpp         — JSONL, JSON, JUnit, terminal
@@ -210,7 +210,7 @@ apex-cli findings are compatible with cpm's unified contract:
 }
 ```
 
-## Migration Path (from Zani's Go version)
+## Migration Path (from original Go version)
 
 | Priority | Scanners | Count | Status |
 |----------|----------|-------|--------|

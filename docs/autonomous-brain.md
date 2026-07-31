@@ -49,9 +49,9 @@ APEX_LLM_PROVIDER=openai OPENAI_API_KEY=sk-... cat .apex/findings.jsonl | ./scri
 ./build/apex-cli target.com --autonomous --program shopify
 ```
 
-## Volgende stappen voor Zani
+## Volgende stappen
 
-1. **Test de chain executor** tegen de CTF challenges:
+1. **Test de chain executor** tegen test-challenges:
    ```bash
    make ctf-up
    ./build/apex-cli localhost:5010 --chain  # IDOR challenge
