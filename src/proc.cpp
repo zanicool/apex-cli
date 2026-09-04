@@ -5,7 +5,9 @@
 #include <array>
 #include <cstring>
 #include <csignal>
+#include <ctime>
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -23,6 +25,48 @@ std::vector<char *> to_argv(const std::vector<std::string> &args) {
     argv.push_back(const_cast<char *>(a.c_str()));
   argv.push_back(nullptr);
   return argv;
+}
+
+/// Reap `pid`, but do not block indefinitely. If the child has not exited
+/// within `timeout_secs`, escalate SIGTERM then SIGKILL so a hung or
+/// SIGALRM-ignoring child can never wedge the parent forever. A timeout of
+/// 0 means wait indefinitely (blocking waitpid). Returns the raw wait status.
+int reap_with_timeout(pid_t pid, int timeout_secs) {
+  int status = 0;
+  if (timeout_secs <= 0) {
+    waitpid(pid, &status, 0);
+    return status;
+  }
+
+  const time_t deadline = time(nullptr) + timeout_secs;
+  bool sent_term = false;
+  for (;;) {
+    pid_t r = waitpid(pid, &status, WNOHANG);
+    if (r == pid)
+      return status;      // child reaped
+    if (r < 0) {
+      // No such child / interrupted; nothing left to wait on.
+      waitpid(pid, &status, 0);
+      return status;
+    }
+    if (time(nullptr) >= deadline) {
+      if (!sent_term) {
+        // First escalation: polite termination, brief grace period.
+        kill(pid, SIGTERM);
+        sent_term = true;
+        struct timespec grace = {0, 200 * 1000 * 1000}; // 200ms
+        nanosleep(&grace, nullptr);
+      } else {
+        // Still alive after SIGTERM — force kill and reap.
+        kill(pid, SIGKILL);
+        waitpid(pid, &status, 0);
+        return status;
+      }
+    } else {
+      struct timespec poll = {0, 50 * 1000 * 1000}; // 50ms
+      nanosleep(&poll, nullptr);
+    }
+  }
 }
 
 } // namespace
@@ -80,14 +124,35 @@ ProcResult run_command(const std::vector<std::string> &argv, int timeout_secs,
   if (capture_stdout) {
     close(pipefd[1]);
     std::array<char, 4096> buf;
-    ssize_t n;
-    while ((n = read(pipefd[0], buf.data(), buf.size())) > 0)
-      result.stdout_data.append(buf.data(), static_cast<size_t>(n));
+    // Bound the read on the same deadline as the reap. Using poll() means a
+    // child that hangs (or ignores SIGALRM) can never wedge the parent in a
+    // blocking read: on timeout we stop reading and fall through to
+    // reap_with_timeout, which force-kills it.
+    const time_t deadline =
+        timeout_secs > 0 ? time(nullptr) + timeout_secs : 0;
+    for (;;) {
+      if (timeout_secs > 0) {
+        time_t now = time(nullptr);
+        if (now >= deadline)
+          break;
+        struct pollfd pfd = {pipefd[0], POLLIN, 0};
+        int wait_ms = static_cast<int>((deadline - now) * 1000);
+        int pr = poll(&pfd, 1, wait_ms);
+        if (pr <= 0) // timeout (0) or error (<0)
+          break;
+      }
+      ssize_t n = read(pipefd[0], buf.data(), buf.size());
+      if (n > 0)
+        result.stdout_data.append(buf.data(), static_cast<size_t>(n));
+      else if (n == 0) // EOF: child closed stdout
+        break;
+      else // read error
+        break;
+    }
     close(pipefd[0]);
   }
 
-  int status = 0;
-  waitpid(pid, &status, 0);
+  int status = reap_with_timeout(pid, timeout_secs);
   if (WIFEXITED(status))
     result.exit_code = WEXITSTATUS(status);
   else if (WIFSIGNALED(status))

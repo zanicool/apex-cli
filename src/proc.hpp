@@ -2,10 +2,11 @@
 /// @brief Safe subprocess execution without a shell.
 ///
 /// All external-tool invocations (nuclei, sqlmap, chrome, zap) go through
-/// these helpers. Arguments are passed as an argv array to execvp via
-/// posix_spawn, so user-controlled data (e.g. the scan target) can never be
-/// interpreted by a shell. This eliminates command-injection entirely — a
-/// target like "example.com; rm -rf ~" is passed as a single literal argv[].
+/// these helpers. The command is run via fork() + execvp() with an explicit
+/// argv array (no shell), so user-controlled data (e.g. the scan target) can
+/// never be interpreted by a shell. This eliminates command-injection entirely
+/// — a target like "example.com; rm -rf ~" is passed as a single literal
+/// argv[] element.
 #ifndef APEX_PROC_HPP
 #define APEX_PROC_HPP
 
