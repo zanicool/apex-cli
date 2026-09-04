@@ -76,9 +76,24 @@ std::vector<Finding> scan_cloud_metadata(const Config &, HttpClient &http,
   for (const auto &url : crawl.urls) {
     auto targets = get_targets(crawl, url, "url");
     for (const auto &[base, param] : targets) {
+      // Baseline with a harmless value so we can prove the metadata payload
+      // actually changed the response (not just a page that returns 200).
+      auto baseline = http.get(base + "http://example.invalid/");
       for (const auto &[meta_url, provider] : endpoints) {
         auto resp = http.get(base + meta_url);
-        if (resp.status_code == 200 && resp.body.size() > 10) {
+        // Confirm ONLY on concrete cloud-metadata response markers that never
+        // appear in the request payload itself (otherwise reflecting the
+        // payload URL, which contains words like "computeMetadata", would
+        // falsely confirm). These strings only occur in real metadata bodies.
+        static const std::vector<std::string> markers = {
+            "ami-id", "instance-id", "AccessKeyId", "SecretAccessKey",
+            "iam/security-credentials/", "\"privateIp\""};
+        bool has_marker = contains_any(resp.body, markers);
+        bool in_baseline = contains_any(baseline.body, markers);
+        // Guard: the payload URL must not itself contain a marker.
+        bool marker_in_payload = contains_any(meta_url, markers);
+        if (resp.status_code == 200 && has_marker && !in_baseline &&
+            !marker_in_payload) {
           findings.push_back({"Cloud Metadata", "critical", url,
                               provider + " metadata accessible via SSRF",
                               param, meta_url, resp.body.substr(0, 100)});

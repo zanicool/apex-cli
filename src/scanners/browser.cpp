@@ -2,6 +2,7 @@
 /// @brief Browser-based scanners: browser-confirmed XSS, DOM XSS detection,
 ///        postMessage vulnerabilities.
 #include "scanner_base.hpp"
+#include "../proc.hpp"
 #include <cstdio>
 
 namespace apex {
@@ -105,13 +106,14 @@ std::vector<Finding> scan_browser_xss(const Config &cfg, HttpClient &http,
       auto resp = http.get(base + payload);
       if (resp.body.find("onerror") == std::string::npos) continue;
 
-      // Verify with headless browser.
+      // Verify with headless browser using safe argv exec (no shell).
       std::string test_url = base + payload;
-      std::string cmd = "timeout 10 '" + chrome +
-                        "' --headless --disable-gpu --dump-dom '" +
-                        test_url + "' 2>/dev/null | grep -q 'XSS'";
-      int ret = system(cmd.c_str());
-      if (ret == 0) {
+      auto proc = run_command({chrome, "--headless", "--disable-gpu",
+                               "--no-sandbox", "--dump-dom", test_url},
+                              10, /*capture_stdout=*/true);
+      bool fired = proc.spawned &&
+                   proc.stdout_data.find("XSS") != std::string::npos;
+      if (fired) {
         findings.push_back({"XSS (Browser)", "critical", url,
                             "Browser-confirmed XSS execution",
                             param, payload, ""});

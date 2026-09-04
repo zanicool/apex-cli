@@ -27,24 +27,46 @@ std::vector<Finding> scan_csv_injection(const Config &, HttpClient &http,
   // Accumulate findings for this scanner.
   // Accumulate findings for this scanner.
   std::vector<Finding> findings;
-  // Test if user input ends up in CSV/Excel exports without sanitization.
+  // CSV/formula injection is only exploitable when the input is later served
+  // back inside a downloadable spreadsheet (CSV/Excel), where a leading '='
+  // is interpreted as a formula. Merely reflecting "=CMD(...)" into an HTML
+  // page is NOT CSV injection — the old check matched "=CMD", a substring of
+  // the payload itself, so any endpoint that echoed the query string produced
+  // a false positive.
   const std::string payload = "=CMD(\"calc\")";
-  // Iterate over targets.
-  // Process each crawled URL.
-  // Process each crawled URL.
-  // Process each crawled URL.
   for (const auto &url : crawl.urls) {
     auto targets = get_targets(crawl, url, "name");
     for (const auto &[base, param] : targets) {
       auto resp = http.get(base + payload);
-      if (resp.body.find("=CMD") != std::string::npos ||
-          resp.body.find("=HYPERLINK") != std::string::npos) {
-        findings.push_back({"CSV Injection", "medium", base + payload,
-                            "Formula payload reflected — CSV/Excel injection possible",
-                            param, payload, "=CMD"});
+
+      // The response must actually be a CSV/spreadsheet download.
+      auto ct_it = resp.headers.find("Content-Type");
+      auto cd_it = resp.headers.find("Content-Disposition");
+      bool csv_context =
+          (ct_it != resp.headers.end() &&
+           (ct_it->second.find("text/csv") != std::string::npos ||
+            ct_it->second.find("application/vnd.ms-excel") != std::string::npos ||
+            ct_it->second.find("spreadsheet") != std::string::npos)) ||
+          (cd_it != resp.headers.end() &&
+           cd_it->second.find("attachment") != std::string::npos &&
+           (cd_it->second.find(".csv") != std::string::npos ||
+            cd_it->second.find(".xls") != std::string::npos));
+
+      // And the formula payload must survive UNescaped in that download.
+      bool formula_reflected =
+          resp.body.find("=CMD(\"calc\")") != std::string::npos ||
+          resp.body.find("=HYPERLINK") != std::string::npos;
+
+      if (csv_context && formula_reflected) {
+        std::string ctx = ct_it != resp.headers.end() ? ct_it->second : "";
+        findings.push_back(
+            {"CSV Injection", "medium", base + payload,
+             "Formula payload reflected unescaped in a CSV/spreadsheet download",
+             param, payload,
+             "download Content-Type=" + ctx + "; body contains =CMD(...)"});
+        return findings;
       }
     }
-    if (!findings.empty()) break;
   }
   // Return collected findings.
   // Return collected findings.
@@ -67,31 +89,33 @@ std::vector<Finding> scan_prototype_pollution(const Config &, HttpClient &http,
   // Determine base URL for requests.
   std::string base = base_url_from(crawl.urls[0]);
 
-  // Test __proto__ pollution via query params and JSON body.
-  const std::vector<std::string> payloads = {
-      "?__proto__[polluted]=true",
-      "?constructor[prototype][polluted]=true",
-      "?__proto__.polluted=true",
-  };
+  // Prototype pollution is a Node.js/JS server-side flaw where polluting
+  // Object.prototype changes the behaviour of UNRELATED objects. The old
+  // check matched the substrings "polluted"/"true" in the response — but both
+  // are part of the payload URL, so any app that echoed the query string
+  // produced a false positive (including non-JS servers where the bug can't
+  // exist). Real confirmation: pollute a property that the app would only
+  // expose if the prototype was actually mutated, then observe it on a
+  // SEPARATE, benign request that never carried the payload.
+  const std::string canary = "apexpp" + std::to_string(std::hash<std::string>{}(base) % 100000);
 
-  // Iterate over targets.
   for (const auto &url : crawl.urls) {
-    for (const auto &p : payloads) {
-      auto resp = http.get(url + p);
-      if (resp.body.find("polluted") != std::string::npos &&
-          resp.body.find("true") != std::string::npos) {
-        findings.push_back({"Prototype Pollution", "high", url + p,
-                            "Prototype pollution via query parameter",
-                            "__proto__", p, "polluted"});
-        return findings;
-      }
-    }
-    // JSON body variant.
-    auto resp = http.post(url, R"({"__proto__":{"polluted":"true"}})", "application/json");
-    if (resp.body.find("polluted") != std::string::npos) {
-      findings.push_back({"Prototype Pollution", "high", url,
-                          "Prototype pollution via JSON __proto__",
-                          "__proto__", R"({"__proto__":{"polluted":"true"}})", ""});
+    // 1) Attempt to pollute Object.prototype with a unique canary property.
+    (void)http.get(url + "?__proto__[" + canary + "]=polluted");
+    (void)http.post(url,
+                    R"({"__proto__":{")" + canary + R"(":"polluted"}})",
+                    "application/json");
+
+    // 2) Issue a clean request that does NOT contain the canary at all.
+    //    If the canary now appears in the response, an unrelated object
+    //    inherited it from the polluted prototype — genuine pollution.
+    auto clean = http.get(url);
+    if (clean.body.find(canary) != std::string::npos) {
+      findings.push_back(
+          {"Prototype Pollution", "high", url,
+           "Prototype pollution confirmed: canary property leaked into an "
+           "unrelated response after polluting Object.prototype",
+           "__proto__", "__proto__[" + canary + "]=polluted", canary});
       return findings;
     }
   }
@@ -103,16 +127,40 @@ std::vector<Finding> scan_prototype_pollution(const Config &, HttpClient &http,
 std::vector<Finding> scan_css_injection(const Config &, HttpClient &http,
                                         const CrawlResult &crawl) {
   std::vector<Finding> findings;
-  std::string payload = "color:red;background:url(https://evil.com/steal)";
-  // Iterate over targets.
+  const std::string payload =
+      "color:red;background:url(https://evil.com/steal)";
   for (const auto &url : crawl.urls) {
     auto targets = get_targets(crawl, url, "style");
     for (const auto &[base, param] : targets) {
+      // Benign baseline so we can prove the payload (not pre-existing page
+      // content) is what reflected.
+      auto baseline = http.get(base + "apexbenigncss");
       auto resp = http.get(base + payload);
-      if (resp.body.find("evil.com/steal") != std::string::npos) {
-        findings.push_back({"CSS Injection", "medium", base + payload,
-                            "CSS payload reflected — data exfiltration via CSS possible",
-                            param, payload, ""});
+
+      bool reflected = resp.body.find("evil.com/steal") != std::string::npos;
+      bool in_baseline =
+          baseline.body.find("evil.com/steal") != std::string::npos;
+      if (!reflected || in_baseline) continue;
+
+      // CSS injection requires the payload to land in a STYLE context
+      // (a style="..." attribute or a <style> block) unescaped. Reflection
+      // into plain HTML body text (with the ':' / '(' intact but not in a
+      // style sink) is not exploitable, so we require the surrounding
+      // style context and capture it as evidence.
+      size_t at = resp.body.find("evil.com/steal");
+      size_t win_start = at > 60 ? at - 60 : 0;
+      std::string ctx = resp.body.substr(win_start, 120);
+      bool in_style_context =
+          ctx.find("style=") != std::string::npos ||
+          ctx.find("<style") != std::string::npos ||
+          resp.body.find("<style") < at; // inside a style block
+
+      if (in_style_context) {
+        findings.push_back(
+            {"CSS Injection", "medium", base + payload,
+             "CSS payload reflected unescaped into a style context — data "
+             "exfiltration via CSS possible",
+             param, payload, "reflected in style context: " + ctx});
         return findings;
       }
     }

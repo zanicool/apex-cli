@@ -26,6 +26,22 @@ inline const char *confidence_str(Confidence c) {
 
 /// Score a finding's confidence based on evidence quality.
 inline Confidence score_confidence(const Finding &f) {
+  // Info-severity findings are observations (reflection, discovery, banners,
+  // unconfirmable preconditions), never confirmed vulns — cap them at Possible
+  // regardless of whether they carry a payload/evidence string. This MUST be
+  // checked first: otherwise an info finding that happens to set both payload
+  // and evidence would fall into the "Confirmed/Probable" branch below.
+  if (f.severity == "info")
+    return Confidence::Possible;
+
+  // Low-severity findings with no corroborating evidence (only a payload
+  // echoing the input we sent) are behavioural observations — e.g. a status
+  // anomaly — not Probable-grade vulns. Cap them at Possible so they don't
+  // pass a `--confidence 2` filter. Blind/OOB vulns that legitimately lack
+  // inline evidence are high/critical severity and are unaffected.
+  if (f.severity == "low" && f.evidence.empty())
+    return Confidence::Possible;
+
   // Confirmed: has concrete evidence that differs from baseline
   if (!f.evidence.empty() && !f.payload.empty()) {
     // SQL errors, reflected payloads, file contents = confirmed
@@ -49,12 +65,9 @@ inline Confidence score_confidence(const Finding &f) {
     return Confidence::Probable;
   }
 
-  // Possible: informational, no direct proof
-  if (f.type == "Missing Header" || f.type == "Clickjacking" ||
-      f.type == "Cookie Security" || f.type == "Info Disclosure" ||
-      f.type == "Header Leak" || f.type == "Server Banner Disclosure")
-    return Confidence::Possible;
-
+  // No payload AND no evidence → at best a possible/observational finding,
+  // regardless of type. (Previously this defaulted to Probable, which let
+  // evidence-less noise pass a `--confidence 2` filter.)
   return Confidence::Possible;
 }
 

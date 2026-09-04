@@ -149,7 +149,43 @@ std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
     filtered.push_back(std::move(f));
   }
 
-  return filtered;
+  return apply_scope_gate(filtered);
+}
+
+std::vector<Finding> apply_scope_gate(const std::vector<Finding> &findings) {
+  // Central relevance gate. Encodes vulnerability classes that standard
+  // bug-bounty programs universally treat as out-of-scope / non-rewardable
+  // noise (see e.g. the Bugcrowd/Nubank brief exclusions). Dropping them here
+  // — rather than in each of ~40 scanners — massively improves signal-to-noise
+  // without touching detection logic. Findings backed by concrete evidence are
+  // never dropped, so real issues always survive.
+
+  // Types that are pure noise unless accompanied by a concrete attack scenario.
+  static const std::set<std::string> kEmailDnsBestPractice = {
+      "Missing SPF Record", "Missing DMARC Record", "No DKIM Found",
+      "No DNSSEC", "Missing CAA Record", "Missing MTA-STS"};
+  // TLS/banner/version "best practice" findings — out of scope per most briefs.
+  static const std::set<std::string> kBestPracticeNoise = {
+      "No TLS", "Server Banner Disclosure", "Server Header Version",
+      "Server Status", "HTTP/2 Rapid Reset"};
+  // Informational "detected"/"resource" findings fabricated from the hostname
+  // with no evidence of actual exposure or ownership.
+  auto is_fabricated_info = [](const Finding &f) {
+    if (f.severity != "info") return false;
+    return f.type.rfind("Cloud Resource:", 0) == 0 ||
+           f.type == "Okta Detected" || f.type == "Auth0 Detected" ||
+           f.type == "M365 Namespace Enumerable";
+  };
+
+  std::vector<Finding> kept;
+  kept.reserve(findings.size());
+  for (const auto &f : findings) {
+    if (kEmailDnsBestPractice.count(f.type)) continue;
+    if (kBestPracticeNoise.count(f.type) && f.evidence.empty()) continue;
+    if (is_fabricated_info(f)) continue;
+    kept.push_back(f);
+  }
+  return kept;
 }
 
 } // namespace apex

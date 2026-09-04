@@ -83,6 +83,10 @@ Response HttpClient::get(const std::string &url) {
   return do_request("GET", url, "", {});
 }
 
+Response HttpClient::get_no_follow(const std::string &url) {
+  return do_request("GET", url, "", {}, /*follow_redirects=*/false);
+}
+
 Response HttpClient::get(
     const std::string &url,
     const std::vector<std::pair<std::string, std::string>> &headers) {
@@ -104,12 +108,21 @@ Response HttpClient::post(
   return do_request("POST", url, body, hmap);
 }
 
+Response HttpClient::post_no_follow(const std::string &url,
+                                    const std::string &body,
+                                    const std::string &content_type) {
+  std::map<std::string, std::string> hmap;
+  hmap["Content-Type"] = content_type;
+  return do_request("POST", url, body, hmap, /*follow_redirects=*/false);
+}
+
 long HttpClient::request_count() const { return req_count_.load(); }
 
 Response HttpClient::do_request(
     const std::string &method, const std::string &url,
     const std::string &body,
-    const std::map<std::string, std::string> &extra_headers) {
+    const std::map<std::string, std::string> &extra_headers,
+    bool follow_redirects) {
   Response resp;
   resp.url = url;
 
@@ -136,7 +149,7 @@ Response HttpClient::do_request(
   curl_easy_setopt(curl, CURLOPT_HEADERDATA, &resp_headers);
   curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(cfg_.timeout));
   curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
-  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, follow_redirects ? 1L : 0L);
   curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
   curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);

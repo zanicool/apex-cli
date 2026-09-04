@@ -99,14 +99,26 @@ std::vector<Finding> scan_redos(const Config &, HttpClient &http,
   for (const auto &url : crawl.urls) {
     auto targets = get_targets(crawl, url, "q");
     for (const auto &[base, param] : targets) {
-      auto baseline = http.get(base + "normal");
+      // Median-ish baseline from two benign requests to absorb jitter.
+      auto b1 = http.get(base + "normal");
+      auto b2 = http.get(base + "normal");
+      long baseline_ms =
+          std::max(b1.duration.count(), b2.duration.count());
       for (const auto &payload : payloads) {
         auto resp = http.get(base + payload);
-        if (resp.duration.count() > baseline.duration.count() + 3000) {
-          findings.push_back({"ReDoS", "medium", url,
-                              "Regex DoS: " +
-                                  std::to_string(resp.duration.count()) + "ms",
-                              param, payload, ""});
+        if (resp.duration.count() <= baseline_ms + 3000) continue;
+        // Reproduce: a genuine catastrophic-backtracking regex is consistently
+        // slow, whereas localhost GC/scheduling jitter is not. Require the
+        // blow-up to repeat before reporting.
+        auto confirm = http.get(base + payload);
+        if (confirm.duration.count() > baseline_ms + 3000) {
+          findings.push_back(
+              {"ReDoS", "medium", url, "Regex DoS via catastrophic backtracking",
+               param, payload,
+               "baseline=" + std::to_string(baseline_ms) +
+                   "ms, payload=" + std::to_string(resp.duration.count()) +
+                   "ms, confirm=" + std::to_string(confirm.duration.count()) +
+                   "ms"});
           break;
         }
       }
@@ -122,11 +134,19 @@ std::vector<Finding> scan_null_byte(const Config &, HttpClient &http,
   for (const auto &url : crawl.urls) {
     auto targets = get_targets(crawl, url, "file");
     for (const auto &[base, param] : targets) {
-      auto resp = http.get(base + "../../etc/passwd%00.jpg");
-      if (resp.body.find("root:") != std::string::npos) {
-        findings.push_back({"Null Byte", "high", url,
-                            "Null byte truncation bypass", param,
-                            "../../etc/passwd%00.jpg", ""});
+      const std::string payload = "../../etc/passwd%00.jpg";
+      auto resp = http.get(base + payload);
+      auto pos = resp.body.find("root:");
+      if (pos != std::string::npos) {
+        // Capture the leaked file content as concrete proof of the traversal.
+        std::string snippet = resp.body.substr(pos, 60);
+        // Trim at first newline for a clean single-line evidence string.
+        auto nl = snippet.find('\n');
+        if (nl != std::string::npos) snippet = snippet.substr(0, nl);
+        findings.push_back(
+            {"Null Byte", "high", url,
+             "Null-byte truncation bypass leaked /etc/passwd", param, payload,
+             "leaked file content: " + snippet});
       }
     }
   }
@@ -211,17 +231,29 @@ std::vector<Finding> scan_xslt(const Config &, HttpClient &http,
 std::vector<Finding> scan_log_injection(const Config &, HttpClient &http,
                                         const CrawlResult &crawl) {
   std::vector<Finding> findings;
-  const std::string payload = "test%0d%0aINJECTED_LOG_ENTRY";
+  const std::string marker = "INJECTED_LOG_ENTRY";
+  const std::string payload = "test%0d%0a" + marker;
 
   for (const auto &url : crawl.urls) {
     auto targets = get_targets(crawl, url, "username");
     for (const auto &[base, param] : targets) {
       auto resp = http.get(base + payload);
-      // Can't directly verify log injection, but report if no error.
-      if (resp.status_code == 200) {
-        findings.push_back({"Log Injection", "low", url,
-                            "CRLF in parameter accepted (potential log injection)",
-                            param, payload, ""});
+      // Remote log injection can't be observed directly. The only server-side
+      // evidence we CAN observe is CRLF splitting into a response header. Only
+      // report when the injected marker actually lands in a header — reporting
+      // on any 200 (the old behaviour) was pure noise.
+      bool in_header = false;
+      for (const auto &[k, v] : resp.headers) {
+        if (k.find(marker) != std::string::npos ||
+            v.find(marker) != std::string::npos) {
+          in_header = true;
+          break;
+        }
+      }
+      if (in_header) {
+        findings.push_back({"Log Injection", "medium", url,
+                            "CRLF injection splits into response header",
+                            param, payload, marker});
         break;
       }
     }

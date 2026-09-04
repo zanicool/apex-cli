@@ -12,6 +12,7 @@
 #include "novelty.hpp"
 #include "owasp_intel.hpp"
 #include "pipeline.hpp"
+#include "proc.hpp"
 #include "profile_generator.hpp"
 #include "recon.hpp"
 #include "recon_logger.hpp"
@@ -35,7 +36,7 @@
 
 namespace {
 
-const char *kVersion = "11.0-cpp";
+const char *kVersion = "12.0-cpp";
 
 const char *kBanner = R"(
  █████╗ ██████╗ ███████╗██╗  ██╗     ██████╗██╗     ██╗
@@ -469,7 +470,7 @@ int main(int argc, char *argv[]) {
       bool confirmed = false;
       std::string baseline = baselines[f.url];
 
-      if (!f.evidence.empty() && !f.evidence.empty()) {
+      if (!f.evidence.empty()) {
         bool in_response = resp.body.find(f.evidence) != std::string::npos;
         bool in_baseline = baseline.find(f.evidence) != std::string::npos;
         confirmed = in_response && !in_baseline;
@@ -629,7 +630,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Phase 4e: Brain — LLM-guided exploitation (requires ollama).
-    if (system("command -v ollama >/dev/null 2>&1") == 0) {
+    if (apex::command_exists("ollama")) {
       std::cout << "\n[Phase 4e] Brain — LLM-guided attack planning\n";
       apex::Brain brain(cfg, http);
       auto brain_result = brain.think_and_act(findings, cfg.target);
@@ -659,8 +660,7 @@ int main(int argc, char *argv[]) {
 
   // Phase 5: Nuclei CVE scan (if available and CMS detected).
   if (has_cms && !cfg.dry_run) {
-    std::string nuclei_path = "nuclei";
-    if (system("command -v nuclei >/dev/null 2>&1") == 0) {
+    if (apex::command_exists("nuclei")) {
       std::cout << "\n[Phase 5] Nuclei — CVE verification\n";
       // Detect CMS name from findings.
       std::string cms_name = "generic";
@@ -679,12 +679,13 @@ int main(int argc, char *argv[]) {
         }
       }
       std::string nuclei_out = cfg.output_dir + "/nuclei_findings.jsonl";
-      std::string cmd = "nuclei -u https://" + cfg.target + " -tags " +
-                        cms_name + ",cve" + " -severity critical,high,medium" +
-                        " -jsonl -output " + nuclei_out +
-                        " -silent 2>/dev/null";
-      int ret = system(cmd.c_str());
-      if (ret == 0 && std::filesystem::exists(nuclei_out) &&
+      auto proc = apex::run_command(
+          {"nuclei", "-u", "https://" + cfg.target, "-tags",
+           cms_name + ",cve", "-severity", "critical,high,medium", "-jsonl",
+           "-output", nuclei_out, "-silent"},
+          0, /*capture_stdout=*/false);
+      if (proc.spawned && proc.exit_code == 0 &&
+          std::filesystem::exists(nuclei_out) &&
           std::filesystem::file_size(nuclei_out) > 0) {
         std::cout << "  -> Nuclei findings: " << nuclei_out << "\n";
       } else {
@@ -699,8 +700,8 @@ int main(int argc, char *argv[]) {
                "vuln_recon.jsonl\n";
 
   // Phase 6: ZAP — generate config from recon and launch active scan.
-  if (!cfg.dry_run && system("command -v zap-cli >/dev/null 2>&1 || command -v "
-                             "zap.sh >/dev/null 2>&1") == 0) {
+  if (!cfg.dry_run &&
+      (apex::command_exists("zap-cli") || apex::command_exists("zap.sh"))) {
     std::cout << "\n[Phase 6] ZAP — Active scan with targeted policy\n";
 
     // Generate ZAP automation YAML from our findings.
@@ -823,18 +824,22 @@ int main(int argc, char *argv[]) {
       // Launch ZAP: prefer learned profile, fallback to generated config.
       std::string active_config =
           profile_config.empty() ? zap_config : profile_config;
-      std::string zap_cmd = "zap.sh -cmd -autorun " + active_config +
-                            " -config target.url=https://" + cfg.target +
-                            " -config api.disablekey=true 2>/dev/null";
-      if (system("command -v zap-cli >/dev/null 2>&1") == 0) {
-        zap_cmd = "zap-cli --zap-path $(which zap.sh) quick-scan -s xss,sqli "
-                  "https://" +
-                  cfg.target + " --output " + cfg.output_dir +
-                  "/zap-report.json 2>/dev/null";
-      }
       std::cout << "  -> Launching ZAP active scan...\n";
-      int ret = system(zap_cmd.c_str());
-      if (ret == 0) {
+      apex::ProcResult zap_proc;
+      if (apex::command_exists("zap-cli")) {
+        zap_proc = apex::run_command(
+            {"zap-cli", "quick-scan", "-s", "xss,sqli",
+             "https://" + cfg.target, "--output",
+             cfg.output_dir + "/zap-report.json"},
+            0, false);
+      } else {
+        zap_proc = apex::run_command(
+            {"zap.sh", "-cmd", "-autorun", active_config, "-config",
+             "target.url=https://" + cfg.target, "-config",
+             "api.disablekey=true"},
+            0, false);
+      }
+      if (zap_proc.spawned && zap_proc.exit_code == 0) {
         std::cout << "  -> ZAP scan complete: " << cfg.output_dir
                   << "/zap-report.json\n";
       } else {
@@ -1005,11 +1010,10 @@ int main(int argc, char *argv[]) {
               << "s. Ctrl+C to stop.\n";
     while (true) {
       std::this_thread::sleep_for(std::chrono::seconds(cfg.watch_interval));
+      auto watch_now = std::chrono::system_clock::to_time_t(
+          std::chrono::system_clock::now());
       std::cout << "\n[watch] Re-scanning at "
-                << std::put_time(
-                       std::localtime(
-                           &(*reinterpret_cast<const time_t *>(&elapsed))),
-                       "%H:%M:%S")
+                << std::put_time(std::localtime(&watch_now), "%H:%M:%S")
                 << "...\n";
       // Load baseline from previous run
       auto baseline = apex::load_baseline(prev_report);

@@ -33,6 +33,9 @@ public:
   /// Perform a GET request.
   Response get(const std::string &url);
 
+  /// GET without following redirects (so 3xx Location headers are observable).
+  Response get_no_follow(const std::string &url);
+
   /// GET with custom headers.
   Response get(const std::string &url,
                const std::vector<std::pair<std::string, std::string>> &headers);
@@ -46,13 +49,21 @@ public:
                 const std::string &content_type,
                 const std::vector<std::pair<std::string, std::string>> &headers);
 
+  /// POST WITHOUT following redirects — needed to observe the immediate 3xx
+  /// Location (e.g. auth-bypass login SQLi where the app 302-redirects to an
+  /// authenticated area vs back to the login page). The default post() follows
+  /// redirects, which erases that signal.
+  Response post_no_follow(const std::string &url, const std::string &body,
+                          const std::string &content_type);
+
   /// Total requests made.
   long request_count() const;
 
 private:
   Response do_request(const std::string &method, const std::string &url,
                       const std::string &body,
-                      const std::map<std::string, std::string> &headers);
+                      const std::map<std::string, std::string> &headers,
+                      bool follow_redirects = true);
   void rate_limit();
   std::string random_ua() const;
   void *acquire_handle();

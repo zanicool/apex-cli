@@ -3,6 +3,7 @@
 ///        SharePoint exposure, Exchange autodiscover, Atlassian/Jira/Confluence,
 ///        Slack workspace discovery, OAuth app enumeration, cloud naming intel.
 #include "scanner_base.hpp"
+#include "confirm.hpp"
 #include <set>
 
 ///
@@ -62,16 +63,15 @@ std::vector<Finding> scan_m365_tenant(const Config &cfg, HttpClient &http,
     if (realm.body.find("Federated") != std::string::npos) {
       findings.push_back({"M365 Federated Auth (ADFS/Okta)", "info", domain,
                           "Domain uses federated authentication — ADFS/Okta/PingFederate",
-                          "", "", ""});
+                          "", "", realm.body.substr(0, 160)});
     } else if (realm.body.find("Managed") != std::string::npos) {
       findings.push_back({"M365 Managed Auth (Cloud)", "info", domain,
-                          "Domain uses cloud-managed authentication", "", "", ""});
+                          "Domain uses cloud-managed authentication", "", "",
+                          realm.body.substr(0, 160)});
     }
-    // Check for legacy auth hints.
-    if (realm.body.find("NameSpaceType") != std::string::npos) {
-      findings.push_back({"M365 Namespace Enumerable", "low", domain,
-                          "GetUserRealm endpoint reveals auth configuration", "", "", ""});
-    }
+    // NOTE: the former "M365 Namespace Enumerable" finding was removed — the
+    // GetUserRealm endpoint returns NameSpaceType for EVERY domain, so it fired
+    // unconditionally and carried no target-specific evidence (pure noise).
   }
 
   // Check for user enumeration via autodiscover.
@@ -121,13 +121,15 @@ std::vector<Finding> scan_sharepoint(const Config &cfg, HttpClient &http,
   // Iterate over targets.
   for (const auto &url : sp_urls) {
     auto resp = http.get(url);
-    if (resp.status_code == 200 && resp.body.size() > 100) {
+    // A generic org name (e.g. "demo") resolves to SharePoint tenants owned by
+    // OTHER parties, so a bare 200/403 is not evidence about THIS target. Only
+    // report when the response ties the tenant back to the target's identity.
+    bool owned = confirm::asset_belongs_to_target(resp.body, domain, org);
+    if (resp.status_code == 200 && resp.body.size() > 100 && owned) {
       findings.push_back({"SharePoint Accessible", "medium", url,
-                          "SharePoint endpoint accessible — check guest/anonymous access",
-                          "", "", ""});
-    } else if (resp.status_code == 403) {
-      findings.push_back({"SharePoint Exists", "info", url,
-                          "SharePoint tenant exists (403 = auth required)", "", "", ""});
+                          "SharePoint endpoint accessible and attributable to "
+                          "target — check guest/anonymous access",
+                          "", "", resp.body.substr(0, 160)});
     }
   }
 
@@ -135,11 +137,12 @@ std::vector<Finding> scan_sharepoint(const Config &cfg, HttpClient &http,
   // Iterate over targets.
   for (const auto &site : {"public", "intranet", "hr", "wiki", "docs", "portal"}) {
     auto resp = http.get("https://" + org + ".sharepoint.com/sites/" + site);
-    if (resp.status_code == 200 && resp.body.size() > 500) {
+    if (resp.status_code == 200 && resp.body.size() > 500 &&
+        confirm::asset_belongs_to_target(resp.body, domain, org)) {
       findings.push_back({"SharePoint Site Public: " + std::string(site), "high",
                           "https://" + org + ".sharepoint.com/sites/" + site,
                           "SharePoint site '" + std::string(site) + "' publicly accessible",
-                          "", "", ""});
+                          "", "", resp.body.substr(0, 160)});
     }
   }
   return findings;
@@ -172,7 +175,11 @@ std::vector<Finding> scan_atlassian(const Config &cfg, HttpClient &http,
   // Iterate over targets.
   for (const auto &check : checks) {
     auto resp = http.get(check.url);
-    if (resp.status_code == 200 && resp.body.size() > 50) {
+    // "<org>.atlassian.net" for a generic org (e.g. "demo") belongs to some
+    // other tenant. Require the response to reference the target's identity
+    // before attributing it, and capture that as evidence.
+    if (resp.status_code == 200 && resp.body.size() > 50 &&
+        confirm::asset_belongs_to_target(resp.body, domain, org)) {
       std::string severity = "info";
       if (resp.body.find("displayName") != std::string::npos ||
           resp.body.find("emailAddress") != std::string::npos)
@@ -180,8 +187,9 @@ std::vector<Finding> scan_atlassian(const Config &cfg, HttpClient &http,
       else if (resp.body.find("key") != std::string::npos)
         severity = "medium";
       findings.push_back({check.name + " Exposed", severity, check.url,
-                          check.name + " accessible — may leak project/user info",
-                          "", "", ""});
+                          check.name + " accessible and attributable to target"
+                          " — may leak project/user info",
+                          "", "", resp.body.substr(0, 160)});
     }
   }
   return findings;
@@ -337,6 +345,24 @@ std::vector<Finding> scan_user_enum(const Config &cfg, HttpClient &http,
     domain = domain.substr(0, domain.find('/'));
 
   // Microsoft user enumeration via GetCredentialType.
+  //
+  // Gate first on whether the domain is even an M365 tenant. GetCredentialType
+  // returns IfExistsResult:1 for EVERY domain (including non-tenants like
+  // testfire.net), so the differential alone is a false positive. A domain is a
+  // real Entra/M365 tenant only when GetUserRealm reports a NameSpaceType of
+  // "Managed" or "Federated" ("Unknown" ⇒ not a tenant, so enumeration is moot).
+  auto realm = http.get(
+      "https://login.microsoftonline.com/getuserrealm.srf?login=user@" + domain);
+  bool is_m365_tenant = realm.status_code == 200 &&
+                        (realm.body.find("\"Managed\"") != std::string::npos ||
+                         realm.body.find("\"Federated\"") != std::string::npos ||
+                         realm.body.find("NameSpaceType\":\"Managed") !=
+                             std::string::npos ||
+                         realm.body.find("NameSpaceType\":\"Federated") !=
+                             std::string::npos);
+  if (!is_m365_tenant)
+    return findings;
+
   auto resp = http.post("https://login.microsoftonline.com/common/GetCredentialType",
                         R"({"Username":"nonexistent_user_xyz@)" + domain + R"("})",
                         "application/json");
@@ -347,10 +373,17 @@ std::vector<Finding> scan_user_enum(const Config &cfg, HttpClient &http,
     auto resp2 = http.post("https://login.microsoftonline.com/common/GetCredentialType",
                            R"({"Username":"admin@)" + domain + R"("})",
                            "application/json");
-    if (resp.body != resp2.body) {
+    // Enumeration is only real when the endpoint exposes a per-user existence
+    // signal (IfExistsResult) AND the two probes differ. Requiring the field
+    // avoids reporting on Microsoft's generic responses for domains that have
+    // no M365 tenant at all (which was an evidence-less false positive).
+    bool has_exists_signal =
+        resp.body.find("IfExistsResult") != std::string::npos ||
+        resp2.body.find("IfExistsResult") != std::string::npos;
+    if (has_exists_signal && resp.body != resp2.body) {
       findings.push_back({"M365 User Enumeration", "medium", domain,
                           "Microsoft login reveals whether accounts exist — aids password spraying",
-                          "", "", ""});
+                          "", "", resp2.body.substr(0, 160)});
     }
   }
 

@@ -8,32 +8,9 @@
 namespace apex {
 namespace {
 
-/// IDOR scanner — enumerate sequential/predictable IDs.
-std::vector<Finding> scan_idor(const Config &, HttpClient &http,
-                               const CrawlResult &crawl) {
-  std::vector<Finding> findings;
-  for (const auto &url : crawl.urls) {
-    for (const auto &p : crawl.params) {
-      if (p.url != url) continue;
-      // Check if param value looks numeric.
-      bool numeric = !p.name.empty() &&
-                     (p.name.find("id") != std::string::npos ||
-                      p.name.find("user") != std::string::npos ||
-                      p.name.find("account") != std::string::npos);
-      if (!numeric) continue;
-
-      auto resp1 = http.get(p.url + "?" + p.name + "=1");
-      auto resp2 = http.get(p.url + "?" + p.name + "=2");
-      if (resp1.status_code == 200 && resp2.status_code == 200 &&
-          resp1.body != resp2.body && !resp1.body.empty()) {
-        findings.push_back({"IDOR", "high", url,
-                            "Sequential ID enumeration possible", p.name,
-                            "1,2", ""});
-      }
-    }
-  }
-  return findings;
-}
+/// IDOR is implemented once, canonically, in detection_gap.cpp (with the
+/// authorization-boundary gate). The duplicate copy that used to live here was
+/// removed during dedup so exactly one hardened IDOR scanner runs.
 
 /// Error harvesting — trigger errors to reveal internal info.
 std::vector<Finding> scan_error_harvest(const Config &, HttpClient &http,
@@ -194,7 +171,8 @@ std::vector<Finding> scan_tech_adaptive(const Config &, HttpClient &http,
 
 std::vector<Scanner> register_elite_scanners() {
   return {
-      {"IDOR", scan_idor},
+      // NOTE: IDOR is registered once, canonically, in detection_gap.cpp.
+      // The duplicate elite copy was removed so a single hardened scanner runs.
       {"Error Harvesting", scan_error_harvest},
       {"Exploit Chain (SSRF→AWS)", scan_exploit_chain_ssrf},
       {"Scope Expansion", scan_scope_expansion},

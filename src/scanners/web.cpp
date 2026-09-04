@@ -144,16 +144,38 @@ std::vector<Finding> scan_open_redirect_advanced(const Config &, HttpClient &htt
                                             "return", "goto", "continue"};
 
   for (const auto &url : crawl.urls) {
+    // Strip any existing query string: appending "?param=payload" to a URL
+    // that already carries "?url=/home" produced "?url=/home?next=..." — the
+    // pre-existing param drove the redirect, so the finding was attributed to
+    // the wrong parameter with misleading evidence.
+    std::string clean = url.substr(0, url.find('?'));
     for (const auto &param : params) {
       for (const auto &payload : payloads) {
-        auto resp = http.get(url + "?" + param + "=" + payload);
+        auto resp = http.get(clean + "?" + param + "=" + payload);
         auto loc = resp.headers.find("Location");
-        if (loc != resp.headers.end() &&
-            loc->second.find("evil") != std::string::npos) {
-          findings.push_back({"Open Redirect (Advanced)", "medium", url,
-                              "Redirect bypass via " + param,
-                              param, payload, loc->second});
-          goto next_url;
+        if ((resp.status_code == 301 || resp.status_code == 302 ||
+             resp.status_code == 303 || resp.status_code == 307 ||
+             resp.status_code == 308) &&
+            loc != resp.headers.end()) {
+          // Confirm the Location actually points OFF-ORIGIN (a scheme-relative
+          // //evil.com, an absolute http(s)://evil, or a backslash bypass),
+          // not merely a same-site path that happens to contain "evil".
+          const std::string &l = loc->second;
+          bool off_origin =
+              l.rfind("//", 0) == 0 ||          // scheme-relative //evil.com
+              l.rfind("/\\", 0) == 0 ||         // /\evil.com bypass
+              l.rfind("https:", 0) == 0 ||      // absolute
+              l.rfind("http:", 0) == 0;
+          if (off_origin && l.find("evil") != std::string::npos) {
+            findings.push_back({"Open Redirect (Advanced)", "medium",
+                                clean + "?" + param + "=" + payload,
+                                "Off-origin redirect via " + param +
+                                    " (Location header)",
+                                param, payload,
+                                "Location: " + l + " (status " +
+                                    std::to_string(resp.status_code) + ")"});
+            goto next_url;
+          }
         }
       }
     }

@@ -58,10 +58,17 @@ std::vector<Finding> scan_auto_escalate(const Config &, HttpClient &http,
   for (const auto &url : crawl.urls) {
     auto targets = get_targets(crawl, url, "url");
     for (const auto &[tbase, param] : targets) {
+      auto baseline = http.get(tbase + "http://example.invalid/");
       for (const auto &internal : internal_targets) {
         auto resp = http.get(tbase + internal);
-        if (resp.status_code == 200 && resp.body.size() > 20 &&
-            resp.body.find("<!DOCTYPE") == std::string::npos) {
+        // Require the internal fetch to return a body that materially differs
+        // from the baseline (i.e. the SSRF actually reached something). A 200
+        // with generic content is not evidence.
+        bool differs = resp.body != baseline.body &&
+                       resp.body.size() > baseline.body.size() + 20;
+        if (resp.status_code == 200 && differs &&
+            resp.body.find("<!DOCTYPE") == std::string::npos &&
+            resp.body.find("<html") == std::string::npos) {
           findings.push_back({"Auto-Escalate", "critical", url,
                               "SSRF to internal service: " + internal,
                               param, internal, resp.body.substr(0, 100)});
@@ -84,10 +91,19 @@ std::vector<Finding> scan_blind_xss(const Config &cfg, HttpClient &http,
   for (const auto &url : crawl.urls) {
     auto targets = get_targets(crawl, url, "q");
     for (const auto &[base, param] : targets) {
-      http.get(base + payload);
-      findings.push_back({"Blind XSS", "info", url,
-                          "Blind XSS payload injected (check OOB server)",
-                          param, payload, ""});
+      auto resp = http.get(base + payload);
+      // Only report if the script payload reflects UNESCAPED — i.e. the sink
+      // is at least injectable. Injecting a blind payload and reporting it
+      // unconditionally is noise, not a finding; real confirmation needs an
+      // OOB callback which we cannot verify inline.
+      bool reflected_unescaped =
+          resp.body.find("<script src=" + callback) != std::string::npos;
+      if (reflected_unescaped) {
+        findings.push_back({"Blind XSS", "medium", url,
+                            "Blind XSS payload reflected unescaped "
+                            "(confirm via OOB callback)",
+                            param, payload, "<script src=" + callback});
+      }
     }
   }
   return findings;

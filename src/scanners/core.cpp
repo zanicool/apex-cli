@@ -3,6 +3,7 @@
 ///        headers, open redirect, SSTI, XXE, CSRF, CRLF, clickjacking,
 ///        cookie security, JS secrets, info disclosure, NoSQL, subdomain takeover.
 #include "scanner_base.hpp"
+#include "confirm.hpp"
 #include "../cms_detector.hpp"
 #include "../exploit.hpp"
 #include "../payloads.hpp"
@@ -117,10 +118,17 @@ std::vector<Finding> scan_xss(const Config &, HttpClient &http,
     payloads = {"<script>alert(1)</script>", "\"><img src=x onerror=alert(1)>"};
   for (const auto &url : crawl.urls) {
     auto targets = get_targets(crawl, url, "q");
-    for (const auto &payload : payloads) {
-      for (const auto &[base, param] : targets) {
-        auto resp = http.get(base + payload);
-        if (resp.body.find(payload) != std::string::npos) {
+    for (const auto &[base, param] : targets) {
+      // Baseline with a benign canary so we can prove the payload itself is
+      // what appears in the response (not pre-existing page content).
+      auto baseline = http.get(base + "apexbenign123");
+      for (const auto &payload : payloads) {
+        auto resp = http.get(base + url_encode(payload));
+        // Centralized invariant: confirmed reflected XSS requires an HTML
+        // breaker, unescaped reflection of the full payload, and baseline
+        // absence. A plain "javascript:alert(1)" reflected as body text, or an
+        // entity-encoded reflection, will not match. See confirm.hpp.
+        if (confirm::is_reflected_xss(payload, resp.body, baseline.body)) {
           findings.push_back({"XSS", "high", url, "Reflected XSS", param,
                               payload, payload});
           break;
@@ -139,13 +147,23 @@ std::vector<Finding> scan_ssrf(const Config &, HttpClient &http,
       "http://metadata.google.internal/computeMetadata/v1/",
       "http://127.0.0.1:80", "http://[::1]:80"};
   for (const auto &url : crawl.urls) {
-    for (const auto &payload : payloads) {
-      auto resp = http.get(url + "?url=" + payload);
-      if (resp.status_code == 200 &&
-          (resp.body.find("ami-id") != std::string::npos ||
-           resp.body.find("instance") != std::string::npos)) {
-        findings.push_back({"SSRF", "critical", url, "SSRF to cloud metadata",
-                            "url", payload, resp.body.substr(0, 200)});
+    auto targets = get_targets(crawl, url, "url");
+    for (const auto &[base, param] : targets) {
+      auto baseline = http.get(base + "http://example.invalid/");
+      for (const auto &payload : payloads) {
+        auto resp = http.get(base + payload);
+        // Confirm on real metadata markers absent from the baseline. These
+        // strings appear only in genuine metadata responses, not in the
+        // request URL, so reflection cannot cause a false positive.
+        static const std::vector<std::string> markers = {
+            "ami-id", "AccessKeyId", "SecretAccessKey", "instance-id"};
+        bool has = contains_any(resp.body, markers);
+        bool base_has = contains_any(baseline.body, markers);
+        if (resp.status_code == 200 && has && !base_has) {
+          findings.push_back({"SSRF", "critical", url, "SSRF to cloud metadata",
+                              param, payload, resp.body.substr(0, 200)});
+          break;
+        }
       }
     }
   }
@@ -155,16 +173,49 @@ std::vector<Finding> scan_ssrf(const Config &, HttpClient &http,
 std::vector<Finding> scan_cmdi(const Config &, HttpClient &http,
                                const CrawlResult &crawl) {
   std::vector<Finding> findings;
-  const std::vector<std::string> payloads = {
+  // Time-based payloads (blind CMDi) — fire on measurable delay.
+  const std::vector<std::string> time_payloads = {
       "; sleep 5", "| sleep 5", "$(sleep 5)", "`sleep 5`", "& timeout 5"};
+  // Output-based payloads: inject a command whose OUTPUT is a unique marker.
+  // `id` prints uid=/gid=, `echo` prints the marker. We confirm on output that
+  // is absent from a benign baseline (differential), so reflection alone of
+  // the payload text does not trigger a false positive.
+  const std::vector<std::pair<std::string, std::string>> out_payloads = {
+      {";id", "uid="},        {"|id", "uid="},       {"`id`", "uid="},
+      {"$(id)", "uid="},      {";echo apexcmi1337", "apexcmi1337"},
+      {"|echo apexcmi1337", "apexcmi1337"}};
+
   for (const auto &url : crawl.urls) {
-    for (const auto &payload : payloads) {
+    // Time-based: uses a synthetic cmd param (blind).
+    for (const auto &payload : time_payloads) {
       auto resp = http.get(url + "?cmd=" + payload);
       if (resp.duration.count() >= 4500) {
         findings.push_back({"CMDi", "critical", url, "Time-based CMDi", "cmd",
                             payload, std::to_string(resp.duration.count()) + "ms"});
         break;
       }
+    }
+    // Output-based: uses REAL params discovered for this URL, with a benign
+    // baseline so only genuine command output (not payload reflection) counts.
+    auto targets = get_targets(crawl, url, "host");
+    bool found = false;
+    for (const auto &[base, param] : targets) {
+      auto baseline = http.get(base + "apexbenignhost");
+      for (const auto &[payload, marker] : out_payloads) {
+        // Skip canaries whose marker is contained in the payload text
+        // (would confirm on reflection rather than execution).
+        if (payload.find(marker) != std::string::npos) continue;
+        auto resp = http.get(base + payload);
+        if (resp.body.find(marker) != std::string::npos &&
+            baseline.body.find(marker) == std::string::npos) {
+          findings.push_back({"CMDi", "critical", url,
+                              "Output-based command injection", param, payload,
+                              marker});
+          found = true;
+          break;
+        }
+      }
+      if (found) break;
     }
   }
   return findings;
@@ -180,9 +231,17 @@ std::vector<Finding> scan_lfi(const Config &, HttpClient &http,
   for (const auto &url : crawl.urls) {
     for (const auto &payload : payloads) {
       auto resp = http.get(url + "?file=" + payload);
-      if (contains_any(resp.body, indicators)) {
-        findings.push_back({"LFI", "high", url, "Local file inclusion",
-                            "file", payload, ""});
+      // Find which indicator matched and capture the leaked content as proof.
+      for (const auto &ind : indicators) {
+        auto pos = resp.body.find(ind);
+        if (pos == std::string::npos) continue;
+        std::string snippet = resp.body.substr(pos, 60);
+        auto nl = snippet.find('\n');
+        if (nl != std::string::npos) snippet = snippet.substr(0, nl);
+        findings.push_back({"LFI", "high", url,
+                            "Local file inclusion leaked a system file", "file",
+                            payload, "leaked file content: " + snippet});
+        break;
       }
     }
   }
@@ -225,17 +284,39 @@ std::vector<Finding> scan_open_redirect(const Config &, HttpClient &http,
   std::vector<Finding> findings;
   const std::vector<std::string> payloads = {
       "//evil.com", "https://evil.com", "/\\evil.com", "//evil%2Ecom"};
+  const std::vector<std::string> params = {"next", "url", "redirect",
+                                           "return", "dest", "goto"};
   for (const auto &url : crawl.urls) {
-    for (const auto &payload : payloads) {
-      auto resp = http.get(url + "?next=" + payload);
-      auto loc = resp.headers.find("Location");
-      if (loc != resp.headers.end() &&
-          loc->second.find("evil.com") != std::string::npos) {
-        findings.push_back({"Open Redirect", "medium", url,
-                            "Redirects to attacker domain", "next", payload,
-                            loc->second});
-        break;
+    // Strip any existing query so we don't append "?next=" after an existing
+    // "?url=/home" (which would make the pre-existing param drive the redirect
+    // and mis-attribute the finding).
+    std::string clean = url.substr(0, url.find('?'));
+    bool done = false;
+    for (const auto &param : params) {
+      for (const auto &payload : payloads) {
+        auto resp = http.get_no_follow(clean + "?" + param + "=" + payload);
+        auto loc = resp.headers.find("Location");
+        if ((resp.status_code == 301 || resp.status_code == 302 ||
+             resp.status_code == 303 || resp.status_code == 307 ||
+             resp.status_code == 308) &&
+            loc != resp.headers.end()) {
+          const std::string &l = loc->second;
+          // Must point OFF-ORIGIN, not to a same-site path containing "evil".
+          bool off_origin = l.rfind("//", 0) == 0 || l.rfind("/\\", 0) == 0 ||
+                            l.rfind("http:", 0) == 0 ||
+                            l.rfind("https:", 0) == 0;
+          if (off_origin && l.find("evil") != std::string::npos) {
+            findings.push_back({"Open Redirect", "medium",
+                                clean + "?" + param + "=" + payload,
+                                "Off-origin redirect via Location header",
+                                param, payload,
+                                "Location: " + l});
+            done = true;
+            break;
+          }
+        }
       }
+      if (done) break;
     }
   }
   return findings;
@@ -251,16 +332,16 @@ std::vector<Finding> scan_ssti(const Config &, HttpClient &http,
       {"<%=7*7%>", "49", "<%=9*9%>", "81"},
       {"#{7*7}", "49", "#{9*9}", "81"}};
   for (const auto &url : crawl.urls) {
-    for (const auto &p : crawl.params) {
-      if (p.url != url) continue;
+    auto targets = get_targets(crawl, url, "name");
+    for (const auto &[base, pname] : targets) {
       for (const auto &[payload_a, expect_a, payload_b, expect_b] : canaries) {
-        auto resp_a = http.get(p.url + "?" + p.name + "=" + payload_a);
+        auto resp_a = http.get(base + payload_a);
         if (resp_a.body.find(expect_a) == std::string::npos) continue;
-        auto resp_b = http.get(p.url + "?" + p.name + "=" + payload_b);
+        auto resp_b = http.get(base + payload_b);
         if (resp_b.body.find(expect_b) != std::string::npos) {
           findings.push_back({"SSTI", "high", url,
                               "Differential confirmed: " + expect_a + " AND " + expect_b,
-                              p.name, payload_a, expect_a});
+                              pname, payload_a, expect_a});
           break;
         }
       }
@@ -307,14 +388,33 @@ std::vector<Finding> scan_csrf(const Config &, HttpClient &,
 std::vector<Finding> scan_crlf(const Config &, HttpClient &http,
                                const CrawlResult &crawl) {
   std::vector<Finding> findings;
+  const std::string marker = "apexcrlf";
+  const std::string payload = "en%0d%0a" + marker + ":injected";
   for (const auto &url : crawl.urls) {
-    for (const auto &p : crawl.params) {
-      if (p.url != url) continue;
-      auto resp = http.get(p.url + "?" + p.name + "=%0d%0aInjected:header");
+    // Use get_targets so we match the URL's REAL parameters (the old
+    // `p.url != url` check never matched a URL that carried a query string).
+    auto targets = get_targets(crawl, url, "lang");
+    for (const auto &[base, param] : targets) {
+      // Baseline so a header that always exists isn't mistaken for injection.
+      auto baseline = http.get(base + "en");
+      auto resp = http.get(base + payload);
+      bool baseline_has = false;
+      for (const auto &[hn, hv] : baseline.headers)
+        if (hn.find(marker) != std::string::npos ||
+            hv.find(marker) != std::string::npos ||
+            hn.find("Injected") != std::string::npos)
+          baseline_has = true;
+      // A CRLF-split lands the injected token into a NEW response header —
+      // check both header name and value (real CRLF injection controls both).
       for (const auto &[hname, hval] : resp.headers) {
-        if (hval.find("Injected") != std::string::npos) {
-          findings.push_back({"CRLF", "medium", url, "CRLF injection",
-                              p.name, "%0d%0aInjected:header", hname});
+        bool hit = hname.find(marker) != std::string::npos ||
+                   hval.find(marker) != std::string::npos ||
+                   hname.find("Injected") != std::string::npos ||
+                   hval.find("injected") != std::string::npos;
+        if (hit && !baseline_has) {
+          findings.push_back({"CRLF", "medium", url,
+                              "CRLF injection splits response header", param,
+                              payload, hname + ": " + hval});
           break;
         }
       }

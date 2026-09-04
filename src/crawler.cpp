@@ -20,9 +20,22 @@ std::string base_url(const std::string &url) {
 }
 
 /// Resolve a relative URL against a base.
+/// Resolve a relative URL against a base. (Definition in apex namespace below.)
+} // namespace
+
 std::string resolve_url(const std::string &href, const std::string &page_url) {
   if (href.empty() || href[0] == '#') return "";
-  if (href.find("://") != std::string::npos) return href;
+  // Absolute URL only if "://" appears in the SCHEME position, i.e. before any
+  // '/', '?' or '#'. Otherwise a relative link whose query contains a URL —
+  // e.g. "/fetch?url=http://example.com" — would be wrongly treated as
+  // absolute and then dropped by the http-prefix filter (a real crawler bug
+  // that hid SSRF-style endpoints).
+  auto scheme = href.find("://");
+  if (scheme != std::string::npos) {
+    auto first_delim = href.find_first_of("/?#");
+    if (first_delim == std::string::npos || scheme < first_delim)
+      return href; // genuinely absolute
+  }
   if (href.size() >= 2 && href.substr(0, 2) == "//")
     return "https:" + href;
   std::string base = base_url(page_url);
@@ -33,6 +46,8 @@ std::string resolve_url(const std::string &href, const std::string &page_url) {
     return page_url.substr(0, last_slash + 1) + href;
   return base + "/" + href;
 }
+
+namespace {
 
 /// Extract href/src/action attributes from HTML.
 std::vector<std::string> extract_links(const std::string &body,
@@ -177,14 +192,23 @@ CrawlResult run_crawler(const Config &cfg, HttpClient &http,
         if (visited.count(link) || !in_scope(link, cfg)) continue;
         // Skip non-HTTP.
         if (link.find("http") != 0) continue;
-        // Skip static assets.
-        if (link.find(".css") != std::string::npos ||
-            link.find(".js") != std::string::npos ||
-            link.find(".png") != std::string::npos ||
-            link.find(".jpg") != std::string::npos ||
-            link.find(".gif") != std::string::npos ||
-            link.find(".svg") != std::string::npos ||
-            link.find(".woff") != std::string::npos)
+        // Skip static assets. Match the extension PRECISELY at the end of the
+        // path (optionally followed by ?query or #fragment). A naive substring
+        // check is wrong: ".js" is a substring of ".jsp", which silently
+        // dropped every .jsp page (login.jsp, index.jsp, ...) — the crawler
+        // then never found the login form or its auth-bypass SQLi.
+        auto has_ext = [&](const std::string &ext) {
+          // Path portion only (strip query/fragment).
+          std::string path = link;
+          auto qp = path.find_first_of("?#");
+          if (qp != std::string::npos) path = path.substr(0, qp);
+          if (path.size() < ext.size()) return false;
+          return path.compare(path.size() - ext.size(), ext.size(), ext) == 0;
+        };
+        if (has_ext(".css") || has_ext(".js") || has_ext(".png") ||
+            has_ext(".jpg") || has_ext(".jpeg") || has_ext(".gif") ||
+            has_ext(".svg") || has_ext(".woff") || has_ext(".woff2") ||
+            has_ext(".ico") || has_ext(".ttf"))
           continue;
         visited.insert(link);
         queue.push({link, depth + 1});

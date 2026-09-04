@@ -4,6 +4,13 @@ build/
 *.d
 apex-cli
 
+# Python
+__pycache__/
+*.pyc
+
+# Scan/tool output
+output/
+
 # IDE
 .vscode/
 .idea/

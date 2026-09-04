@@ -3,6 +3,7 @@
 ///        exposed internal services, forgotten subdomains, rogue cloud resources,
 ///        and data leakage indicators via DNS, HTTP, and public source analysis.
 #include "scanner_base.hpp"
+#include "confirm.hpp"
 #include <set>
 
 namespace apex {
@@ -312,10 +313,16 @@ std::vector<Finding> scan_orphaned_resources(const Config &cfg, HttpClient &http
   };
   for (const auto &[url, platform] : deploy_patterns) {
     auto resp = http.get(url);
-    if (resp.status_code == 200 && resp.body.size() > 200) {
+    // "<org>.herokuapp.com" / ".netlify.app" / ".azurewebsites.net" for a
+    // generic org name resolves to apps owned by OTHER people. A bare 200 is
+    // not evidence the deployment belongs to the target — require the response
+    // to reference the target's identity, and record it as evidence.
+    if (resp.status_code == 200 && resp.body.size() > 200 &&
+        confirm::asset_belongs_to_target(resp.body, domain, org)) {
       findings.push_back({"Shadow Deployment: " + platform, "medium", url,
-                          platform + " deployment found — possibly unmanaged/forgotten",
-                          "", "", ""});
+                          platform + " deployment attributable to target — "
+                          "possibly unmanaged/forgotten",
+                          "", "", resp.body.substr(0, 160)});
     }
   }
 

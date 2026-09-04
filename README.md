@@ -1,9 +1,17 @@
 # Apex CLI — C++ Edition
 
-![cpm score](https://img.shields.io/badge/cpm%20score-97%25-brightgreen)
-![maturity](https://img.shields.io/badge/maturity-level%205%20excellent-brightgreen)
+![detection](https://img.shields.io/badge/detection-7%2F7%20core%20classes-brightgreen)
+![precision](https://img.shields.io/badge/false--positive%20rate-11%25%20%40%20confidence%E2%89%A52-brightgreen)
 
-High-performance automated penetration testing tool with progressive maturity framework.
+High-performance automated penetration testing tool. Precision-first: findings
+are confirmed with differential baselines so the reportable set is signal, not
+noise.
+
+> **Measured on the bundled vulnerable target** (`tests/local_vuln_target.py`,
+> scored by `tests/precision_harness.py`): 234 scanners, **100% detection of
+> the 7 core vulnerability classes** (SQLi, XSS, CMDi, SSTI, LFI, Open Redirect,
+> SSRF) at an **11% false-positive rate** in the reportable tier
+> (`--confidence 2`). Run `python3 tests/precision_harness.py` to reproduce.
 
 ## Features
 
@@ -278,9 +286,27 @@ See [JSONL_FORMAT.md](docs/JSONL_FORMAT.md) for query examples.
 make check    # format + lint + build + test
 make format   # clang-format
 make lint     # cppcheck
-make test     # run tests
+make test     # run tests (incl. precision regression suite)
 make clean    # remove build artifacts
 ```
+
+### Precision measurement
+
+`tests/precision_harness.py` starts the bundled intentionally-vulnerable
+target (`tests/local_vuln_target.py`, bound to 127.0.0.1 only), runs a scan,
+and scores the findings against the KNOWN planted bugs — reporting detection
+rate and false-positive rate. This is how "is it accurate?" is answered with
+numbers rather than claims.
+
+```bash
+python3 tests/precision_harness.py                 # reportable tier (confidence>=2)
+python3 tests/precision_harness.py --confidence 0  # all findings
+```
+
+The unit suite (`make test`) also includes `test_precision.cpp`, which locks in
+the confirmation logic (evaluation-vs-reflection, XSS-breaker requirement,
+confidence capping, scope gate, relative-URL resolution) so the noise that was
+eliminated cannot silently return.
 
 ## License
 

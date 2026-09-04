@@ -21,12 +21,9 @@ std::vector<Finding> scan_blind_ssrf(const Config &cfg, HttpClient &http,
       http.post(url, "{\"url\":\"" + oob + "\"}", "application/json");
     }
   }
-  // Note: actual confirmation happens via OOB server callback.
-  if (!crawl.urls.empty()) {
-    findings.push_back({"Blind SSRF", "info", crawl.urls[0],
-                        "OOB SSRF payloads injected (check " + cfg.oob_server + ")",
-                        "", oob, ""});
-  }
+  // Confirmation is reported by the OOB-confirmed scanners (which poll the
+  // callback server). Emitting an unconditional "payloads injected" finding
+  // here was pure noise, so we no longer do so.
   return findings;
 }
 
@@ -57,10 +54,8 @@ std::vector<Finding> scan_blind_cmdi(const Config &cfg, HttpClient &http,
       }
     }
   }
-  if (!crawl.urls.empty()) {
-    findings.push_back({"Blind CMDi", "info", crawl.urls[0],
-                        "OOB CMDi payloads injected", "", "", ""});
-  }
+  // Confirmation via OOB callback poller (see oob_confirmed.cpp). No
+  // unconditional finding here.
   return findings;
 }
 
@@ -89,10 +84,7 @@ std::vector<Finding> scan_blind_sqli_oob(const Config &cfg, HttpClient &http,
       }
     }
   }
-  if (!crawl.urls.empty()) {
-    findings.push_back({"Blind SQLi OOB", "info", crawl.urls[0],
-                        "OOB SQLi payloads injected", "", "", ""});
-  }
+  // Confirmation via OOB callback poller (see oob_confirmed.cpp).
   return findings;
 }
 
@@ -123,11 +115,9 @@ std::vector<Finding> scan_log4shell(const Config &cfg, HttpClient &http,
       http.get(base + payload);
     }
   }
-  if (!crawl.urls.empty()) {
-    findings.push_back({"Log4Shell", "info", crawl.urls[0],
-                        "Log4Shell payloads injected (check OOB server)",
-                        "", payload, ""});
-  }
+  // A JNDI payload injected without a received LDAP/DNS callback is not
+  // evidence of Log4Shell. Confirmation is handled by the OOB-confirmed
+  // poller; no unconditional finding here.
   return findings;
 }
 

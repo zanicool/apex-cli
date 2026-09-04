@@ -40,6 +40,11 @@ std::vector<Scanner> get_scanners();
 std::vector<Finding> run_scanners(const Config &cfg, HttpClient &http,
                                   const CrawlResult &crawl);
 
+/// Drop universally out-of-scope / non-rewardable noise findings (missing
+/// email-DNS records, TLS/banner best-practices, fabricated info findings).
+/// Findings with concrete evidence are preserved. Exposed for unit testing.
+std::vector<Finding> apply_scope_gate(const std::vector<Finding> &findings);
+
 } // namespace apex
 
 #endif // APEX_SCANNER_HPP

@@ -58,14 +58,16 @@ std::vector<Finding> scan_s3_buckets(const Config &, HttpClient &http,
     std::string bucket = prefix + suffix;
     std::string url = "https://" + bucket + ".s3.amazonaws.com/";
     auto resp = http.get(url);
+    // Only a genuinely PUBLIC, listable bucket is a finding — and we capture
+    // the listing as evidence. A 403 merely means "a bucket with this guessed
+    // name exists somewhere" (almost always true for generic names like the
+    // target prefix) and says nothing about the target — reporting it produced
+    // a burst of evidence-less false positives, so that branch was removed.
     if (resp.status_code == 200 &&
         resp.body.find("<ListBucketResult") != std::string::npos) {
       findings.push_back({"S3 Bucket", "high", url,
-                          "Public S3 bucket listing: " + bucket, "", "", ""});
-    } else if (resp.status_code == 403) {
-      findings.push_back({"S3 Bucket", "info", url,
-                          "S3 bucket exists (no listing): " + bucket,
-                          "", "", ""});
+                          "Public S3 bucket listing: " + bucket, "", "",
+                          resp.body.substr(0, 200)});
     }
   }
   return findings;
@@ -166,12 +168,23 @@ std::vector<Finding> scan_dns_rebinding(const Config &, HttpClient &http,
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
   auto resp = http.get(crawl.urls[0]);
-  // If no Host header validation, DNS rebinding is possible.
-  auto resp2 = http.get(crawl.urls[0], {{"Host", "127.0.0.1"}});
-  if (resp2.status_code == 200 && resp2.body == resp.body) {
-    findings.push_back({"DNS Rebinding", "medium", crawl.urls[0],
-                        "No Host header validation (DNS rebinding possible)",
-                        "", "Host: 127.0.0.1", ""});
+  // Sending our OWN host back proves nothing — every single-host app returns
+  // the same body. Real DNS-rebinding relevance requires the server to also
+  // serve identical content for an ARBITRARY attacker-controlled Host (i.e. no
+  // Host allow-listing / vhost validation at all). Even then this is only an
+  // observation: exploiting DNS rebinding needs a victim browser + TTL trick
+  // we cannot perform here, so it is reported as INFO (never a Probable vuln).
+  auto attacker = http.get(crawl.urls[0], {{"Host", "attacker.example.com"}});
+  bool no_host_validation =
+      attacker.status_code == resp.status_code &&
+      attacker.status_code == 200 && attacker.body == resp.body;
+  if (no_host_validation) {
+    findings.push_back(
+        {"DNS Rebinding", "info", crawl.urls[0],
+         "No Host-header validation (arbitrary Host served identical content) "
+         "— DNS-rebinding precondition; not remotely confirmable",
+         "", "Host: attacker.example.com",
+         "arbitrary Host returned identical 200 response"});
   }
   return findings;
 }

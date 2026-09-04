@@ -2,33 +2,14 @@
 /// @brief Advanced injection: NoSQL, LDAP, XPath, Expression Language,
 ///        PHP object injection.
 #include "scanner_base.hpp"
+#include "confirm.hpp"
 
 namespace apex {
 namespace {
 
-/// NoSQL injection scanner.
-std::vector<Finding> scan_nosql(const Config &, HttpClient &http,
-                                const CrawlResult &crawl) {
-  std::vector<Finding> findings;
-  const std::vector<std::string> payloads = {
-      "{\"$ne\":\"\"}", "[$ne]=1", "{\"$gt\":\"\"}", "{\"$regex\":\".*\"}"};
-
-  for (const auto &url : crawl.urls) {
-    auto targets = get_targets(crawl, url);
-    for (const auto &[base, param] : targets) {
-      auto baseline = http.get(base + "test");
-      for (const auto &payload : payloads) {
-        auto resp = http.get(base + payload);
-        if (resp.body.size() > baseline.body.size() + 50) {
-          findings.push_back({"NoSQL Injection", "high", url,
-                              "Response size anomaly", param, payload, ""});
-          break;
-        }
-      }
-    }
-  }
-  return findings;
-}
+/// NoSQL Injection is implemented once, canonically, in detection_gap.cpp
+/// (indicator-confirmed, evidence-capturing). The duplicate copy that used to
+/// live here was removed during dedup so exactly one hardened scanner runs.
 
 /// LDAP injection scanner.
 std::vector<Finding> scan_ldap(const Config &, HttpClient &http,
@@ -86,23 +67,31 @@ std::vector<Finding> scan_el_injection(const Config &, HttpClient &http,
                                        const CrawlResult &crawl) {
   std::vector<Finding> findings;
   // Pairs: {payload_a, expect_a, payload_b, expect_b}
+  // Arithmetic canaries only. The Runtime/Math reflection canary was removed:
+  // its detect string ("java.lang.Runtime") is a substring of the payload, so
+  // an app that merely reflects input unescaped produced a false "critical".
   const std::vector<std::tuple<std::string, std::string, std::string, std::string>> canaries = {
       {"${7*7}", "49", "${8*8}", "64"},
-      {"#{7*7}", "49", "#{8*8}", "64"},
-      {"${T(java.lang.Runtime)}", "java.lang.Runtime", "${T(java.lang.Math)}", "java.lang.Math"}};
+      {"#{7*7}", "49", "#{8*8}", "64"}};
 
   for (const auto &url : crawl.urls) {
     auto targets = get_targets(crawl, url);
     for (const auto &[base, param] : targets) {
+      auto baseline = http.get(base + "apexbenign123");
       for (const auto &[payload_a, expect_a, payload_b, expect_b] : canaries) {
+        // Both differential canaries must prove EVALUATION (centralized
+        // invariant: result absent from payload, present in body, absent from
+        // baseline). This rejects apps that merely reflect the payload.
         auto resp_a = http.get(base + payload_a);
-        if (resp_a.body.find(expect_a) == std::string::npos) continue;
-        // First canary matched — now verify with second
+        if (!confirm::is_evaluation_match(payload_a, expect_a, resp_a.body,
+                                          baseline.body))
+          continue;
         auto resp_b = http.get(base + payload_b);
-        if (resp_b.body.find(expect_b) != std::string::npos) {
-          // Both canaries confirmed — real injection
+        if (confirm::is_evaluation_match(payload_b, expect_b, resp_b.body,
+                                         baseline.body)) {
           findings.push_back({"EL Injection", "critical", url,
-                              "Differential canary confirmed: " + expect_a + " AND " + expect_b,
+                              "Differential canary confirmed: " + expect_a +
+                                  " AND " + expect_b,
                               param, payload_a, expect_a});
           break;
         }
@@ -137,7 +126,9 @@ std::vector<Finding> scan_php_object(const Config &, HttpClient &http,
 
 std::vector<Scanner> register_injection_scanners() {
   return {
-      {"NoSQL Injection", scan_nosql},
+      // NOTE: NoSQL Injection is registered once, canonically, in
+      // detection_gap.cpp. The duplicate injection-module copy was removed so a
+      // single hardened scanner runs.
       {"LDAP Injection", scan_ldap},
       {"XPath Injection", scan_xpath},
       {"EL Injection", scan_el_injection},

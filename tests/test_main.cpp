@@ -81,6 +81,10 @@ void test_http_dry_run() {
 
 } // namespace
 
+// Defined in test_precision.cpp — regression tests locking in the precision
+// (false-positive-reduction) fixes.
+void run_precision_tests();
+
 int main() {
   std::cout << "Running tests...\n";
   test_safe_name();
@@ -88,6 +92,7 @@ int main() {
   test_scanner_registry();
   test_dry_run_no_network();
   test_http_dry_run();
+  run_precision_tests();
   std::cout << "\nAll tests passed.\n";
   return 0;
 }
