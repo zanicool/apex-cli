@@ -18,6 +18,7 @@ Planted vulnerabilities (mirrors tests/vulnerability_battery vuln-web:8081):
 """
 import html
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
 
 HOST, PORT = "127.0.0.1", 8091
@@ -39,13 +40,16 @@ class Handler(BaseHTTPRequestHandler):
         pass  # quiet
 
     def _send(self, code, body, headers=None):
-        self.send_response(code)
-        self.send_header("Content-Type", "text/html")
-        for k, v in (headers or {}).items():
-            self.send_header(k, v)
-        self.end_headers()
-        if body is not None:
-            self.wfile.write(body.encode("utf-8", "replace"))
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "text/html")
+            for k, v in (headers or {}).items():
+                self.send_header(k, v)
+            self.end_headers()
+            if body is not None:
+                self.wfile.write(body.encode("utf-8", "replace"))
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # client (scanner) closed early — harmless
 
     def do_GET(self):
         u = urlparse(self.path)
@@ -145,9 +149,14 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, "not found")
 
 
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
 if __name__ == "__main__":
     import sys
     port = int(sys.argv[1]) if len(sys.argv) > 1 else PORT
     print("vuln-web local test target on http://%s:%d (Ctrl+C to stop)"
           % (HOST, port))
-    HTTPServer((HOST, port), Handler).serve_forever()
+    ThreadedHTTPServer((HOST, port), Handler).serve_forever()
