@@ -110,120 +110,110 @@ Response HttpClient::do_request(const std::string& method, const std::string& ur
     return resp;
   }
 
-  // Check cache first (GET only)
-  std::string ckey = cache_key(method, url, extra_headers);
-  if (auto* cached = cache_lookup(ckey)) {
+  const std::string ckey = cache_key(method, url, extra_headers);
+  if (auto cached = cache_lookup(ckey)) {
     return *cached;
   }
 
-  rate_limit();
+  constexpr int kMaxRetries = 3;
+  int backoff_ms = 500;
 
-  CURL* curl = static_cast<CURL*>(acquire_handle());
-  if (!curl) {
-    resp.error = "curl handle not available";
-    return resp;
-  }
+  for (int attempt = 0; attempt <= kMaxRetries; ++attempt) {
+    resp = Response{};
+    resp.url = url;
+    rate_limit();
 
-  std::string resp_body;
-  std::map<std::string, std::string> resp_headers;
-
-  curl_easy_reset(curl);
-  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp_body);
-  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_callback);
-  curl_easy_setopt(curl, CURLOPT_HEADERDATA, &resp_headers);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(cfg_.timeout));
-  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
-  curl_easy_setopt(curl, CURLOPT_MAXFILESIZE, 5L * 1024 * 1024); // 5MB max response
-  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-  curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
-  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-  curl_easy_setopt(curl, CURLOPT_USERAGENT, random_ua().c_str());
-  // Connection reuse and DNS cache.
-  curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
-  curl_easy_setopt(curl, CURLOPT_DNS_CACHE_TIMEOUT, 300L);
-
-  if (!cfg_.proxy.empty()) {
-    curl_easy_setopt(curl, CURLOPT_PROXY, cfg_.proxy.c_str());
-  }
-
-  if (method == "POST") {
-    curl_easy_setopt(curl, CURLOPT_POST, 1L);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
-  }
-
-  struct curl_slist* headers_list = nullptr;
-  for (const auto& [key, val] : extra_headers) {
-    std::string h = key + ": " + val;
-    headers_list = curl_slist_append(headers_list, h.c_str());
-  }
-
-  // Fix 1: Auto-inject auth cookie/header on every request
-  if (!cfg_.auth_cookie.empty()) {
-    std::string h = "Cookie: " + cfg_.auth_cookie;
-    headers_list = curl_slist_append(headers_list, h.c_str());
-  }
-  if (!cfg_.auth_header.empty()) {
-    std::string h = "Authorization: " + cfg_.auth_header;
-    headers_list = curl_slist_append(headers_list, h.c_str());
-  }
-
-  if (headers_list) {
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers_list);
-  }
-
-  auto start = std::chrono::steady_clock::now();
-  CURLcode res = curl_easy_perform(curl);
-  auto end = std::chrono::steady_clock::now();
-
-  resp.duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-
-  if (res != CURLE_OK) {
-    resp.error = curl_easy_strerror(res);
-  } else {
-    long code = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
-    resp.status_code = static_cast<int>(code);
-    resp.body = std::move(resp_body);
-    resp.headers = std::move(resp_headers);
-    resp.size = resp.body.size();
-  }
-
-  if (headers_list) {
-    curl_slist_free_all(headers_list);
-  }
-  release_handle(curl);
-  ++req_count_;
-
-  // Store in cache (successful GET only)
-  if (resp.status_code >= 200 && resp.status_code < 400) {
-    cache_store(ckey, resp);
-  }
-
-  // Adaptive rate limiting: back off on 429/503, retry up to 3 times
-  if (resp.status_code == 429 || resp.status_code == 503) {
-    static std::atomic<int> backoff_ms{500};
-    int current_backoff = backoff_ms.load();
-
-    for (int retry = 0; retry < 3; ++retry) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(current_backoff));
-      current_backoff *= 2;                                  // Exponential backoff
-      if (current_backoff > 10000) current_backoff = 10000;  // Cap at 10s
-
-      // Increase global rate limit
-      backoff_ms.store(std::min(current_backoff, 5000));
-
-      // Retry the request
-      auto retry_resp = do_request(method, url, body, extra_headers);
-      if (retry_resp.status_code != 429 && retry_resp.status_code != 503) {
-        return retry_resp;
-      }
+    CURL* curl = static_cast<CURL*>(acquire_handle());
+    if (!curl) {
+      resp.error = "curl handle not available";
+      return resp;
     }
-    // After 3 retries still blocked — slow down permanently for this scan
-    backoff_ms.store(std::min(backoff_ms.load() * 2, 10000));
+
+    std::string resp_body;
+    std::map<std::string, std::string> resp_headers;
+    const std::string user_agent = random_ua();
+
+    curl_easy_reset(curl);
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp_body);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_callback);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &resp_headers);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(cfg_.timeout));
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
+    curl_easy_setopt(curl, CURLOPT_MAXFILESIZE, 5L * 1024 * 1024); // 5MB max response
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, user_agent.c_str());
+    // Connection reuse and DNS cache.
+    curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
+    curl_easy_setopt(curl, CURLOPT_DNS_CACHE_TIMEOUT, 300L);
+
+    if (!cfg_.proxy.empty()) {
+      curl_easy_setopt(curl, CURLOPT_PROXY, cfg_.proxy.c_str());
+    }
+
+    if (method == "POST") {
+      curl_easy_setopt(curl, CURLOPT_POST, 1L);
+      curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
+      curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
+    }
+
+    struct curl_slist* headers_list = nullptr;
+    for (const auto& [key, val] : extra_headers) {
+      const std::string h = key + ": " + val;
+      headers_list = curl_slist_append(headers_list, h.c_str());
+    }
+
+    if (!cfg_.auth_cookie.empty()) {
+      const std::string h = "Cookie: " + cfg_.auth_cookie;
+      headers_list = curl_slist_append(headers_list, h.c_str());
+    }
+    if (!cfg_.auth_header.empty()) {
+      const std::string h = "Authorization: " + cfg_.auth_header;
+      headers_list = curl_slist_append(headers_list, h.c_str());
+    }
+
+    if (headers_list) {
+      curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers_list);
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    const CURLcode result = curl_easy_perform(curl);
+    const auto end = std::chrono::steady_clock::now();
+    resp.duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+    if (result != CURLE_OK) {
+      resp.error = curl_easy_strerror(result);
+    } else {
+      long code = 0;
+      curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+      resp.status_code = static_cast<int>(code);
+      resp.body = std::move(resp_body);
+      resp.headers = std::move(resp_headers);
+      resp.size = resp.body.size();
+    }
+
+    if (headers_list) {
+      curl_slist_free_all(headers_list);
+    }
+    release_handle(curl);
+    ++req_count_;
+
+    const bool throttled = resp.status_code == 429 || resp.status_code == 503;
+    if (!throttled) {
+      if (resp.status_code >= 200 && resp.status_code < 400) {
+        cache_store(ckey, resp);
+      }
+      return resp;
+    }
+
+    if (attempt < kMaxRetries) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
+      backoff_ms = std::min(backoff_ms * 2, 10000);
+    }
   }
 
   return resp;
@@ -249,22 +239,20 @@ void HttpClient::rate_limit() {
 // ============================================================
 
 std::string HttpClient::cache_key(const std::string& method, const std::string& url,
-                                  const std::map<std::string, std::string>& /*headers*/) const {
-  // Only cache GET requests (POST/PUT are state-changing)
-  if (method != "GET") return "";
-  // Key = URL (headers usually don't change between modules)
+                                  const std::map<std::string, std::string>& headers) const {
+  // Cache only plain discovery GETs. Active probes must always reach the target.
+  if (method != "GET" || !headers.empty()) return "";
+  if (url.find_first_of("?#%\"'<>[]{}()|\\^`;$") != std::string::npos) return "";
   return url;
 }
 
-Response* HttpClient::cache_lookup(const std::string& key) {
-  if (key.empty()) return nullptr;
+std::optional<Response> HttpClient::cache_lookup(const std::string& key) {
+  if (key.empty()) return std::nullopt;
   std::lock_guard<std::mutex> lock(cache_mu_);
   auto it = response_cache_.find(key);
-  if (it != response_cache_.end()) {
-    cache_hits_++;
-    return &it->second;
-  }
-  return nullptr;
+  if (it == response_cache_.end()) return std::nullopt;
+  ++cache_hits_;
+  return it->second;
 }
 
 void HttpClient::cache_store(const std::string& key, const Response& resp) {

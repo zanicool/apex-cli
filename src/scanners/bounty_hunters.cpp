@@ -11,32 +11,39 @@
 namespace apex {
 namespace {
 
-/// Password reset poisoning — inject Host header to steal reset tokens.
+/// Password reset poisoning — confirm that attacker-controlled host data affects
+/// the generated reset response, rather than treating an ignored header as proof.
 std::vector<Finding> scan_password_reset_poison(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
-  std::string base = base_url_from(crawl.urls[0]);
+  const std::string base = base_url_from(crawl.urls[0]);
+  const std::vector<std::string> paths = {"/api/password-reset", "/api/forgot-password", "/forgot-password",
+                                          "/api/auth/forgot", "/api/v1/auth/reset", "/auth/reset-password",
+                                          "/api/users/reset-password", "/password/email"};
+  const std::string payload = R"({"email":"apex-reset-test@example.invalid"})";
 
-  const std::vector<std::string> reset_paths = {"/api/password-reset",       "/api/forgot-password", "/forgot-password",
-                                                "/api/auth/forgot",          "/api/v1/auth/reset",   "/auth/reset-password",
-                                                "/api/users/reset-password", "/password/email"};
+  auto attacker_host_visible = [](const Response& response) {
+    if (response.body.find("evil.com") != std::string::npos) return true;
+    for (const auto& [key, value] : response.headers) {
+      std::string lower = key;
+      std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+      if ((lower == "location" || lower == "content-location" || lower == "link") &&
+          value.find("evil.com") != std::string::npos) return true;
+    }
+    return false;
+  };
 
-  for (const auto& path : reset_paths) {
-    // Test with manipulated Host header
-    auto resp = http.post(base + path, R"({"email":"test@test.com"})", "application/json",
-                          {{"Host", "evil.com"}, {"X-Forwarded-Host", "evil.com"}});
-    if (resp.status_code == 200 || resp.status_code == 202 || resp.status_code == 204) {
-      // Check if server accepted the poisoned host
-      if (resp.body.find("error") == std::string::npos && resp.body.find("invalid") == std::string::npos) {
-        // Verify it actually processes the request (not just a 200 on GET)
-        auto normal = http.post(base + path, R"({"email":"test@test.com"})", "application/json");
-        if (normal.status_code == resp.status_code) {
-          findings.push_back({"Password Reset Poisoning", "high", base + path,
-                              "Host header accepted in password reset — "
-                              "attacker can steal reset tokens via X-Forwarded-Host",
-                              "Host/X-Forwarded-Host", "evil.com", "Both requests returned " + std::to_string(resp.status_code)});
-        }
-      }
+  for (const auto& path : paths) {
+    const auto normal = http.post(base + path, payload, "application/json");
+    const auto poisoned = http.post(base + path, payload, "application/json",
+                                    {{"Host", "evil.com"}, {"X-Forwarded-Host", "evil.com"}});
+    const bool accepted = poisoned.status_code == 200 || poisoned.status_code == 202 || poisoned.status_code == 204;
+    if (accepted && attacker_host_visible(poisoned) && !attacker_host_visible(normal)) {
+      findings.push_back({"Password Reset Poisoning", "high", base + path,
+                          "Attacker-controlled host appeared only in the poisoned reset response",
+                          "Host/X-Forwarded-Host", "evil.com",
+                          "Poisoned response contains evil.com; normal response does not"});
+      break;
     }
   }
   return findings;
@@ -161,56 +168,92 @@ std::vector<Finding> scan_rate_limit_bypass(const Config&, HttpClient& http, con
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
-  // Find login endpoint
+  auto lower_copy = [](std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+  };
+  auto is_auth_rejection = [&](const Response& response) {
+    if (response.status_code != 200 && response.status_code != 400 &&
+        response.status_code != 401 && response.status_code != 403 &&
+        response.status_code != 422) {
+      return false;
+    }
+    const std::string body = lower_copy(response.body);
+    const std::vector<std::string> indicators = {
+        "invalid", "incorrect", "credential", "password", "unauthorized",
+        "authentication", "login", "sign in", "failed", "error"};
+    return std::any_of(indicators.begin(), indicators.end(),
+                       [&](const std::string& marker) { return body.find(marker) != std::string::npos; });
+  };
+  auto same_response = [](const Response& lhs, const Response& rhs) {
+    return lhs.status_code == rhs.status_code && lhs.body == rhs.body;
+  };
+
+  // A wildcard route or generic proxy response must not make a guessed path an
+  // authentication endpoint.
+  const auto missing = http.post(base + "/apex-auth-probe-not-found-7f3c9d",
+                                 R"({"email":"a@b.com","password":"x"})", "application/json");
+
   const std::vector<std::string> login_paths = {"/api/login",         "/api/auth/login", "/login",
                                                 "/api/v1/auth/login", "/auth/signin",    "/api/signin"};
 
   std::string login_url;
+  Response initial_failure;
   for (const auto& path : login_paths) {
-    auto r = http.post(base + path, R"({"email":"a@b.com","password":"x"})", "application/json");
-    if (r.status_code != 404 && r.status_code != 405) {
+    auto response = http.post(base + path, R"({"email":"a@b.com","password":"x"})", "application/json");
+    if (is_auth_rejection(response) && !same_response(response, missing)) {
       login_url = base + path;
+      initial_failure = std::move(response);
       break;
     }
   }
   if (login_url.empty()) return findings;
 
-  // Bypass techniques
   struct Bypass {
     std::string name;
     std::vector<std::pair<std::string, std::string>> headers;
   };
 
-  std::vector<Bypass> bypasses = {
+  const std::vector<Bypass> bypasses = {
       {"X-Forwarded-For rotation", {{"X-Forwarded-For", "127.0.0.1"}}},
       {"X-Original-URL", {{"X-Original-URL", login_url}}},
       {"X-Forwarded-For + X-Real-IP", {{"X-Forwarded-For", "1.2.3.4"}, {"X-Real-IP", "1.2.3.4"}}},
-      {"Case variation", {}},  // We'll modify the URL
+      {"Case variation", {}},
   };
 
-  // First, trigger rate limit
-  int rate_limited = 0;
+  int rate_limited_after = -1;
+  int valid_failures = 0;
   for (int i = 0; i < 15; ++i) {
-    auto r = http.post(login_url, R"({"email":"a@b.com","password":"wrong"})", "application/json");
-    if (r.status_code == 429) {
-      rate_limited = i;
+    auto response = http.post(login_url, R"({"email":"a@b.com","password":"wrong"})", "application/json");
+    if (response.status_code == 429) {
+      rate_limited_after = i;
       break;
     }
+    if (!is_auth_rejection(response)) break;
+    ++valid_failures;
   }
 
-  if (rate_limited == 0) {
-    // No rate limiting at all
-    findings.push_back({"No Rate Limiting on Login", "medium", login_url, "15 failed login attempts without rate limiting", "", "",
-                        "No 429 response after 15 attempts"});
+  if (rate_limited_after < 0) {
+    if (valid_failures == 15) {
+      findings.push_back({"No Rate Limiting on Login", "medium", login_url,
+                          "15 semantically valid authentication failures completed without throttling", "", "",
+                          "Initial HTTP " + std::to_string(initial_failure.status_code) +
+                              "; 15 repeated auth failures; no HTTP 429"});
+    }
     return findings;
   }
 
-  // Try bypasses after being rate limited
+  // A bypass is confirmed only if the server resumes processing the invalid
+  // credentials, not merely because the retry failed or returned another error.
   for (const auto& bypass : bypasses) {
-    auto r = http.post(login_url, R"({"email":"a@b.com","password":"wrong"})", "application/json", bypass.headers);
-    if (r.status_code != 429) {
-      findings.push_back({"Rate Limit Bypass", "high", login_url, "Rate limiting bypassed via " + bypass.name, "", bypass.name,
-                          "Got " + std::to_string(r.status_code) + " instead of 429 after bypass"});
+    auto response = http.post(login_url, R"({"email":"a@b.com","password":"wrong"})",
+                              "application/json", bypass.headers);
+    if (response.status_code != 429 && is_auth_rejection(response)) {
+      findings.push_back({"Rate Limit Bypass", "high", login_url,
+                          "Rate limiting bypassed via " + bypass.name, "", bypass.name,
+                          "After HTTP 429, bypass request reached authentication handling with HTTP " +
+                              std::to_string(response.status_code)});
       break;
     }
   }

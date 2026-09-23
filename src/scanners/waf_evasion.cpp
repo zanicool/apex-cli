@@ -139,12 +139,16 @@ std::vector<Finding> scan_waf_detect(const Config&, HttpClient& http, const Craw
   if (crawl.urls.empty()) return findings;
   std::string base = base_url_from(crawl.urls[0]);
 
+  // Absence of a signature is meaningful only when the target is reachable.
+  const auto baseline = http.get(base);
+  if (baseline.status_code < 200 || baseline.status_code >= 500) return findings;
+
   std::string waf = detect_waf(http, base);
   if (waf.empty()) {
-    findings.push_back(Finding{"No WAF Detected", "info", base,
-                               "No Web Application Firewall detected. "
-                               "Injection payloads can be sent without evasion.",
-                               "", "", ""});
+    findings.push_back(Finding{"No WAF Signature Observed", "info", base,
+                               "No Web Application Firewall signature was observed; this does not prove a WAF is absent.",
+                               "", "", "Baseline HTTP " + std::to_string(baseline.status_code) +
+                                           " succeeded before active WAF probing"});
   } else {
     findings.push_back(Finding{"WAF Detected — " + waf, "info", base,
                                "Web Application Firewall identified: " + waf +

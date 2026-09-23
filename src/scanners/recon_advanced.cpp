@@ -79,7 +79,10 @@ std::vector<Finding> scan_staging_env(const Config& cfg, HttpClient& http, const
     }
 
     // Also require status differs from baseline to avoid FP on sites that are always 200.
-    if (has_indicator || resp.status_code != baseline.status_code) {
+    // Only trust the status-diff signal if the baseline request itself succeeded (200) —
+    // otherwise a failed/blocked baseline (status 0, etc.) would make every working
+    // subdomain look "different" and trigger false positives.
+    if (has_indicator || (baseline_200 && resp.status_code != baseline.status_code)) {
       findings.push_back({"Staging Environment Found", "medium", "https://" + subdomain,
                           prefix.substr(0, prefix.size() - 1) + " environment publicly accessible", "", subdomain,
                           std::to_string(resp.body.size()) + " bytes"});

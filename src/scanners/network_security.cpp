@@ -38,6 +38,22 @@ std::string run_cmd(const std::string& cmd) {
   return result;
 }
 
+/// Single-quote a string for safe interpolation into a shell command,
+/// escaping any embedded single quotes. Without this, a domain containing
+/// shell metacharacters (e.g. from a redirect chain) could inject arbitrary
+/// commands into the popen() calls below.
+std::string shell_quote(const std::string& s) {
+  std::string out = "'";
+  for (char c : s) {
+    if (c == '\'')
+      out += "'\\''";
+    else
+      out += c;
+  }
+  out += "'";
+  return out;
+}
+
 /// TLS/SSL analysis — check certificate validity, weak ciphers, protocols.
 /// Scanner implementation.
 /// @brief Scan for tls vulnerabilities.
@@ -55,7 +71,8 @@ std::vector<Finding> scan_tls(const Config& cfg, HttpClient& http, const CrawlRe
   if (domain.find(':') != std::string::npos) domain = domain.substr(0, domain.find(':'));
 
   // Use openssl to check certificate and protocols.
-  std::string cert_info = run_cmd("echo | openssl s_client -connect " + domain + ":443 -servername " + domain +
+  std::string qdomain = shell_quote(domain);
+  std::string cert_info = run_cmd("echo | openssl s_client -connect " + qdomain + ":443 -servername " + qdomain +
                                   " 2>/dev/null | openssl x509 -noout -dates -subject -issuer 2>/dev/null");
 
   if (cert_info.empty()) {
@@ -84,7 +101,7 @@ std::vector<Finding> scan_tls(const Config& cfg, HttpClient& http, const CrawlRe
 
   // Iterate over targets.
   for (const auto& p : weak_protos) {
-    std::string result = run_cmd("echo | openssl s_client -connect " + domain + ":443 " + p.flag + " 2>&1");
+    std::string result = run_cmd("echo | openssl s_client -connect " + qdomain + ":443 " + p.flag + " 2>&1");
     if (result.find("CONNECTED") != std::string::npos && result.find("error") == std::string::npos &&
         result.find("no protocols") == std::string::npos) {
       findings.push_back({"Weak TLS Protocol: " + std::string(p.name), p.severity, domain,
@@ -94,7 +111,7 @@ std::vector<Finding> scan_tls(const Config& cfg, HttpClient& http, const CrawlRe
 
   // Check for weak ciphers.
   const std::vector<std::string> weak_ciphers = {"RC4", "DES", "NULL", "EXPORT", "MD5"};
-  std::string ciphers = run_cmd("echo | openssl s_client -connect " + domain + ":443 -cipher ALL 2>/dev/null | grep 'Cipher'");
+  std::string ciphers = run_cmd("echo | openssl s_client -connect " + qdomain + ":443 -cipher ALL 2>/dev/null | grep 'Cipher'");
   // Iterate over targets.
   for (const auto& wc : weak_ciphers) {
     if (ciphers.find(wc) != std::string::npos) {
@@ -126,8 +143,10 @@ std::vector<Finding> scan_email_security(const Config& cfg, HttpClient&, const C
   if (domain.find('/') != std::string::npos) domain = domain.substr(0, domain.find('/'));
   if (domain.find(':') != std::string::npos) domain = domain.substr(0, domain.find(':'));
 
+  std::string qdomain = shell_quote(domain);
+
   // SPF check.
-  std::string spf = run_cmd("dig +short TXT " + domain + " 2>/dev/null | grep spf");
+  std::string spf = run_cmd("dig +short TXT " + qdomain + " 2>/dev/null | grep spf");
   if (spf.empty()) {
     findings.push_back({"Missing SPF Record", "medium", domain, "No SPF record — email spoofing possible", "", "", ""});
   } else {
@@ -141,7 +160,7 @@ std::vector<Finding> scan_email_security(const Config& cfg, HttpClient&, const C
   }
 
   // DMARC check.
-  std::string dmarc = run_cmd("dig +short TXT _dmarc." + domain + " 2>/dev/null");
+  std::string dmarc = run_cmd("dig +short TXT " + shell_quote("_dmarc." + domain) + " 2>/dev/null");
   if (dmarc.empty() || dmarc.find("v=DMARC") == std::string::npos) {
     findings.push_back({"Missing DMARC Record", "medium", domain, "No DMARC record — no email authentication policy", "", "", ""});
   } else {
@@ -157,7 +176,7 @@ std::vector<Finding> scan_email_security(const Config& cfg, HttpClient&, const C
   bool dkim_found = false;
   // Iterate over targets.
   for (const auto& sel : selectors) {
-    std::string dkim = run_cmd("dig +short TXT " + sel + "._domainkey." + domain + " 2>/dev/null");
+    std::string dkim = run_cmd("dig +short TXT " + shell_quote(sel + "._domainkey." + domain) + " 2>/dev/null");
     if (dkim.find("v=DKIM") != std::string::npos || dkim.find("p=") != std::string::npos) {
       dkim_found = true;
       findings.push_back({"DKIM Record", "info", domain, "DKIM found at selector: " + sel, "", "", ""});
@@ -169,7 +188,7 @@ std::vector<Finding> scan_email_security(const Config& cfg, HttpClient&, const C
   }
 
   // MTA-STS check.
-  std::string mta_sts = run_cmd("dig +short TXT _mta-sts." + domain + " 2>/dev/null");
+  std::string mta_sts = run_cmd("dig +short TXT " + shell_quote("_mta-sts." + domain) + " 2>/dev/null");
   if (mta_sts.empty() || mta_sts.find("v=STSv1") == std::string::npos) {
     findings.push_back({"Missing MTA-STS", "info", domain, "No MTA-STS — email transport not enforcing TLS", "", "", ""});
   }
@@ -187,9 +206,11 @@ std::vector<Finding> scan_dns_security(const Config& cfg, HttpClient&, const Cra
   if (domain.find('/') != std::string::npos) domain = domain.substr(0, domain.find('/'));
   if (domain.find(':') != std::string::npos) domain = domain.substr(0, domain.find(':'));
 
+  std::string qdomain = shell_quote(domain);
+
   // DNSSEC check.
-  std::string dnssec = run_cmd("dig +dnssec +short " + domain + " 2>/dev/null");
-  std::string rrsig = run_cmd("dig +short RRSIG " + domain + " 2>/dev/null");
+  std::string dnssec = run_cmd("dig +dnssec +short " + qdomain + " 2>/dev/null");
+  std::string rrsig = run_cmd("dig +short RRSIG " + qdomain + " 2>/dev/null");
   if (rrsig.empty()) {
     findings.push_back({"No DNSSEC", "low", domain, "DNSSEC not enabled — DNS responses not authenticated", "", "", ""});
   } else {
@@ -197,7 +218,7 @@ std::vector<Finding> scan_dns_security(const Config& cfg, HttpClient&, const Cra
   }
 
   // CAA record — controls which CAs can issue certs.
-  std::string caa = run_cmd("dig +short CAA " + domain + " 2>/dev/null");
+  std::string caa = run_cmd("dig +short CAA " + qdomain + " 2>/dev/null");
   if (caa.empty()) {
     findings.push_back({"Missing CAA Record", "low", domain, "No CAA record — any CA can issue certificates for this domain", "", "", ""});
   } else {
@@ -205,7 +226,7 @@ std::vector<Finding> scan_dns_security(const Config& cfg, HttpClient&, const Cra
   }
 
   // Check for wildcard DNS (potential for subdomain takeover).
-  std::string wildcard = run_cmd("dig +short A random-nonexistent-sub-xyz123." + domain + " 2>/dev/null");
+  std::string wildcard = run_cmd("dig +short A " + shell_quote("random-nonexistent-sub-xyz123." + domain) + " 2>/dev/null");
   if (!wildcard.empty() && wildcard.find("NXDOMAIN") == std::string::npos && wildcard.size() > 5) {
     findings.push_back({"Wildcard DNS", "low", domain, "Wildcard DNS record exists — may mask subdomain takeover", "", "", ""});
   }

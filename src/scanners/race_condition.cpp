@@ -4,25 +4,34 @@
 #include <regex>
 
 #include "scanner_base.hpp"
+#include "../response_validator.hpp"
 
 namespace apex {
 namespace {
 
-/// Detect endpoints likely vulnerable to race conditions.
-/// We can't safely exploit these, but we identify them for manual testing.
+bool distinct_route(const Response& candidate, const Response& missing) {
+  if (candidate.status_code == 0 || candidate.status_code == 404 || candidate.status_code == 410) return false;
+  return candidate.status_code != missing.status_code || responses_differ(candidate, missing, 40);
+}
+
+bool has_header_fragment(const Response& response, const std::string& fragment) {
+  for (const auto& [key, value] : response.headers) {
+    std::string lower = key;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    if (lower.find(fragment) != std::string::npos) return true;
+  }
+  return false;
+}
+
+/// Identify real, distinct state-changing routes for manual race testing.
 std::vector<Finding> scan_race_candidates(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
-  std::string base = base_url_from(crawl.urls[0]);
+  const std::string base = base_url_from(crawl.urls[0]);
+  const auto missing = http.get(base + "/api/apex-route-probe-7f3c9d");
 
-  // Patterns that indicate race-vulnerable operations
-  struct RaceTarget {
-    std::string path;
-    std::string operation;
-    std::string risk;
-  };
-
-  std::vector<RaceTarget> targets = {
+  struct RaceTarget { std::string path; std::string operation; std::string risk; };
+  const std::vector<RaceTarget> targets = {
       {"/api/redeem", "Coupon/code redemption", "Double redemption via concurrent requests"},
       {"/api/v1/redeem", "Coupon/code redemption", "Double redemption via concurrent requests"},
       {"/api/coupon/apply", "Coupon application", "Apply same coupon multiple times"},
@@ -46,142 +55,118 @@ std::vector<Finding> scan_race_candidates(const Config&, HttpClient& http, const
       {"/api/invite/accept", "Invite acceptance", "Accept same invite multiple times"},
   };
 
-  for (const auto& t : targets) {
-    auto resp = http.get(base + t.path);
-    // 405 = exists but wrong method (likely POST)
-    // 401/403 = exists but requires auth
-    // 400 = exists but needs body
-    if (resp.status_code == 405 || resp.status_code == 401 || resp.status_code == 403 || resp.status_code == 400 ||
-        resp.status_code == 422) {
-      findings.push_back({"Race Condition Target — " + t.operation, "medium", base + t.path,
-                          "Endpoint likely performs state-changing operation: " + t.operation +
-                              ". "
-                              "Risk: " +
-                              t.risk +
-                              ". "
-                              "Test by sending 10-50 concurrent POST requests.",
-                          "", "", "Status: " + std::to_string(resp.status_code)});
-    }
+  for (const auto& target : targets) {
+    const auto response = http.get(base + target.path);
+    const bool method_or_auth_signal = response.status_code == 400 || response.status_code == 401 ||
+                                       response.status_code == 403 || response.status_code == 405 ||
+                                       response.status_code == 422;
+    if (!method_or_auth_signal || !distinct_route(response, missing)) continue;
+    findings.push_back({"Race Condition Target — " + target.operation, "info", base + target.path,
+                        "Distinct state-changing endpoint identified for manual concurrency testing. Risk: " + target.risk,
+                        "", "", "Route differs from soft-404 probe; HTTP " + std::to_string(response.status_code)});
   }
   return findings;
 }
 
-/// Check for missing idempotency keys on payment endpoints.
+/// Identify payment routes where idempotency support is not advertised.
 std::vector<Finding> scan_idempotency(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
-  std::string base = base_url_from(crawl.urls[0]);
+  const std::string base = base_url_from(crawl.urls[0]);
+  const auto missing = http.get(base + "/api/apex-payment-probe-7f3c9d");
+  const std::vector<std::string> paths = {"/api/payment", "/api/v1/payment", "/api/charge", "/api/pay",
+                                          "/api/v1/pay", "/api/transactions", "/api/v1/transactions",
+                                          "/api/checkout/complete", "/api/order/create"};
 
-  std::vector<std::string> payment_paths = {"/api/payment",     "/api/v1/payment",   "/api/charge",          "/api/pay",
-                                            "/api/v1/pay",      "/api/transactions", "/api/v1/transactions", "/api/checkout/complete",
-                                            "/api/order/create"};
-
-  for (const auto& path : payment_paths) {
-    auto resp = http.get(base + path);
-    if (resp.status_code == 405 || resp.status_code == 401 || resp.status_code == 400 || resp.status_code == 422) {
-      // Check if response mentions idempotency
-      bool has_idempotency = false;
-      for (const auto& [key, val] : resp.headers) {
-        std::string lower = key;
-        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-        if (lower.find("idempotency") != std::string::npos) {
-          has_idempotency = true;
-          break;
-        }
-      }
-      if (!has_idempotency && resp.body.find("idempotency") == std::string::npos) {
-        findings.push_back({"Payment Endpoint — No Idempotency Key", "medium", base + path,
-                            "Payment endpoint found without idempotency mechanism. "
-                            "Retried/concurrent requests may cause double charges.",
-                            "", "", ""});
-        break;
-      }
+  for (const auto& path : paths) {
+    const auto response = http.get(base + path);
+    const bool endpoint_signal = response.status_code == 400 || response.status_code == 401 ||
+                                 response.status_code == 405 || response.status_code == 422;
+    if (!endpoint_signal || !distinct_route(response, missing)) continue;
+    std::string body = response.body;
+    std::transform(body.begin(), body.end(), body.begin(), ::tolower);
+    if (!has_header_fragment(response, "idempotency") && body.find("idempotency") == std::string::npos) {
+      findings.push_back({"Payment Endpoint — Idempotency Review", "info", base + path,
+                          "Distinct payment endpoint does not advertise an idempotency contract; active duplicate charging was not attempted",
+                          "", "", "Soft-404 differential confirmed endpoint; no idempotency header/body guidance"});
+      break;
     }
   }
   return findings;
 }
 
-/// Check for rate limiting on sensitive operations.
+/// Identify real auth routes lacking visible throttling metadata. Active brute-force
+/// confirmation is performed by the dedicated bounty scanner.
 std::vector<Finding> scan_rate_limit_absence(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
-  std::string base = base_url_from(crawl.urls[0]);
+  const std::string base = base_url_from(crawl.urls[0]);
+  const auto missing = http.get(base + "/api/apex-auth-probe-7f3c9d");
+  const std::vector<std::string> paths = {"/api/auth/login", "/api/v1/auth/login", "/api/login",
+                                          "/api/auth/forgot-password", "/api/v1/auth/forgot-password",
+                                          "/api/auth/verify", "/api/v1/auth/verify-otp", "/api/auth/reset-password"};
 
-  std::vector<std::string> auth_paths = {"/api/auth/login",           "/api/v1/auth/login",           "/api/login",
-                                         "/api/auth/forgot-password", "/api/v1/auth/forgot-password", "/api/auth/verify",
-                                         "/api/v1/auth/verify-otp",   "/api/auth/reset-password"};
-
-  for (const auto& path : auth_paths) {
-    auto resp = http.get(base + path);
-    if (resp.status_code == 405 || resp.status_code == 400 || resp.status_code == 422) {
-      // Check for rate limit headers
-      bool has_rate_limit = false;
-      for (const auto& [key, val] : resp.headers) {
-        std::string lower = key;
-        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-        if (lower.find("ratelimit") != std::string::npos || lower.find("rate-limit") != std::string::npos ||
-            lower.find("x-rate") != std::string::npos || lower.find("retry-after") != std::string::npos) {
-          has_rate_limit = true;
-          break;
-        }
-      }
-      if (!has_rate_limit) {
-        findings.push_back({"Auth Endpoint — No Rate Limiting", "medium", base + path,
-                            "Authentication endpoint has no rate limit headers. "
-                            "Vulnerable to credential brute-forcing and OTP guessing.",
-                            "", "", ""});
-        break;
-      }
+  for (const auto& path : paths) {
+    const auto response = http.get(base + path);
+    const bool endpoint_signal = response.status_code == 400 || response.status_code == 401 ||
+                                 response.status_code == 405 || response.status_code == 422;
+    if (!endpoint_signal || !distinct_route(response, missing)) continue;
+    std::string body = response.body;
+    std::transform(body.begin(), body.end(), body.begin(), ::tolower);
+    const bool auth_semantics = body.find("password") != std::string::npos || body.find("credential") != std::string::npos ||
+                                body.find("login") != std::string::npos || body.find("email") != std::string::npos ||
+                                body.find("otp") != std::string::npos || body.find("authentication") != std::string::npos;
+    if (!auth_semantics) continue;
+    const bool advertised = has_header_fragment(response, "ratelimit") || has_header_fragment(response, "rate-limit") ||
+                            has_header_fragment(response, "x-rate") || has_header_fragment(response, "retry-after");
+    if (!advertised) {
+      findings.push_back({"Auth Endpoint — Throttling Review", "info", base + path,
+                          "Distinct authentication endpoint exposes no throttling metadata; active confirmation required",
+                          "", "", "Auth semantics and soft-404 differential confirmed; no rate-limit headers"});
+      break;
     }
   }
   return findings;
 }
 
-/// Detect WebSocket endpoints (often lack auth/rate limiting).
 std::vector<Finding> scan_websocket(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
-  std::string base = base_url_from(crawl.urls[0]);
+  const std::string base = base_url_from(crawl.urls[0]);
+  const std::vector<std::pair<std::string, std::string>> upgrade_headers = {{"Upgrade", "websocket"}, {"Connection", "Upgrade"}};
+  const auto missing = http.get(base + "/apex-websocket-probe-7f3c9d", upgrade_headers);
+  const std::vector<std::string> paths = {"/ws", "/websocket", "/socket.io/", "/api/ws", "/realtime", "/cable", "/hub", "/signalr"};
 
-  // Check for WebSocket upgrade endpoints
-  std::vector<std::string> ws_paths = {"/ws", "/websocket", "/socket.io/", "/api/ws", "/realtime", "/cable", "/hub", "/signalr"};
-
-  for (const auto& path : ws_paths) {
-    auto resp = http.get(base + path, {{"Upgrade", "websocket"}, {"Connection", "Upgrade"}});
-    if (resp.status_code == 101 || resp.status_code == 200 || resp.status_code == 400) {
-      if (resp.body.find("websocket") != std::string::npos || resp.body.find("socket") != std::string::npos || resp.status_code == 101) {
-        findings.push_back({"WebSocket Endpoint Found", "info", base + path,
-                            "WebSocket endpoint discovered. Test for: "
-                            "auth bypass, message injection, and lack of rate limiting.",
-                            "", "", "Status: " + std::to_string(resp.status_code)});
-        break;
-      }
+  for (const auto& path : paths) {
+    const auto response = http.get(base + path, upgrade_headers);
+    bool upgrade_response = response.status_code == 101 || has_header_fragment(response, "upgrade");
+    std::string body = response.body;
+    std::transform(body.begin(), body.end(), body.begin(), ::tolower);
+    if (distinct_route(response, missing) && (upgrade_response || body.find("websocket") != std::string::npos)) {
+      findings.push_back({"WebSocket Endpoint Found", "info", base + path,
+                          "WebSocket endpoint confirmed by upgrade semantics or explicit protocol response", "", "",
+                          "HTTP " + std::to_string(response.status_code)});
+      break;
     }
   }
 
-  // Check HTML for WebSocket URLs
-  auto resp = http.get(base);
+  const auto page = http.get(base);
   std::regex ws_re(R"x(wss?://[^"'\s]+)x");
-  std::sregex_iterator it(resp.body.begin(), resp.body.end(), ws_re);
-  std::sregex_iterator end;
-  for (; it != end; ++it) {
-    findings.push_back(
-        {"WebSocket URL in Source", "info", base, "WebSocket URL found in page source: " + (*it).str(), "", (*it).str(), ""});
-    break;
+  std::smatch match;
+  if (std::regex_search(page.body, match, ws_re)) {
+    findings.push_back({"WebSocket URL in Source", "info", base,
+                        "WebSocket URL found in page source: " + match.str(), "", match.str(), match.str()});
   }
-
   return findings;
 }
 
 }  // namespace
 
 std::vector<Scanner> register_race_condition_scanners() {
-  return {
-      {"Race Condition Targets", scan_race_candidates},
-      {"Missing Idempotency", scan_idempotency},
-      {"Rate Limit Absence", scan_rate_limit_absence},
-      {"WebSocket Discovery", scan_websocket},
-  };
+  return {{"Race Condition Targets", scan_race_candidates},
+          {"Missing Idempotency", scan_idempotency},
+          {"Rate Limit Absence", scan_rate_limit_absence},
+          {"WebSocket Discovery", scan_websocket}};
 }
 
 }  // namespace apex

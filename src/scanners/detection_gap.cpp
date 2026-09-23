@@ -3,7 +3,10 @@
 ///        SSTI (improved), NoSQL Injection, IDOR, CORS (improved),
 ///        Secrets/Credentials in responses.
 #include <regex>
+#include <set>
+#include <sstream>
 
+#include "counterfactual.hpp"
 #include "scanner_base.hpp"
 
 namespace apex {
@@ -214,6 +217,92 @@ std::vector<Finding> scan_response_secrets(const Config&, HttpClient& http, cons
   return findings;
 }
 
+/// Percent-encode probe values so libcurl and the target receive exact syntax.
+std::string encode_probe(const std::string& value) {
+  static constexpr char hex[] = "0123456789ABCDEF";
+  std::string encoded;
+  for (const unsigned char c : value) {
+    if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+      encoded += static_cast<char>(c);
+    } else {
+      encoded += '%';
+      encoded += hex[c >> 4];
+      encoded += hex[c & 0x0f];
+    }
+  }
+  return encoded;
+}
+
+/// Counterfactual Template Consensus (CTC): two independently generated math
+/// canaries must evaluate while a syntax-matched invalid expression must not.
+/// Unlike reflection or single-number checks, all three proof obligations must
+/// agree before Apex reports a vulnerability.
+std::vector<Finding> scan_counterfactual_template_consensus(
+    const Config& cfg, HttpClient& http, const CrawlResult& crawl) {
+  std::vector<Finding> findings;
+  struct Syntax {
+    const char* name;
+    const char* open;
+    const char* close;
+  };
+  const std::vector<Syntax> syntaxes = {
+      {"Jinja/Twig", "{{", "}}"}, {"Expression Language", "${", "}"},
+      {"Unified EL", "#{", "}"}, {"ERB/EJS", "<%=", "%>"}};
+
+  std::set<std::string> tested;
+  const size_t max_params = cfg.deep ? 12 : 6;
+  size_t tested_params = 0;
+
+  for (const auto& parameter : crawl.params) {
+    if (tested_params >= max_params) break;
+    if (parameter.method == "POST" || parameter.type == "body") continue;
+    const std::string key = parameter.url + "|" + parameter.name;
+    if (!tested.insert(key).second) continue;
+    ++tested_params;
+
+    const size_t seed = std::hash<std::string>{}(key);
+    const long long a = 137 + static_cast<long long>(seed % 41);
+    const long long b = 239 + static_cast<long long>((seed >> 8) % 43);
+    const long long c = 181 + static_cast<long long>((seed >> 16) % 47);
+    const long long d = 283 + static_cast<long long>((seed >> 24) % 53);
+    const std::string expected_a = std::to_string(a * b);
+    const std::string expected_b = std::to_string(c * d);
+    const std::string target = parameter.url + "?" + parameter.name + "=";
+    const auto baseline = http.get(target + encode_probe("apex_ctc_" + std::to_string(seed)));
+    if (baseline.status_code < 200 || baseline.status_code >= 400) continue;
+
+    for (const auto& syntax : syntaxes) {
+      const std::string expression_a = std::string(syntax.open) + std::to_string(a) + "*" + std::to_string(b) + syntax.close;
+      const std::string expression_b = std::string(syntax.open) + std::to_string(c) + "*" + std::to_string(d) + syntax.close;
+      const std::string negative = std::string(syntax.open) + std::to_string(a) + "x" + std::to_string(b) + syntax.close;
+
+      const auto positive_a = http.get(target + encode_probe(expression_a));
+      const auto positive_b = http.get(target + encode_probe(expression_b));
+      const auto negative_control = http.get(target + encode_probe(negative));
+      if (!confirms_counterfactual_template_consensus(
+              baseline, positive_a, positive_b, negative_control,
+              expected_a, expected_b)) {
+        continue;
+      }
+
+      Finding finding{
+          "SSTI — Counterfactual Consensus", "critical", parameter.url,
+          std::string("Template evaluation confirmed for ") + syntax.name +
+              " using two independent arithmetic canaries and one syntax-matched negative control",
+          parameter.name, expression_a,
+          "canary_a=" + expected_a + "; canary_b=" + expected_b +
+              "; negative_control=no evaluation"};
+      finding.confidence = 98;
+      finding.cwe_id = "CWE-1336";
+      finding.owasp_category = "A03:2021 Injection";
+      finding.cvss_score = 9.8;
+      findings.push_back(std::move(finding));
+      break;
+    }
+  }
+  return findings;
+}
+
 }  // namespace
 
 std::vector<Scanner> register_detection_gap_scanners() {
@@ -223,6 +312,7 @@ std::vector<Scanner> register_detection_gap_scanners() {
       {"IDOR", scan_idor},
       {"CORS Deep", scan_cors_deep},
       {"Secrets Exposure", scan_response_secrets},
+      {"Counterfactual Template Consensus", scan_counterfactual_template_consensus},
   };
 }
 

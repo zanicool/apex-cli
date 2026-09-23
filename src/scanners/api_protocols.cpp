@@ -206,7 +206,7 @@ std::vector<Finding> scan_websocket_tampering(const Config&, HttpClient& http, c
   for (const auto& ws_url : ws_urls) {
     // Convert ws:// to http:// for upgrade test
     std::string http_url = ws_url;
-    if (http_url.substr(0, 5) == "wss://")
+    if (http_url.substr(0, 6) == "wss://")
       http_url = "https://" + http_url.substr(6);
     else if (http_url.substr(0, 5) == "ws://")
       http_url = "http://" + http_url.substr(5);

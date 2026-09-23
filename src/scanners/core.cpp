@@ -217,14 +217,38 @@ std::vector<Finding> scan_cors(const Config&, HttpClient& http, const CrawlResul
 
 std::vector<Finding> scan_headers(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
-  // Only check headers NOT covered by dedicated scanners (CSP, HSTS, X-Frame-Options have their own)
-  const std::vector<std::string> required = {"Permissions-Policy", "X-Content-Type-Options"};
   if (crawl.urls.empty()) return findings;
-  auto resp = http.get(crawl.urls[0]);
-  for (const auto& hdr : required) {
-    if (resp.headers.find(hdr) == resp.headers.end()) {
-      findings.push_back({"Missing " + hdr, "low", crawl.urls[0], "Missing: " + hdr, "", "", ""});
-    }
+
+  const auto resp = http.get(crawl.urls[0]);
+  if (resp.status_code < 200 || resp.status_code >= 400) return findings;
+
+  auto has_header = [&](const std::string& wanted) {
+    return std::any_of(resp.headers.begin(), resp.headers.end(), [&](const auto& header) {
+      if (header.first.size() != wanted.size()) return false;
+      return std::equal(header.first.begin(), header.first.end(), wanted.begin(),
+                        [](unsigned char a, unsigned char b) { return std::tolower(a) == std::tolower(b); });
+    });
+  };
+  auto report_missing = [&](const std::string& header) {
+    findings.push_back({"Missing " + header, "low", crawl.urls[0], "Missing: " + header, "", "",
+                        "HTTP " + std::to_string(resp.status_code) + " response did not include " + header});
+  };
+
+  // nosniff is broadly applicable to successful web responses.
+  if (!has_header("X-Content-Type-Options")) report_missing("X-Content-Type-Options");
+
+  // Permissions-Policy is relevant only when the page invokes sensitive browser APIs.
+  std::string body_lower = resp.body;
+  std::transform(body_lower.begin(), body_lower.end(), body_lower.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  const std::vector<std::string> sensitive_features = {
+      "getusermedia", "navigator.geolocation", "paymentrequest", "navigator.usb",
+      "navigator.bluetooth", "document.requeststorageaccess"};
+  const bool uses_sensitive_feature = std::any_of(
+      sensitive_features.begin(), sensitive_features.end(),
+      [&](const std::string& feature) { return body_lower.find(feature) != std::string::npos; });
+  if (uses_sensitive_feature && !has_header("Permissions-Policy")) {
+    report_missing("Permissions-Policy");
   }
   return findings;
 }

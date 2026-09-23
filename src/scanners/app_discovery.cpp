@@ -5,6 +5,7 @@
 #include <regex>
 
 #include "scanner_base.hpp"
+#include "../response_validator.hpp"
 
 namespace apex {
 namespace {
@@ -150,65 +151,91 @@ std::vector<Finding> scan_app_discovery(const Config&, HttpClient& http, const C
 std::vector<Finding> scan_app_api_security(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
-  std::string base = base_url_from(crawl.urls[0]);
+  const std::string base = base_url_from(crawl.urls[0]);
+  const auto missing = http.get(base + "/api/apex-mobile-probe-7f3c9d");
+  const std::vector<std::string> mobile_paths = {
+      "/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/auth/forgot-password",
+      "/api/v1/user/profile", "/api/v2/auth/login", "/api/mobile/login",
+      "/mobile/api/auth", "/app/api/login"};
 
-  // Common mobile API paths
-  std::vector<std::string> mobile_paths = {"/api/v1/auth/login",   "/api/v1/auth/register", "/api/v1/auth/forgot-password",
-                                           "/api/v1/user/profile", "/api/v2/auth/login",    "/api/mobile/login",
-                                           "/mobile/api/auth",     "/app/api/login"};
+  auto distinct = [&](const Response& response) {
+    if (response.status_code == 0 || response.status_code == 404 || response.status_code == 410) return false;
+    return response.status_code != missing.status_code || responses_differ(response, missing, 40);
+  };
+  auto has_header = [](const Response& response, const std::string& wanted) {
+    return std::any_of(response.headers.begin(), response.headers.end(), [&](const auto& header) {
+      std::string key = header.first;
+      std::transform(key.begin(), key.end(), key.begin(), ::tolower);
+      return key == wanted;
+    });
+  };
+  auto auth_rejection = [](const Response& response) {
+    if (response.status_code != 200 && response.status_code != 400 && response.status_code != 401 &&
+        response.status_code != 403 && response.status_code != 422) return false;
+    std::string body = response.body;
+    std::transform(body.begin(), body.end(), body.begin(), ::tolower);
+    const bool context = body.find("password") != std::string::npos || body.find("credential") != std::string::npos ||
+                         body.find("login") != std::string::npos || body.find("email") != std::string::npos ||
+                         body.find("authentication") != std::string::npos;
+    const bool rejected = body.find("invalid") != std::string::npos || body.find("incorrect") != std::string::npos ||
+                          body.find("failed") != std::string::npos || body.find("unauthorized") != std::string::npos ||
+                          body.find("required") != std::string::npos || body.find("error") != std::string::npos;
+    return context && rejected;
+  };
 
   for (const auto& path : mobile_paths) {
-    auto resp = http.get(base + path);
-    if (resp.status_code == 405 || resp.status_code == 200 || resp.status_code == 401 || resp.status_code == 422) {
-      // Found a live mobile API endpoint — check headers
-      auto pinning = resp.headers.find("Public-Key-Pins");
-      auto hsts = resp.headers.find("Strict-Transport-Security");
-      // auto server = resp.headers.find("Server");
+    const auto response = http.get(base + path);
+    if (!distinct(response)) continue;
 
-      if (pinning == resp.headers.end() && hsts == resp.headers.end()) {
-        findings.push_back({"Mobile API — No Certificate Pinning Headers", "medium", base + path,
-                            "Mobile API endpoint found without HPKP or HSTS. "
-                            "App may be vulnerable to MITM via proxy tools (Burp/mitmproxy).",
-                            "", "", "Status: " + std::to_string(resp.status_code)});
-      }
-
-      // Check if rate limiting exists on auth endpoints
-      if (path.find("login") != std::string::npos || path.find("forgot") != std::string::npos) {
-        auto rate = resp.headers.find("X-RateLimit-Limit");
-        auto retry = resp.headers.find("Retry-After");
-        if (rate == resp.headers.end() && retry == resp.headers.end()) {
-          findings.push_back({"Mobile API — No Rate Limit on Auth", "medium", base + path,
-                              "Authentication endpoint has no visible rate limiting headers. "
-                              "May be vulnerable to credential brute-forcing from mobile clients.",
-                              "", "", ""});
-        }
-      }
-      break;  // Found one, no need to keep probing
+    // HPKP is deprecated and cannot prove mobile certificate pinning. HSTS is
+    // the only server-side transport policy that can be assessed here.
+    if (base.rfind("https://", 0) == 0 && !has_header(response, "strict-transport-security")) {
+      findings.push_back({"Mobile API — HSTS Missing", "low", base + path,
+                          "Confirmed mobile API route lacks an HSTS response header; app-level certificate pinning was not inferred",
+                          "", "", "Distinct route; HTTP " + std::to_string(response.status_code)});
     }
+
+    if (path.find("login") != std::string::npos || path.find("forgot") != std::string::npos) {
+      int valid_failures = 0;
+      bool limited = false;
+      for (int attempt = 0; attempt < 10; ++attempt) {
+        const auto probe = http.post(base + path, R"({"email":"apex-invalid@example.invalid","password":"wrong"})",
+                                     "application/json");
+        if (probe.status_code == 429) { limited = true; break; }
+        if (!auth_rejection(probe)) break;
+        ++valid_failures;
+      }
+      if (!limited && valid_failures == 10) {
+        findings.push_back({"Mobile API — No Rate Limit on Auth", "medium", base + path,
+                            "Ten semantically valid authentication failures completed without throttling", "", "",
+                            "10 auth failures; no HTTP 429"});
+      }
+    }
+    break;
   }
 
-  // Check for API versioning issues (old versions still live)
   std::regex ver_re(R"(/api/v(\d+)/)");
   for (const auto& url : crawl.urls) {
-    std::smatch m;
-    if (std::regex_search(url, m, ver_re)) {
-      int ver = std::stoi(m[1].str());
-      if (ver > 1) {
-        // Try v1 — old versions often have weaker auth
-        std::string old_url = std::regex_replace(url, ver_re, "/api/v1/");
-        auto r = http.get(old_url);
-        if (r.status_code == 200 && r.body.size() > 50) {
-          findings.push_back({"Mobile API — Old Version Still Active", "medium", old_url,
-                              "API v1 still responds while v" + std::to_string(ver) +
-                                  " is in use. "
-                                  "Older versions may have weaker authentication or missing fixes.",
-                              "", "", "v1 returns " + std::to_string(r.body.size()) + " bytes"});
-        }
-      }
-      break;
+    std::smatch match;
+    if (!std::regex_search(url, match, ver_re)) continue;
+    const int version = std::stoi(match[1].str());
+    if (version <= 1) break;
+    const std::string old_url = std::regex_replace(url, ver_re, "/api/v1/");
+    const auto old_response = http.get(old_url);
+    const auto old_missing = http.get(base + "/api/v1/apex-version-probe-7f3c9d");
+    std::string body = old_response.body;
+    body.erase(0, body.find_first_not_of(" \t\r\n"));
+    const bool json = !body.empty() && (body.front() == '{' || body.front() == '[');
+    const bool distinct_old = old_response.status_code == 200 &&
+                              (old_response.status_code != old_missing.status_code ||
+                               responses_differ(old_response, old_missing, 50));
+    if (distinct_old && json) {
+      findings.push_back({"Mobile API — Old Version Still Active", "medium", old_url,
+                          "A distinct JSON API v1 response remains active while v" + std::to_string(version) + " is in use",
+                          "", "", old_response.body.substr(0, 200)});
     }
+    break;
   }
-
   return findings;
 }
 

@@ -8,6 +8,7 @@
 #include <chrono>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -64,16 +65,15 @@ private:
   std::mutex pool_mu_;
   std::vector<void *> pool_;
 
-  // Request-level intelligent cache
-  // Key: method + url + sorted_headers_hash
-  // Shares responses across scanner modules (same URL = 1 request)
+  // Request-level cache for plain discovery GETs only. Active test requests,
+  // query strings, and requests with custom headers deliberately bypass it.
   std::mutex cache_mu_;
   std::map<std::string, Response> response_cache_;
   std::atomic<long> cache_hits_{0};
 
   std::string cache_key(const std::string &method, const std::string &url,
-                         const std::map<std::string, std::string> &headers) const;
-  Response *cache_lookup(const std::string &key);
+                        const std::map<std::string, std::string> &headers) const;
+  std::optional<Response> cache_lookup(const std::string &key);
   void cache_store(const std::string &key, const Response &resp);
 };
 

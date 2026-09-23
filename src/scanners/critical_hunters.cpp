@@ -7,42 +7,52 @@
 #include <regex>
 
 #include "scanner_base.hpp"
+#include "../response_validator.hpp"
 
 namespace apex {
 namespace {
 
-/// Admin panel takeover — find unprotected admin interfaces.
+/// Admin panel takeover — require endpoint-specific rendered management UI.
 std::vector<Finding> scan_admin_takeover(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
-  std::string base = base_url_from(crawl.urls[0]);
+  const std::string base = base_url_from(crawl.urls[0]);
+  const auto soft404 = http.get(base + "/apex-admin-takeover-probe-7f3c9d");
+  const std::vector<std::string> paths = {"/admin", "/admin/", "/administrator", "/wp-admin", "/manage", "/management",
+                                          "/portal", "/dashboard/admin", "/admin/dashboard", "/backend", "/cms", "/cpanel",
+                                          "/_admin", "/admin.php", "/admin/login", "/panel", "/supervisor", "/staff", "/internal", "/ops"};
 
-  std::vector<std::string> admin_paths = {"/admin",      "/admin/",     "/administrator",   "/wp-admin",        "/manage",
-                                          "/management", "/portal",     "/dashboard/admin", "/admin/dashboard", "/backend",
-                                          "/cms",        "/cpanel",     "/_admin",          "/admin.php",       "/admin/login",
-                                          "/panel",      "/supervisor", "/staff",           "/internal",        "/ops"};
+  for (const auto& path : paths) {
+    const auto response = http.get(base + path);
+    if (response.status_code != 200 || response.body.size() <= 500 ||
+        (response.status_code == soft404.status_code && !responses_differ(response, soft404, 100))) continue;
 
-  for (const auto& path : admin_paths) {
-    auto resp = http.get(base + path);
-    if (resp.status_code == 200 && resp.body.size() > 500 &&
-        // Must contain actual admin UI elements
-        (resp.body.find("dashboard") != std::string::npos || resp.body.find("Dashboard") != std::string::npos ||
-         resp.body.find("admin") != std::string::npos || resp.body.find("users") != std::string::npos ||
-         resp.body.find("settings") != std::string::npos) &&
-        // Must NOT be a login page (we want unauthenticated access)
-        resp.body.find("password") == std::string::npos && resp.body.find("login") == std::string::npos &&
-        resp.body.find("sign in") == std::string::npos && resp.body.find("Sign In") == std::string::npos &&
-        // Must NOT be WAF/error
-        resp.body.find("Access Denied") == std::string::npos &&
-        resp.body.find("<!DOCTYPE html><html id=\"__next_error__\"") == std::string::npos &&
-        resp.body.find("Just a moment") == std::string::npos) {
+    std::string visible = response.body;
+    std::string lower = visible;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    // Remove script blocks so words in SPA bundles do not count as rendered UI.
+    size_t script = lower.find("<script");
+    while (script != std::string::npos) {
+      const size_t end = lower.find("</script>", script);
+      const size_t length = end == std::string::npos ? lower.size() - script : end + 9 - script;
+      lower.erase(script, length);
+      script = lower.find("<script", script);
+    }
+
+    const bool management_text = lower.find("admin dashboard") != std::string::npos ||
+                                 lower.find("user management") != std::string::npos ||
+                                 lower.find("system settings") != std::string::npos ||
+                                 lower.find("administrator panel") != std::string::npos;
+    const bool ui_structure = lower.find("<nav") != std::string::npos || lower.find("<table") != std::string::npos ||
+                              lower.find("role=\"navigation\"") != std::string::npos || lower.find("<aside") != std::string::npos;
+    const bool login_page = lower.find("type=\"password\"") != std::string::npos ||
+                            lower.find("name=\"password\"") != std::string::npos ||
+                            lower.find("sign in") != std::string::npos || lower.find("log in") != std::string::npos;
+    const bool blocked = lower.find("access denied") != std::string::npos || lower.find("just a moment") != std::string::npos;
+    if (management_text && ui_structure && !login_page && !blocked) {
       findings.push_back(Finding{"Admin Panel — Unauthenticated Access", "critical", base + path,
-                                 "Admin panel accessible without authentication. "
-                                 "Contains dashboard/management UI elements.",
-                                 "", path,
-                                 "Size: " + std::to_string(resp.body.size()) +
-                                     " bytes, "
-                                     "Contains admin UI indicators"});
+                                 "Distinct rendered management interface is accessible without an authentication form",
+                                 "", path, "Soft-404 differential plus management text and UI structure"});
       return findings;
     }
   }
@@ -140,31 +150,36 @@ std::vector<Finding> scan_rce_cves(const Config&, HttpClient& http, const CrawlR
   return findings;
 }
 
-/// Privilege escalation via mass assignment / parameter pollution.
+/// Privilege escalation via mass assignment with an unknown-field echo control.
 std::vector<Finding> scan_mass_assignment(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
-  std::string base = base_url_from(crawl.urls[0]);
+  const std::string base = base_url_from(crawl.urls[0]);
+  const std::vector<std::string> paths = {"/api/register", "/api/v1/register", "/api/signup", "/api/users", "/api/v1/users", "/api/account"};
+  const std::string baseline_payload =
+      R"({"email":"apex-user-control@example.invalid","password":"Test1234!","role":"user","is_admin":false})";
+  const std::string echo_marker = "apex_unknown_control_7f3c9d";
+  const std::string escalation_payload =
+      R"({"email":"apex-admin-control@example.invalid","password":"Test1234!","role":"admin","is_admin":true,"admin":true,"type":"administrator","apex_control":"apex_unknown_control_7f3c9d"})";
 
-  // Find registration/profile update endpoints
-  std::vector<std::string> reg_paths = {"/api/register", "/api/v1/register", "/api/signup", "/api/users", "/api/v1/users", "/api/account"};
+  for (const auto& path : paths) {
+    const auto baseline = http.post(base + path, baseline_payload, "application/json");
+    const auto escalated = http.post(base + path, escalation_payload, "application/json");
+    if ((escalated.status_code != 200 && escalated.status_code != 201) ||
+        (baseline.status_code != 200 && baseline.status_code != 201)) continue;
 
-  for (const auto& path : reg_paths) {
-    // Try adding admin/role fields to registration
-    std::string payload =
-        R"({"email":"test@test.com","password":"Test1234!","role":"admin","is_admin":true,"admin":true,"type":"administrator"})";
-    auto resp = http.post(base + path, payload, "application/json");
-
-    if (resp.status_code == 200 || resp.status_code == 201) {
-      // Check if response confirms elevated role
-      if (resp.body.find("\"admin\"") != std::string::npos || resp.body.find("\"administrator\"") != std::string::npos ||
-          resp.body.find("\"role\":\"admin\"") != std::string::npos) {
-        findings.push_back(Finding{"Mass Assignment → Admin Privilege Escalation", "critical", base + path,
-                                   "Registration endpoint accepts role/admin parameters. "
-                                   "User can self-assign admin privileges at signup.",
-                                   "role", "admin", "Response confirms admin role assignment"});
-        return findings;
-      }
+    const bool admin_applied = escalated.body.find("\"role\":\"admin\"") != std::string::npos ||
+                               escalated.body.find("\"is_admin\":true") != std::string::npos ||
+                               escalated.body.find("\"type\":\"administrator\"") != std::string::npos;
+    const bool baseline_admin = baseline.body.find("\"role\":\"admin\"") != std::string::npos ||
+                                baseline.body.find("\"is_admin\":true") != std::string::npos;
+    const bool blind_echo = escalated.body.find(echo_marker) != std::string::npos;
+    if (admin_applied && !baseline_admin && !blind_echo && responses_differ(escalated, baseline, 10)) {
+      findings.push_back(Finding{"Mass Assignment → Admin Privilege Escalation", "critical", base + path,
+                                 "Known privilege fields were bound while an unknown control field was ignored",
+                                 "role/is_admin", "admin/true",
+                                 "User baseline is non-admin; escalated response applies admin; unknown echo control absent"});
+      return findings;
     }
   }
   return findings;
@@ -333,30 +348,34 @@ std::vector<Finding> scan_sqli_confirmed(const Config&, HttpClient& http, const 
   return findings;
 }
 
-/// Account takeover via password reset flaws.
+/// Account takeover via password-reset host poisoning, confirmed in-band.
 std::vector<Finding> scan_password_reset_takeover(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
-  std::string base = base_url_from(crawl.urls[0]);
+  const std::string base = base_url_from(crawl.urls[0]);
+  const std::vector<std::string> paths = {"/api/auth/forgot-password", "/api/v1/auth/forgot-password", "/api/password/reset",
+                                          "/api/forgot-password", "/api/v1/password/reset", "/auth/forgot"};
+  const std::string payload = R"({"email":"apex-reset-test@example.invalid"})";
+  auto contains_attacker_host = [](const Response& response) {
+    if (response.body.find("evil.com") != std::string::npos) return true;
+    for (const auto& [key, value] : response.headers) {
+      std::string lower = key;
+      std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+      if ((lower == "location" || lower == "content-location" || lower == "link") &&
+          value.find("evil.com") != std::string::npos) return true;
+    }
+    return false;
+  };
 
-  // Check for host header injection on password reset
-  std::vector<std::string> reset_paths = {"/api/auth/forgot-password", "/api/v1/auth/forgot-password", "/api/password/reset",
-                                          "/api/forgot-password",      "/api/v1/password/reset",       "/auth/forgot"};
-
-  for (const auto& path : reset_paths) {
-    auto resp = http.post(base + path, R"({"email":"test@test.com"})", "application/json",
-                          {{"Host", "evil.com"}, {"X-Forwarded-Host", "evil.com"}});
-
-    if (resp.status_code == 200 &&
-        (resp.body.find("success") != std::string::npos || resp.body.find("sent") != std::string::npos ||
-         resp.body.find("email") != std::string::npos) &&
-        resp.body.find("error") == std::string::npos && resp.body.find("Access Denied") == std::string::npos) {
-      // If the reset email is sent with our evil host in the link = ATO
+  for (const auto& path : paths) {
+    const auto normal = http.post(base + path, payload, "application/json");
+    const auto poisoned = http.post(base + path, payload, "application/json",
+                                    {{"Host", "evil.com"}, {"X-Forwarded-Host", "evil.com"}});
+    if (poisoned.status_code == 200 && contains_attacker_host(poisoned) && !contains_attacker_host(normal)) {
       findings.push_back(Finding{"Password Reset Poisoning → Account Takeover", "critical", base + path,
-                                 "Password reset endpoint accepts manipulated Host header. "
-                                 "Reset link in email will point to attacker's domain. "
-                                 "Victim clicks → token sent to attacker → account takeover.",
-                                 "Host", "evil.com", "Reset accepted with Host: evil.com"});
+                                 "Attacker host is incorporated only when reset headers are poisoned",
+                                 "Host/X-Forwarded-Host", "evil.com",
+                                 "Poisoned reset response references evil.com; normal response does not"});
       return findings;
     }
   }

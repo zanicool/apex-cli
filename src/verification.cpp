@@ -111,11 +111,40 @@ VerifiedFinding verify_one(const Finding& f, HttpClient& http) {
     }
   }
 
-  // SSTI: check if math evaluation appeared
+  // SSTI: derive the expected arithmetic canary from the actual payload.
+  // A generic new "49" is not sufficient unless the payload itself requested 7*7.
   if (f.type.find("SSTI") != std::string::npos || f.type.find("Template") != std::string::npos) {
-    if (replay.body.find("49") != std::string::npos && baseline.body.find("49") == std::string::npos) {
-      verified = true;
-      reason = "Template expression evaluated (49 appeared only with payload)";
+    static const std::regex arithmetic_canary(R"((-?[0-9]{1,7})\s*\*\s*(-?[0-9]{1,7}))");
+    std::smatch match;
+    const bool has_template_delimiter =
+        f.payload.find("{{") != std::string::npos || f.payload.find("${") != std::string::npos ||
+        f.payload.find("<%") != std::string::npos || f.payload.find("#{") != std::string::npos ||
+        f.payload.find("*{") != std::string::npos;
+
+    if (has_template_delimiter && std::regex_search(f.payload, match, arithmetic_canary)) {
+      const long long lhs = std::stoll(match[1].str());
+      const long long rhs = std::stoll(match[2].str());
+      const std::string expected = std::to_string(lhs * rhs);
+      auto contains_number = [](const std::string& body, const std::string& number) {
+        size_t pos = body.find(number);
+        while (pos != std::string::npos) {
+          const bool left_ok = pos == 0 || !std::isdigit(static_cast<unsigned char>(body[pos - 1]));
+          const size_t end = pos + number.size();
+          const bool right_ok = end == body.size() ||
+                                !std::isdigit(static_cast<unsigned char>(body[end]));
+          if (left_ok && right_ok) return true;
+          pos = body.find(number, pos + 1);
+        }
+        return false;
+      };
+
+      if (contains_number(replay.body, expected) && !contains_number(baseline.body, expected)) {
+        verified = true;
+        reason = "Template expression evaluated to payload-specific canary " + expected;
+        const size_t canary_pos = replay.body.find(expected);
+        const size_t snippet_start = canary_pos > 80 ? canary_pos - 80 : 0;
+        ev.response_snippet = replay.body.substr(snippet_start, 200);
+      }
     }
   }
 

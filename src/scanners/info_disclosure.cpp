@@ -103,35 +103,51 @@ std::vector<Finding> scan_security_headers(const Config&, HttpClient& http, cons
   std::string base = base_url_from(crawl.urls[0]);
 
   auto resp = http.get(base);
+  if (resp.status_code < 200 || resp.status_code >= 400) return findings;
 
-  struct HeaderCheck {
-    std::string header;
-    std::string missing_msg;
-    std::string severity;
+  auto has_header = [&](const std::string& wanted) {
+    return std::any_of(resp.headers.begin(), resp.headers.end(), [&](const auto& header) {
+      if (header.first.size() != wanted.size()) return false;
+      return std::equal(header.first.begin(), header.first.end(), wanted.begin(),
+                        [](unsigned char a, unsigned char b) { return std::tolower(a) == std::tolower(b); });
+    });
   };
 
-  std::vector<HeaderCheck> checks = {
-      // Only check headers not covered by core.cpp or modern_stack.cpp
-      {"Referrer-Policy", "No Referrer-Policy — URL leakage to third parties", "low"},
-      {"Cross-Origin-Opener-Policy", "No COOP — cross-origin window access possible", "low"},
-      {"Cross-Origin-Embedder-Policy", "No COEP — Spectre-style attacks possible", "low"},
-  };
+  std::string body_lower = resp.body;
+  std::transform(body_lower.begin(), body_lower.end(), body_lower.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  std::string url_lower = crawl.urls[0];
+  std::transform(url_lower.begin(), url_lower.end(), url_lower.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
-  for (const auto& check : checks) {
-    bool found = false;
-    for (const auto& [key, val] : resp.headers) {
-      std::string lower = key;
-      std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-      std::string check_lower = check.header;
-      std::transform(check_lower.begin(), check_lower.end(), check_lower.begin(), ::tolower);
-      if (lower == check_lower) {
-        found = true;
-        break;
-      }
-    }
-    if (!found) {
-      findings.push_back(Finding{"Missing " + check.header, check.severity, base, check.missing_msg, "", "", ""});
-    }
+  // Modern browsers already default to strict-origin-when-cross-origin. Report
+  // an absent explicit policy only where a sensitive URL can reach external links.
+  static const std::regex sensitive_query(R"([?&](token|access_token|session|sessionid|auth|api_key|code)=)");
+  const bool sensitive_referrer_context =
+      std::regex_search(url_lower, sensitive_query) &&
+      (body_lower.find("href=\"http") != std::string::npos ||
+       body_lower.find("href='http") != std::string::npos);
+  if (sensitive_referrer_context && !has_header("Referrer-Policy")) {
+    findings.push_back(Finding{"Missing Referrer-Policy", "low", base,
+                               "Sensitive URL parameters may leak through external links", "", "",
+                               "Sensitive query parameter and external link present on HTTP " +
+                                   std::to_string(resp.status_code) + " response"});
+  }
+
+  // COOP/COEP are security requirements only for pages using cross-origin
+  // isolation primitives such as SharedArrayBuffer.
+  const bool needs_cross_origin_isolation =
+      body_lower.find("sharedarraybuffer") != std::string::npos ||
+      body_lower.find("crossoriginisolated") != std::string::npos;
+  if (needs_cross_origin_isolation && !has_header("Cross-Origin-Opener-Policy")) {
+    findings.push_back(Finding{"Missing Cross-Origin-Opener-Policy", "low", base,
+                               "Cross-origin isolation API used without COOP", "", "",
+                               "SharedArrayBuffer/crossOriginIsolated usage detected"});
+  }
+  if (needs_cross_origin_isolation && !has_header("Cross-Origin-Embedder-Policy")) {
+    findings.push_back(Finding{"Missing Cross-Origin-Embedder-Policy", "low", base,
+                               "Cross-origin isolation API used without COEP", "", "",
+                               "SharedArrayBuffer/crossOriginIsolated usage detected"});
   }
 
   // Check for weak CSP

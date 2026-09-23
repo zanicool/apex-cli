@@ -126,51 +126,62 @@ std::vector<Finding> scan_cart_quantity_overflow(const Config&, HttpClient& http
   return findings;
 }
 
-/// 4. Payment bypass — skip checkout step, modify payment_status.
+/// 4. Payment bypass — require state-specific differential proof and reject raw echoes.
 std::vector<Finding> scan_payment_bypass(const Config&, HttpClient& http, const CrawlResult& crawl) {
   std::vector<Finding> findings;
   if (crawl.urls.empty()) return findings;
-  std::string base = base_url_from(crawl.urls[0]);
+  const std::string base = base_url_from(crawl.urls[0]);
+  const std::string marker = "apex_unknown_payment_control_7f3c9d";
+  const std::vector<std::string> paths = {"/api/order/confirm", "/api/order/complete", "/api/checkout/complete",
+                                          "/api/payment/confirm", "/api/order/finalize", "/api/checkout/submit"};
+  auto confirms_completion = [](const Response& response) {
+    return response.status_code == 200 &&
+           (response.body.find("confirmed") != std::string::npos || response.body.find("success") != std::string::npos ||
+            response.body.find("completed") != std::string::npos || response.body.find("\"payment_status\":\"paid\"") != std::string::npos);
+  };
 
-  const std::vector<std::string> order_paths = {"/api/order/confirm",   "/api/order/complete", "/api/checkout/complete",
-                                                "/api/payment/confirm", "/api/order/finalize", "/api/checkout/submit"};
-
-  for (const auto& path : order_paths) {
-    std::string url = base + path;
-
-    // Skip payment — directly confirm order with payment_status=paid
-    auto r1 = http.post(url, R"({"order_id":1,"payment_status":"paid","amount":0})", "application/json");
-    if (r1.status_code == 200 && r1.body.find("error") == std::string::npos && r1.body.find("payment required") == std::string::npos &&
-        r1.body.find("<!DOCTYPE") == std::string::npos && (r1.body.find("{") == 0 || r1.body.find("[") == 0) &&
-        (r1.body.find("confirmed") != std::string::npos || r1.body.find("success") != std::string::npos ||
-         r1.body.find("complete") != std::string::npos || r1.body.find("order_id") != std::string::npos)) {
-      findings.push_back({"Payment Status Bypass", "critical", url, "Order confirmed by setting payment_status=paid client-side",
-                          "payment_status", "paid", "Server trusts client payment state"});
+  for (const auto& path : paths) {
+    const std::string url = base + path;
+    const auto baseline = http.post(url, R"({"order_id":1,"payment_status":"pending","amount":100})", "application/json");
+    const auto paid = http.post(url,
+        R"({"order_id":1,"payment_status":"paid","amount":0,"apex_control":"apex_unknown_payment_control_7f3c9d"})",
+        "application/json");
+    if (confirms_completion(paid) && !confirms_completion(baseline) && paid.body.find(marker) == std::string::npos &&
+        responses_differ(paid, baseline, 10)) {
+      findings.push_back({"Payment Status Bypass", "critical", url,
+                          "Server applied client-controlled paid state while rejecting/retaining pending baseline",
+                          "payment_status", "paid", "Paid state confirmed; unknown echo control absent"});
+      break;
     }
 
-    // Try skipping checkout step entirely (jump to confirmation)
-    auto r2 = http.post(url, R"({"order_id":1,"step":"complete","skip_payment":true})", "application/json");
-    if (r2.status_code == 200 && r2.body.find("error") == std::string::npos && r2.body.find("<!DOCTYPE") == std::string::npos &&
-        (r2.body.find("{") == 0 || r2.body.find("[") == 0) &&
-        (r2.body.find("confirmed") != std::string::npos || r2.body.find("success") != std::string::npos)) {
-      findings.push_back({"Checkout Step Skip", "critical", url, "Can skip payment step by sending skip_payment=true", "skip_payment",
-                          "true", "No server-side checkout flow enforcement"});
+    const auto normal_step = http.post(url, R"({"order_id":1,"step":"payment","skip_payment":false})", "application/json");
+    const auto skipped = http.post(url,
+        R"({"order_id":1,"step":"complete","skip_payment":true,"apex_control":"apex_unknown_payment_control_7f3c9d"})",
+        "application/json");
+    if (confirms_completion(skipped) && !confirms_completion(normal_step) && skipped.body.find(marker) == std::string::npos &&
+        responses_differ(skipped, normal_step, 10)) {
+      findings.push_back({"Checkout Step Skip", "critical", url,
+                          "Completion occurred only when skip_payment=true bypassed the normal payment step",
+                          "skip_payment", "true", "Completion differential confirmed; unknown echo control absent"});
+      break;
     }
-
-    if (!findings.empty()) break;
   }
 
-  // Also try modifying payment status on existing orders
-  const std::vector<std::string> status_paths = {"/api/order/1/status", "/api/orders/1/payment", "/api/payment/status",
-                                                 "/api/order/update"};
-
+  const std::vector<std::string> status_paths = {"/api/order/1/status", "/api/orders/1/payment", "/api/payment/status", "/api/order/update"};
   for (const auto& path : status_paths) {
-    std::string url = base + path;
-    auto resp = http.post(url, R"({"payment_status":"paid","paid":true})", "application/json");
-    if (resp.status_code == 200 && resp.body.find("error") == std::string::npos && resp.body.find("unauthorized") == std::string::npos &&
-        resp.body.find("<!DOCTYPE") == std::string::npos && (resp.body.find("{") == 0 || resp.body.find("[") == 0)) {
-      findings.push_back({"Payment Status Direct Modification", "critical", url, "Payment status can be directly modified via API",
-                          "payment_status", "paid", "No authorization check on payment state change"});
+    const std::string url = base + path;
+    const auto baseline = http.post(url, R"({"payment_status":"pending","paid":false})", "application/json");
+    const auto modified = http.post(url,
+        R"({"payment_status":"paid","paid":true,"apex_control":"apex_unknown_payment_control_7f3c9d"})", "application/json");
+    const bool paid_state = modified.body.find("\"payment_status\":\"paid\"") != std::string::npos ||
+                            modified.body.find("\"paid\":true") != std::string::npos;
+    const bool baseline_paid = baseline.body.find("\"payment_status\":\"paid\"") != std::string::npos ||
+                               baseline.body.find("\"paid\":true") != std::string::npos;
+    if (modified.status_code == 200 && baseline.status_code == 200 && paid_state && !baseline_paid &&
+        modified.body.find(marker) == std::string::npos && responses_differ(modified, baseline, 10)) {
+      findings.push_back({"Payment Status Direct Modification", "critical", url,
+                          "Payment state changed from pending to paid while unknown control field was ignored",
+                          "payment_status", "paid", "State differential confirmed; raw request echo excluded"});
       break;
     }
   }
